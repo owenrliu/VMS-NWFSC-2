@@ -1,0 +1,21 @@
+---
+title: "Step by Step VMS Processing"
+author: "Owen Liu"
+date: "11/25/2019"
+output: html_document
+---
+
+```{r setup}
+library(knitr)
+library(here)
+```
+
+## Master VMS and Fish Ticket Processing Workflow
+
+This document collates all individual steps of VMS/Fish Ticket processing.
+
+## Step 1: Process Raw Fish Ticket Data
+```{r}
+knit_child(here('process steps','01_process_fish_tickets.Rmd'))
+```
+
