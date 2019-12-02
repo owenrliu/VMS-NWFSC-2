@@ -86,7 +86,7 @@ target_metric <- "revenue"
 trap_pot_gear <- c("CRAB RING","BOTTOMFISH POT","CRAB OR LOBSTER POT","CRAB POT","FISH POT","FISH TRAP","PRAWN TRAP","SHELLFISH POT (CRAB)","SHELLFISH POT (NON-CRAB)","TRAPS, SEATTLE TYPE (SABLEFISH)")
 ```
 
-Set filtering-related objects
+Set filtering-related objects[NOT CURRENTLY USED]
 *part of the fish ticket processing adds columns to the output which specify the total amount and proportion of lbs / revenue attributed to certain species. all other species will be collapsed into an "other" column. use the following filtering options to select which species to retain. to leave in all species data, select `filter_type` = c("none"). Note that this will not affect which species are used to determine TARGET for each trip.*
 ```{r filter_params}
 # filter_type <- "none"    # choose any combination of "species", "pounds", "revenue" OR just "none"
@@ -147,7 +147,7 @@ rawdat.sub %<>%
 
 Concatenate all species information for the fish ticket. 
 ```{r}
-all.species <- rawdat.sub.filter %>%
+all.species <- rawdat.sub %>%
   group_by(Rec_ID, removal_type_name) %>%
   summarise(species_code_all = ifelse(length(unique(PACFIN_SPECIES_CODE)) > 1, paste(unique(PACFIN_SPECIES_CODE), collapse="/"), as.character(unique(PACFIN_SPECIES_CODE))))
 ```
@@ -155,7 +155,7 @@ all.species <- rawdat.sub.filter %>%
 Concatenate the gear information for the fish ticket
 
 ```{r}
-gear.info <- rawdat.sub.filter %>%
+gear.info <- rawdat.sub %>%
   group_by(Rec_ID, removal_type_name) %>%
   summarise(gear_name_all = ifelse(length(unique(gear_name)) > 1, paste(unique(gear_name), collapse="/"), as.character(unique(gear_name))),
             gear_code_all = ifelse(length(unique(gear_name)) > 1, paste(unique(gear_code), collapse="/"), as.character(unique(gear_code))))
@@ -169,7 +169,7 @@ We need to define the target species for each landed ticket. We will do this by 
 Right now, each row of the data is a landing amount for a particular gear/ticket/species combo. We want to collapse these tickets in order to just have one row for each ticket, with an associated amount of landings for the TARGET species.
 
 ```{r}
-rawdat.sub.filter %>% count(Rec_ID) %>% 
+rawdat.sub %>% count(Rec_ID) %>% 
   ggplot(aes(n,..count..))+
   geom_histogram(fill="seagreen",bins=30)+
   labs(x="Number of records per ticket","kernel density")
@@ -178,7 +178,7 @@ rawdat.sub.filter %>% count(Rec_ID) %>%
 Calculate landed pounds and revenue by species for each fish ticket. Then use these data to define proportions of pounds and revenue by species/ticket, in order to designate a "target" species for each fishing trip. We denote the target species for both revenue and pounds landed. If a ticket does not have a definitive target (classified as a proportion of landed pounds or revenue that is >10 percent more than the second-place species), denote "NONE" for the target.
 
 ```{r}
-rawdat.w.targets <- rawdat.sub.filter %>% 
+rawdat.w.targets <- rawdat.sub %>% 
   distinct() %>% 
   # Group by ticket, removal type, and species
   group_by(Rec_ID,removal_type_code,removal_type_name,PACFIN_SPECIES_CODE) %>% 
@@ -222,7 +222,7 @@ rawdat.w.targets <- rawdat.sub.filter %>%
   select(-(first_rev:second_lbs_spp))
 
 # Add back in dates, vessel IDs, etc.
-recID_attributes <- rawdat.sub.filter %>% 
+recID_attributes <- rawdat.sub %>% 
   select(Rec_ID,PACFIN_SPECIES_CODE,pacfin_port_code,port_group_code,gear_code,gear_name,gear_group,drvid,agency_code,date,month,year)
   
 rawdat.w.targets %<>%
