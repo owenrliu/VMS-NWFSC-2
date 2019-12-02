@@ -8,8 +8,7 @@ output:
 
 Calculate vessel lengths based on vessel registration data, and then add in a few columns to the fish ticket data providing vessel length for each ticket.
 
-We use a decision tree for calculating vessel length from PacFIN data. The template allows for one year or multiple years of fish tickets to be run at the same time. Filtering in code block "get_dcrb_vessels" makes this template specific to fish tickets with Dungeness crab landings; to run code for all fish tickets, switch code block "get_dcrb_vessels" to `eval = FALSE` and code block "get_all_vessels" to `eval = TRUE` before knitting.
-<br>
+We use a decision tree for calculating vessel length from PacFIN data. The template allows for one year or multiple years of fish tickets to be run at the same time. The default option is to determine vessel lengths for Dungeness crab vessels ONLY. To run the vessel length calculations for *all* vessels in the landings data, set option `dcrb_only` to `FALSE`.
 
 Currently, the code block to write out the calculated vessel lengths to a .csv file is set `eval=FALSE`. If you want to write out the key, be sure to set to `eval = TRUE` before knitting.
 
@@ -57,11 +56,14 @@ library(magrittr)
 
 #### Vessel Permit Data
 
-Enter directory information
-```{r}
+Enter processing options
+```{r process options}
+fishtix_years <- c(2010)
+dcrb_only <- TRUE
+
 rawdatdir <- "Input_Data/"
 fishtixdir <- "Input_Data/processed_multisp/"
-fishtix_years <- c(2010)
+
 functionsdir <- "ProcessVMS/scripts/pre_process/"
 keydir <- "ProcessVMS/R_Output/length_keys/"
 ```
@@ -112,127 +114,48 @@ source(paste0(functionsdir,"Report_Vessel_Length_processedtix_v4.1_functions.R")
 ```
 
 
-#### Read in processed Fish ticket Data and get list of fishing vessels (Dungeness crab specific)
+#### Read in Fish Ticket Data and Filter to Vessels of Interest
 
-Read in raw fish ticket .rds files for each year of interest to data frame "landings".
+Read in raw fish ticket .rds files for each year of interest to data frame "landings". If option `dcrb_only` above is `TRUE`, filter to only vessels with positive revenue for Dungeness crab in the landings data.
+
 ```{r}
+# import landings data
 landings <- purrr::map(fishtix_years, function(y){
   read_rds(here::here('data','processed',paste0(y,'fishtix.rds')))
 }) %>% 
   bind_rows()
-```
 
-Get list of all vessels (with vessel numbers present) for each year. Dungeness crab specific
-```{r get_dcrb_vessels, eval=FALSE}
-vessels <- landings %>%
-  filter(drvid != "UNKNOWN", drvid != "MISSING", drvid != "", !is.na(drvid)) %>%
-  filter(DCRB.... > 0) %>%
-  select(drvid, agency_code, year) %>%
-  distinct()
-```
-<br>
-
-**ALTERNATIVE:** Get list of all vessels (with vessel numbers present) for each year. Non-specific
-```{r get_vessels, eval=TRUE}
+# find relevant vessels (all vessels versus Dungeness vessels only)
 vessels <- landings %>%
   filter(drvid != "UNKNOWN", drvid != "MISSING", drvid != "", !is.na(drvid)) %>%
   select(drvid, agency_code, year) %>%
   distinct()
-```
-<br>
 
-
-
-## Calculate vessel lengths for a single year (see multi-year below)
-
-Select year
-```{r year, eval=FALSE}
-y = 2017
-```
-<br>
-
-Prep data for vessel length calculations
-```{r eval=FALSE}
-# take only the vessels fishing in year "y"
-year_vessels <- filter(vessels, LANDING_YEAR == y)
-
-# identify the years of regulation data to pull
-target_reg_years <- seq(y-2, y)
-
-# subset and summarise permits for dcrb vessel
-pthin_sumstats <- pthin_length_filter %>%
-  ## filter only target regulation years
-  filter(REGISTRATION_YEAR %in% target_reg_years) %>%
-  filter(!is.na(VESSEL_LENGTH)) %>%
-  ## group by the vessel number and agency code
-  group_by(VESSEL_NUM, AGENCY_CODE) %>%
-  ## arrange data so that for each vessel num / agency code combo, registration year is in descending order
-  arrange(desc(REGISTRATION_YEAR)) %>%
-  ## calculate the number of years that length data is present, the number of unique lengths listed, max length, min length, and the mean of the 2 most recent years of length data
-  summarise(n_lengths = length(VESSEL_LENGTH),
-            n_unique = length(unique(VESSEL_LENGTH)),
-            max_length = max(VESSEL_LENGTH),
-            min_length = min(VESSEL_LENGTH),
-            mean2yr = get2yrmean(x=VESSEL_LENGTH, years=REGISTRATION_YEAR))
-head(pthin_sumstats)
-```
-<br>
-
-Create empty vectors for this year's data
-```{r eval=FALSE}
-final_vessel_lengths <- c()
-length_calc <- c()
-n_unique <- c()
-n_lengths <- c()
-processed_vessels <- c()
-```
-<br>
-
-Calculate vessel lengths
-```{r calc_lengths_1yr, eval=FALSE}
-for(i in seq(1:length(year_vessels$VESSEL_NUM))){
-  tmp_vessel_length_info <- calc_length(permits=permits, vesseldat = year_vessels, lengthdat = pthin_length_filter, summarydat = pthin_sumstats, index = i)
-  n_lengths[i] <- tmp_vessel_length_info[1]
-  n_unique[i] <- tmp_vessel_length_info[2]
-  final_vessel_lengths[i] <- tmp_vessel_length_info[3]
-  length_calc[i] <- tmp_vessel_length_info[4]
-  if(length(tmp_vessel_length_info) > 4){
-    print(tmp_vessel_length_info[5])
-  }
+if(dcrb_only){
+  vessels <- landings %>%
+    filter(drvid != "UNKNOWN", drvid != "MISSING", drvid != "", !is.na(drvid)) %>%
+    filter(DCRB_revenue > 0) %>%
+    select(drvid, agency_code, year) %>%
+    distinct()
 }
-cat("done processing dcrb vessels for", y, "\n")
-vessel_length_key_df <- data.frame("VESSEL_NUM" = year_vessels$VESSEL_NUM,
-                                   "AGENCY_CODE" = year_vessels$AGENCY_CODE,
-                                   "YEAR" = rep(y, length(year_vessels$AGENCY_CODE)),
-                                   "FINAL_LENGTH" = final_vessel_lengths,
-                                   "TYPE_CALC" = length_calc,
-                                   "UNIQUE_LENGTHS" = n_unique,
-                                   "N_YEARS_LENGTH_RECORDED" = n_lengths)
-cat("wrote out", dim(vessel_length_key_df)[1], "lengths for", y, " to final data frame\n\n")
-
 ```
-<br>
 
-
-
-## Calculate vessel lengths for multiple years
-<br>
+## Calculate Vessel Lengths
 
 Initiate empty data frame for all vessel length data across years
 ```{r}
-vessel_length_key_df <- data.frame("drvid" = as.character(),
-                                   "agency_code" = as.character(),
-                                   "year" = as.character(),
-                                   "FINAL_LENGTH" = as.numeric(),
-                                   "TYPE_CALC" = as.numeric(),
-                                   "UNIQUE_LENGTHS" = as.numeric(),
-                                   "N_YEARS_LENGTH_RECORDED" = as.numeric(),
-                                   "HISTORIC_DATA" = as.character())
+vessel_length_key_df <- tibble("drvid" = character(),
+                               "agency_code" = character(),
+                               "year" = character(),
+                               "FINAL_LENGTH" = numeric(),
+                               "TYPE_CALC" = numeric(),
+                               "UNIQUE_LENGTHS" = numeric(),
+                               "N_YEARS_LENGTH_RECORDED" = numeric(),
+                               "HISTORIC_DATA" = character())
 ```
 
-<br>
-
 Calculate vessel lengths
+
 ```{r calc_lengths_multiyr}
 for(y in unique(vessels$year)){
   # take only the vessels fishing in year "y"
