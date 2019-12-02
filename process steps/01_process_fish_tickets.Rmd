@@ -16,18 +16,22 @@ A few key aspects of the processing code:
 
 2. When calculating species-specific landed pounds and exvessel revenue as separate columns, the code provides several options. It is possible to leave in all species listed on the fish ticket, which would create a different column for each species (around 300; *not recommended*). You can also select for species which you are particularly interested in. These species will each get their own column, and all other species will be grouped into "other". If you want to break down the "other" category by gear type (i.e. other species caught by pot or trap gear, as is default here), then you can specify gear types in the `gear types` vector. Your choice of which species to highlight for this section *will not* impact the calculations of target species. In addition to reporting landed pounds and revenue for pre-determined species, you can also have a dynamic column that reports the same information for the target species of that trip. 
 
-3. Target species can be calculated in one of two ways: "cetacean" option or "multispecies" option. The "cetacean" option refers to the cetacean entanglement project for the Dungeness crab fishery, and so target species will be identified in a set of rules as one of the following: DCRB, SABL, LOBS, SPRW, OTHER_POT, OTHER. With this option. The "multispecies" option will determine a target species as the maximum landed pounds / exvessel revenue across all possible species caught. A target species will only be identified *if the target's landed pounds / exvessel revenue are more than 10% greater than the next greatest value*. Otherwise, the target will be set to "none". You will need to choose whether you want the "multispecies" option to be calculated using landed pounds v. exvessel revenue.
+3. Target species is calculated using the maximum landed pounds / exvessel revenue across all possible species caught. A target species will only be identified *if the target's landed pounds / exvessel revenue are more than 10% greater than the next greatest value*. Otherwise, the target will be set to "none". You will need to choose whether you want the target to be calculated using landed pounds v. exvessel revenue. +
 
 4. All gear types listed for a specific trip are combined into the columns `gear_names_all` and `gear_codes_all`, separated by a "/". This prevents retention of duplicate fish tickets, but allows for later filtering. 
 
 5. If you want to reorder the columns in the data frame before writing it out, this can be done in the second to last code chunk, labeled (reorder_dataframe)
 
-6. The code filters out any fish tickets with missing vessel identifiers (VESSEL_NUM)
+6. The code filters out any fish tickets with missing vessel identifiers (`VESSEL_NUM`)
 
-*Changes for v4.1: includes the dynamic exvessel revenue / landed pounds column for the target species. more efficient calculations of species-specific revenue/landed lbs. moved up filtering code chunk.*
-
-*Changes for v4.2: preserves an adjusted version of the pacfin gear group (MSC split into DVG for diving, USP for unknown / unspecified, and FRM for Farm) in the final processed fish tickets.*
 <br>
+<br>
+
+
++ Previous versions of this code have included a second Target species calculation option, "cetacean." The "cetacean" option refers to the cetacean entanglement project for the Dungeness crab fishery, and so target species were identified using a project-specific set of rules.
+<br>
+<br>
+
 
 ## Set Up Workspace
 
@@ -69,26 +73,24 @@ years = 2010
 ## which species-specific revenue and lbs columns would you like? (static)
 species_cols <- c("DCRB", "SABL", "LOBS", "SPRW") 
 
-## do you want to report revenue and lbs for the given target species? (dynamic)
-include_target <- TRUE
-
 ## calculate an "other" category according to a certain gear type? If so, which gear?
 gear_types <- c("FISH POT","FISH TRAP", "BOTTOMFISH POT", "TRAPS, 
                 SEATTLE TYPE (SABLEFISH)", "PRAWN TRAP", "SHELLFISH POT (NON-CRAB)")
 
-## which type of "target" calculations would you like? Note that you can only use ONE, otherwise the first will be overwritten.
-target_type <- "multispecies"
-
-## if you selected "general" as the target calculation above, would you like "target" based on exvessel revenue or landed lbs?
+## would you like target based on exvessel revenue or landed lbs?
 target_metric <- "revenue"
 
-## pot gear -- this is for cetacean target calculations. it won't be used if you don't choose the target type as "cetacean"
-trap_pot_gear <- c("CRAB RING","BOTTOMFISH POT","CRAB OR LOBSTER POT","CRAB POT","FISH POT","FISH TRAP","PRAWN TRAP","SHELLFISH POT (CRAB)","SHELLFISH POT (NON-CRAB)","TRAPS, SEATTLE TYPE (SABLEFISH)")
+## how much "more important" does your target need to be than the species with the second greatest catch? Expressed as a ratio. (default: target species catch / landings must be 10% greater than second greatest species catch / landings = 1.1)
+target_cutoff <- 1.1
+
+## do you want to report revenue and lbs for the given target species? (dynamic)
+include_target <- TRUE
 ```
+<br>
 
 Set filtering-related objects[NOT CURRENTLY USED]
 *part of the fish ticket processing adds columns to the output which specify the total amount and proportion of lbs / revenue attributed to certain species. all other species will be collapsed into an "other" column. use the following filtering options to select which species to retain. to leave in all species data, select `filter_type` = c("none"). Note that this will not affect which species are used to determine TARGET for each trip.*
-```{r filter_params}
+```{r filter_params, eval=FALSE}
 # filter_type <- "none"    # choose any combination of "species", "pounds", "revenue" OR just "none"
 # species_filter <- c()     # list species. if none, leave vector empty
 # lbs_cutoff <- NA     # choose cutoff for landed lbs. if none, set as NA
@@ -104,11 +106,10 @@ rawdat <- rawdat %>%
   filter(LANDING_YEAR %in%  years)
 ```
 
-Check to make sure columns were in the correct format for reading.
+Check to make sure columns were in the correct format for reading. This will return the names of columns with parsing errors.
 ```{r}
-# Column names of columns with parsing errors
 problems(rawdat) %>% select(col) %>% distinct()
-# The columns with parsing errors are from columns that we do not need anyway
+# The columns with parsing errors are usually from columns that we do not need anyway
 ```
 
 
@@ -216,8 +217,8 @@ rawdat.w.targets <- rawdat.sub %>%
   # or, if first and second species are the same (i.e. for a ticket with both commercial and personal use catch)
   # if so, assign that species as TARGET
   
-  mutate(TARGET_rev=ifelse(is.na(first_rev/second_rev)|(first_rev/second_rev)>=1.1|first_rev_spp==second_rev_spp,first_rev_spp,"NONE"),
-         TARGET_lbs=ifelse(is.na(first_lbs/second_lbs)|(first_lbs/second_lbs)>=1.1|first_lbs_spp==second_lbs_spp,first_lbs_spp,"NONE")) %>% 
+  mutate(TARGET_rev=ifelse(is.na(first_rev/second_rev)|(first_rev/second_rev)>=target_cutoff|first_rev_spp==second_rev_spp,first_rev_spp,"NONE"),
+         TARGET_lbs=ifelse(is.na(first_lbs/second_lbs)|(first_lbs/second_lbs)>=target_cutoff|first_lbs_spp==second_lbs_spp,first_lbs_spp,"NONE")) %>% 
   ungroup() %>% 
   select(-(first_rev:second_lbs_spp))
 
@@ -344,4 +345,18 @@ write_rds(dat_out,here::here('data','processed',paste0(years,"fishtix",".rds",co
 #   cat("wrote out file for ", y, "\n")
 # }
 ```
+<br>
+<br>
+<br>
+<br>
 
+
+
+
+---
+**Version Notes**
+
+*Changes for v4.1: includes the dynamic exvessel revenue / landed pounds column for the target species. more efficient calculations of species-specific revenue/landed lbs. moved up filtering code chunk.*
+
+*Changes for v4.2: preserves an adjusted version of the pacfin gear group (MSC split into DVG for diving, USP for unknown / unspecified, and FRM for Farm) in the final processed fish tickets.*
+<br>
