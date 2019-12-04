@@ -22,7 +22,7 @@ knit_child(here('process steps','01_process_fish_tickets.Rmd'))
 ## Step 2: Report Vessel Lengths
 
 ```{r}
-
+knit_child(here('process steps','02_Report_Vessel_Length_processedtix.Rmd'))
 ```
 
 
