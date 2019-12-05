@@ -1,0 +1,303 @@
+---
+title: "Clean VMS Data"
+output: html_document
+---
+
+## Purpose
+
+This step in data processing further cleans raw VMS data. As of November 2019, we have been using raw VMS from the OLE. This may change in the near future, allowing us to obtain cleaner raw data from PacFIN.
+
+The input VMS file should be partially pre-processed (cleaned, condensed) using a python script.
+
+### Steps:
+
+The following changes needed to be made for further processing:
+
+1. Add in Cartesian geocoordinates (after checking for missing lat/lon)
+
+2. Add in unique record numbers for each VMS record
+
+3. Remove VMS records outside of a given latitude (assumed to be non-West Coast)
+
+4. Add in the bathymetry layer
+
+5. Remove high elevation points
+
+6. Reorder columns
+
+## Setup and Options
+
+```{r "setup", include=FALSE}
+# start timer
+alltime <- proc.time()
+
+library(tidyverse)
+library(here)
+library(magrittr)
+library(lubridate)
+library(sf)
+library(janitor)
+library(rnaturalearth)
+library(rgdal)
+library(rgeos)
+library(sp)
+```
+
+
+To process data, user can choose year and lat/lon bounds of VMS data points (currently set conservatively around US West Coast waters). Additionally, choose an upper bound for the bathymetry layer. Conservatively set at +100 ft., which should certainly retain all ocean areas.
+
+```{r}
+year = 2011
+lon_upper = -117 # if you do not want this filter, set to NA
+lon_lower = -132 # if you do not want this filter, set to NA
+lat_lower = 32 # if you do not want this filter, set to NA
+lat_upper = 50 # if you do not want this filter, set to NA
+bathy_upper = 100
+```
+
+## Read in Data
+
+```{r read data}
+vms_raw <- read_csv(here::here('data','raw','vms',paste0("VMS_all_data_", year, ".csv")),col_types='cddcddcc')
+
+# convert UTCDATETIM to date-time class
+vms_raw %<>%
+  mutate(UTCDATETIM=parse_date_time(UTCDATETIM,"ymd HM"))
+```
+
+## Check for Missing Data
+
+Are any records missing lat/lon?
+
+```{r}
+missing_lat <- sum(is.na(vms_raw$LATITUDE)); missing_lat
+if(missing_lat > 0){
+  View(vms_raw %>% filter(is.na(LATITUDE)))
+}
+```
+
+**AFTER CHECKING ORIGINAL OLE FILE**, delete the missing record.
+```{r}
+vms_raw %<>% filter(!is.na(LATITUDE))
+```
+
+Some of the latitude measurements are listed as negatives (likely due to the parsing process). Check how many observations this affects, and then change them to positive.
+
+```{r}
+cat(sum(vms_raw$LATITUDE<0),'records have negative latitude.')
+
+vms_raw %<>% mutate(LATITUDE = ifelse(LATITUDE > 0, LATITUDE, LATITUDE*-1))
+```
+
+## Add Cartesian Coordinates and Assign VMS Record Numbers
+
+Convert lat/long to cartesian geocoordinates for UTM zone 10.
+
+```{r convert coords}
+vms_coords <- vms_raw %>% 
+  # convert to simple features point object
+  st_as_sf(coords=c("LONGITUDE","LATITUDE"),crs="+proj=longlat +datum=WGS84") %>% 
+  # project to UTM zone 10
+  st_transform(crs = "+proj=utm +north +zone=10 +ellps=WGS84") %>% 
+  # extract XY coordinates
+  st_coordinates()
+
+# add to data frame
+vms_raw %<>%
+  mutate(X_COORD = vms_coords[,1],
+         Y_COORD = vms_coords[,2])
+
+# validate with back-conversion to lat/long for a random selection of 10 records
+test_coords <- vms_raw %>%
+  sample_n(10) %>%
+  dplyr::select(LONGITUDE, LATITUDE, X_COORD,Y_COORD)
+
+test_coordsLL <- test_coords %>% 
+  st_as_sf(coords=c("X_COORD","Y_COORD"),crs="+proj=utm +north +zone=10 +ellps=WGS84") %>% 
+  st_transform(crs="+proj=longlat +datum=WGS84") %>% 
+  st_coordinates()
+
+# test whether coordinates are the same to 4 decimal places
+all(round(test_coords[,c(1,2)],digits = 4)==round(test_coordsLL,digits=4))
+```
+
+Add unique ID numbers for VMS records.
+
+VMS_recno: select random integer values between X and Y, sampling without replacement. **CHECK PREVIOUS YEARS OF DATA TO MAKE SURE THERE ARE NO DUPLICATE RECORD NUMBERS**
+
+```{r}
+set.seed(0401) # set a RNG seed so that we have reproducibility if/when code is re-run
+vms <- vms_raw %>% 
+  ungroup() %>% 
+  mutate(VMS_RECNO=row_number()+year*1e7) %>% 
+  mutate(VMS_RECNO=sample(VMS_RECNO))
+
+# Did we make any duplicates for this year (by accident)?
+!length(unique(vms$VMS_RECNO))==nrow(vms)
+
+# Nope, all VMS_RECNO unique
+```
+
+## Remove Out-of-Bounds Records
+
+This will delete records above the US-Canadian border (`lat_upper`) and below the US-Mexican border (`lat_lower`).
+
+```{r}
+dim(vms)
+if(!is.na(lat_upper)){
+  vms <- filter(vms, LATITUDE < lat_upper)
+} 
+if(!is.na(lat_lower)){
+  vms <- filter(vms, LATITUDE > lat_lower)
+}
+dim(vms)
+```
+
+This will delete records far out to sea, or inland.
+
+```{r}
+dim(vms)
+if(!is.na(lon_upper)){
+  vms <- filter(vms, LONGITUDE < lon_upper)
+} 
+if(!is.na(lon_lower)){
+  vms <- filter(vms, LONGITUDE > lon_lower)
+}
+dim(vms)
+```
+
+## Remove Duplicate Records
+
+Duplicates are any VMS records with the same: UTCDATETIM, LATITUDE, LONGITUDE, VESSEL_NAM, DOCNUM.
+
+Create data frame where duplicated record (second record) is removed.
+
+```{r without_duplicates}
+dim(vms)
+tm <- proc.time()
+vms_nodup <- vms %>% 
+  distinct(UTCDATETIM,LATITUDE,LONGITUDE,VESSEL_NAM,DOCNUM,.keep_all = TRUE)
+proc.time()-tm
+
+# old version kept for checking efficiency/time
+# tm <- proc.time()
+# vms_nodup <- vms[!duplicated(vms[,c("UTCDATETIM","LATITUDE", "LONGITUDE", "VESSEL_NAM", "DOCNUM")]),]
+# proc.time()-tm
+# dim(vms_nodup)
+
+# with addcount (pretty slow)
+# tm <- proc.time()
+# vms_nodup2 <- vms %>% 
+#   add_count(UTCDATETIM,LATITUDE,LONGITUDE,VESSEL_NAM,DOCNUM) %>% 
+#   filter(n==1)
+# proc.time()-tm
+
+# with group_indices
+# tm <- proc.time()
+# vms_nodup3 <- vms %>% 
+#   mutate(dupe_id=group_indices(.,UTCDATETIM,LATITUDE,LONGITUDE,VESSEL_NAM,DOCNUM)) %>% 
+#   distinct(dupe_id,.keep_all = TRUE)
+# proc.time()-tm
+
+cat("Proportion of VMS records removed for being true duplicate records:", 1-nrow(vms_nodup)/nrow(vms))
+```
+
+Save the duplicate entries to a file, to understand what data is being removed!
+
+```{r save_duplicates}
+# with janitor::get_dupes
+tm <- proc.time()
+vms_dupes <- vms %>% 
+  get_dupes(UTCDATETIM,LATITUDE,LONGITUDE,VESSEL_NAM,DOCNUM) %>% 
+  arrange(DOCNUM, UTCDATETIM) %>% 
+  dplyr::select(dupe_count,everything())
+proc.time()-tm
+
+write_rds(vms_dupes, here::here('data','processed','vms',paste0(year, "_duplicates_only.rds")))
+```
+
+## Add Bathymetry
+
+Read in the bathymetry SpatialGridDataFrame object
+
+```{r}
+bathy.grid <- read_rds(here::here('data','raw','vms_composite_bath_spGrid.RDS'))
+```
+
+Get bathymetry at VMS data points
+
+```{r}
+# tm <- proc.time()
+vms_sp <- vms_nodup
+coordinates(vms_sp) <- c("LONGITUDE", "LATITUDE") 
+proj4string(vms_sp)<-proj4string(bathy.grid) <- CRS("+init=epsg:4326") # WGS 84
+bathy.points <- over(vms_sp, bathy.grid)$vms_composite_bath
+# proc.time()-tm
+
+vms_nodup <- mutate(vms_nodup, NGDC_M = bathy.points)
+```
+
+Remove high elevation bathymetry.
+
+```{r}
+
+vms_nodup_bathy <- vms_nodup %<>% filter(NGDC_M < bathy_upper)
+
+cat('Filtering out records greater than',bathy_upper,'meters in elevation resulted in the removal of',nrow(vms_nodup)-nrow(vms_nodup_bathy),'records (',(nrow(vms_nodup)-nrow(vms_nodup_bathy))/nrow(vms_nodup)*100,'percent ).')
+```
+
+## View Output
+
+Plot points. We plot a subset of 100 thousand VMS records to make plotting time reasonable.
+
+```{r plot_all}
+vms_sf <- vms_nodup %>% st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+
+# Plotting takes a long time
+# Try with a subset of 100k points
+vms_sf_sample <- vms_sf %>% 
+  sample_n(100000) %>% 
+  filter(NGDC_M>-100000)
+
+# coastline
+coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington')) %>% 
+  st_transform(st_crs(vms_sf))
+
+ggplot()+
+  geom_sf(data=coaststates,fill='gray50',col=NA)+
+  geom_sf(data=vms_sf_sample,size=0.5,col='blue')+
+  labs(x='Longitude',y='Latitude',title=paste0(year," VMS records"))
+```
+
+## Organize Output
+
+```{r reorder}
+vms_ordered <- vms_nodup_bathy %>% 
+  dplyr::select(UTCDATETIM,LATITUDE,LONGITUDE,NGDC_M,VESSEL_NAM,AVG_SPEED,AVG_COURSE,DOCNUM,DECLARATIO,X_COORD,Y_COORD,VMS_RECNO)
+```
+
+## Save Results
+
+```{r save rds}
+write_rds(vms_ordered,here::here('data','processed','vms',paste0(year,'_vms_clean.rds')))
+```
+
+Optionally, we can save as a .dbf. This chunk is currently turned off (`eval=FALSE`).
+
+```{r dbf,eval=FALSE}
+vms_dbf <- vms_ordered
+
+vms_dbf$UTCDATETIM <- as.character(vms_dbf$UTCDATETIM)
+vms_dbf <- as.data.frame(vms_dbf)
+
+# write
+library(foreign)
+write.dbf(dataframe=vms_dbf, here::here('data','processed','vms',paste0(year,'_vms_clean.dbf')), factor2char=TRUE)
+```
+
+```{r}
+x<-proc.time()-alltime
+cat('This script for',year,'VMS data took',x[3]/60,'minutes to run.')
+```
+

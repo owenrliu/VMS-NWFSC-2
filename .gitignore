@@ -12,6 +12,8 @@
 *.vcf
 *.xml
 *.rds
+*.RDS
+*.txt
 
 ### R ###
 # History files
