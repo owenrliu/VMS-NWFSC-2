@@ -45,12 +45,15 @@ plot_theme <-   theme_minimal()+
         axis.text=element_text(family="sans",size=8,color="black"),
         panel.grid.major = element_line(color="gray50",linetype=3))
 theme_set(plot_theme)
+
+rm(list=setdiff(ls(),c('process_year','alltime')))
+
 ```
 
 Choose directories and set objects
 ```{r objects}
 ## which years of fish tickets are you interested in?
-years = c(2010,2011,2012)
+# process_year = c(2010,2011,2012)
 
 ## which species-specific revenue and lbs columns would you like? (static)
 species_cols <- c("DCRB", "SABL", "LOBS", "SPRW") 
@@ -70,7 +73,9 @@ include_target <- TRUE
 ```
 
 Set filtering-related objects[NOT CURRENTLY USED]
+
 *part of the fish ticket processing adds columns to the output which specify the total amount and proportion of lbs / revenue attributed to certain species. all other species will be collapsed into an "other" column. use the following filtering options to select which species to retain. to leave in all species data, select `filter_type` = c("none"). Note that this will not affect which species are used to determine TARGET for each trip.*
+
 ```{r filter_params, eval=FALSE}
 # filter_type <- "none"    # choose any combination of "species", "pounds", "revenue" OR just "none"
 # species_filter <- c()     # list species. if none, leave vector empty
@@ -84,7 +89,7 @@ This should be a .csv file containing raw PacFIN data.
 ```{r rawdata}
 rawdat <- read_csv(here::here('data','raw','fish tickets','2006_2016_compFT.csv'))
 rawdat <- rawdat %>%
-  filter(LANDING_YEAR %in%  years)
+  filter(LANDING_YEAR %in%  process_year)
 ```
 
 Check to make sure columns were in the correct format for reading. This will return the names of columns with parsing errors.

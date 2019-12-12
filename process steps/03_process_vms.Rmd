@@ -27,10 +27,7 @@ The following changes needed to be made for further processing:
 
 ## Setup and Options
 
-```{r "setup", include=FALSE}
-# start timer
-alltime <- proc.time()
-
+```{r, include=FALSE}
 library(tidyverse)
 library(here)
 library(magrittr)
@@ -41,13 +38,16 @@ library(rnaturalearth)
 library(rgdal)
 library(rgeos)
 library(sp)
+
+rm(list=setdiff(ls(),c('process_year','alltime')))
+
 ```
 
 
 To process data, user can choose year and lat/lon bounds of VMS data points (currently set conservatively around US West Coast waters). Additionally, choose an upper bound for the bathymetry layer. Conservatively set at +100 ft., which should certainly retain all ocean areas.
 
 ```{r}
-year = 2011
+# process_year = 2012
 lon_upper = -117 # if you do not want this filter, set to NA
 lon_lower = -132 # if you do not want this filter, set to NA
 lat_lower = 32 # if you do not want this filter, set to NA
@@ -58,7 +58,7 @@ bathy_upper = 100
 ## Read in Data
 
 ```{r read data}
-vms_raw <- read_csv(here::here('data','raw','vms',paste0("VMS_all_data_", year, ".csv")),col_types='cddcddcc')
+vms_raw <- read_csv(here::here('data','raw','vms',paste0("VMS_all_data_", process_year, ".csv")),col_types='cddcddcc')
 
 # convert UTCDATETIM to date-time class
 vms_raw %<>%
@@ -129,7 +129,7 @@ VMS_recno: select random integer values between X and Y, sampling without replac
 set.seed(0401) # set a RNG seed so that we have reproducibility if/when code is re-run
 vms <- vms_raw %>% 
   ungroup() %>% 
-  mutate(VMS_RECNO=row_number()+year*1e7) %>% 
+  mutate(VMS_RECNO=row_number()+process_year*1e7) %>% 
   mutate(VMS_RECNO=sample(VMS_RECNO))
 
 # Did we make any duplicates for this year (by accident)?
@@ -213,7 +213,7 @@ vms_dupes <- vms %>%
   dplyr::select(dupe_count,everything())
 proc.time()-tm
 
-write_rds(vms_dupes, here::here('data','processed','vms',paste0(year, "_duplicates_only.rds")))
+write_rds(vms_dupes, here::here('data','processed','vms',paste0(process_year, "_duplicates_only.rds")))
 ```
 
 ## Add Bathymetry
@@ -267,7 +267,7 @@ coaststates <- ne_states(country='United States of America',returnclass = 'sf') 
 ggplot()+
   geom_sf(data=coaststates,fill='gray50',col=NA)+
   geom_sf(data=vms_sf_sample,size=0.5,col='blue')+
-  labs(x='Longitude',y='Latitude',title=paste0(year," VMS records"))
+  labs(x='Longitude',y='Latitude',title=paste0(process_year," VMS records"))
 ```
 
 ## Organize Output
@@ -280,7 +280,7 @@ vms_ordered <- vms_nodup_bathy %>%
 ## Save Results
 
 ```{r save rds}
-write_rds(vms_ordered,here::here('data','processed','vms',paste0(year,'_vms_clean.rds')))
+write_rds(vms_ordered,here::here('data','processed','vms',paste0(process_year,'_vms_clean.rds')))
 ```
 
 Optionally, we can save as a .dbf. This chunk is currently turned off (`eval=FALSE`).
@@ -293,11 +293,5 @@ vms_dbf <- as.data.frame(vms_dbf)
 
 # write
 library(foreign)
-write.dbf(dataframe=vms_dbf, here::here('data','processed','vms',paste0(year,'_vms_clean.dbf')), factor2char=TRUE)
+write.dbf(dataframe=vms_dbf, here::here('data','processed','vms',paste0(process_year,'_vms_clean.dbf')), factor2char=TRUE)
 ```
-
-```{r}
-x<-proc.time()-alltime
-cat('This script for',year,'VMS data took',x[3]/60,'minutes to run.')
-```
-

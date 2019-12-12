@@ -1,9 +1,6 @@
 ---
 title: "Calculate Vessel Lengths for DCRB Vessels"
-output:
-  html_document:
-    df_print: paged
-  pdf_document: default
+output:  html_document
 ---
 
 ## Purpose
@@ -52,7 +49,7 @@ Resources:
 ## Setup and Options
 
 Load packages
-```{r setup}
+```{r}
 library(tidyverse)
 library(here)
 library(magrittr)
@@ -67,6 +64,9 @@ plot_theme <-   theme_minimal()+
         panel.grid.major = element_line(color="gray50",linetype=3))
 theme_set(plot_theme)
 
+
+rm(list=setdiff(ls(),c('process_year','alltime')))
+
 ```
 
 Source functions for vessel length calculations.
@@ -74,10 +74,10 @@ Source functions for vessel length calculations.
 source(here::here('process steps',"Report_Vessel_Length_processedtix_functions.R"))
 ```
 
-Enter processing options: Year(s) desired to be processed, whether to only process Dungeness vessels, and whether to plot outputs.
+Enter processing options: Year desired to be processed, whether to only process Dungeness vessels, and whether to plot outputs.
 
 ```{r process options}
-fishtix_years <- c(2010)
+# process_year <- c(2011)
 dcrb_only <- FALSE
 plot_output <- TRUE
 ```
@@ -130,7 +130,7 @@ Read in raw fish ticket `.rds` files for each year of interest to data frame "la
 
 ```{r}
 # import landings data
-landings <- purrr::map(fishtix_years, function(y){
+landings <- purrr::map(process_year, function(y){
   read_rds(here::here('data','processed','fish tickets',paste0(y,'fishtix.rds')))
 }) %>% 
   bind_rows()

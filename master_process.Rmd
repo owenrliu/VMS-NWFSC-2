@@ -2,7 +2,10 @@
 title: "Step by Step VMS Processing"
 author: "Owen Liu"
 date: "11/25/2019"
-output: html_document
+output: 
+  html_document:
+    toc: true
+    toc_float: true
 ---
 
 ```{r setup}
@@ -10,19 +13,71 @@ library(knitr)
 library(here)
 ```
 
-## Master VMS and Fish Ticket Processing Workflow
+# Master VMS and Fish Ticket Processing Workflow
 
-This document collates all individual steps of VMS/Fish Ticket processing.
+This document collates all individual steps of VMS/Fish Ticket processing. For testing, we will print a timer after each step.
 
-## Step 1: Process Raw Fish Ticket Data
-```{r}
-knit_child(here('process steps','01_process_fish_tickets.Rmd'))
-```
-
-## Step 2: Report Vessel Lengths
-
-```{r}
-knit_child(here('process steps','02_Report_Vessel_Length_processedtix.Rmd'))
+```{r timer, include=FALSE}
+alltime <- proc.time()
 ```
 
 
+## Choose Year to Process
+
+This parameter will get passed through all processing steps
+
+```{r choose year}
+alltime <- proc.time()
+process_year <- 2012
+```
+
+# Step 1: Process Raw Fish Ticket Data
+
+```{r step1,message=F,warning=F,child=here::here('process steps','01_process_fish_tickets.Rmd')}
+```
+```{r}
+x<-proc.time()-alltime
+```
+
+**So far, this pipeline for `r process_year` VMS data has taken `r round(x[3]/60,2)` minutes to run.**
+
+# Step 2: Report Vessel Lengths
+
+```{r step2, message=F,warning=F,child=here::here('process steps','02_calculate_vessel_lengths.Rmd')}
+```
+```{r}
+x<-proc.time()-alltime
+```
+
+**So far, this pipeline for `r process_year` VMS data has taken `r round(x[3]/60,2)` minutes to run.**
+
+# Step 3: Process Raw VMS Data
+
+```{r step3, message=F,warning=F,child=here::here('process steps','03_process_vms.Rmd')}
+```
+```{r}
+x<-proc.time()-alltime
+```
+
+**So far, this pipeline for `r process_year` VMS data has taken `r round(x[3]/60,2)` minutes to run.**
+
+# Step 5: Match VMS and Fish Ticket Data
+
+```{r step5, message=F,warning=F,child=here::here('process steps','05_match_vms_fishtix.Rmd')}
+```
+```{r}
+x<-proc.time()-alltime
+# cat('This step for',process_year,'VMS data took',round(x[3]/60,2),'minutes to run.')
+```
+
+**So far, this pipeline for `r process_year` VMS data has taken `r round(x[3]/60,2)` minutes to run.**
+
+# Step 6: Filter Data by Distance to Port of Landing
+
+```{r step5, message=F,warning=F,child=here::here('process steps','06_clean_portDist_matched_VMS.Rmd')}
+```
+```{r}
+x<-proc.time()-alltime
+```
+
+**So far, this pipeline for `r process_year` VMS data has taken `r round(x[3]/60,2)` minutes to run.**

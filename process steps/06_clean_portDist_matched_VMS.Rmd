@@ -1,0 +1,173 @@
+---
+title: "Clean up Matched VMS-Fishtix Data for Repeat Trips between Calendar Years"
+output: html_document
+---
+
+This step cleans up the matched fish ticket/VMS records spatially by removing outlier trips where the Port of Landing is > 50km from the last VMS point of the associated trip.
+
+## Setup and Data Import
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(magrittr)
+library(here)
+library(sf)
+library(geosphere)
+
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+theme_set(plot_theme)
+
+rm(list=setdiff(ls(),c('process_year','alltime')))
+
+# process year (if running this script only, not as part of the pipeline)
+# process_year=2012
+```
+
+### Read in the data
+
+First, the full vms data set for `r process_year`.
+
+```{r data}
+# Owen note: using read_csv here to ensure the data types of different variables are read in correctly
+vms <- read_rds(here::here('data','processed','matched',paste0(process_year,'matched_vms_only.rds')))
+```
+
+
+## Remove trips where Port of Landing > 50km from last VMS data point
+
+Latitude/longitude of ports. Coordinates were provided by Blake Feist.
+
+```{r}
+portlist_coords <- read_csv(here::here('data','raw','port_coords_fromBlake_edited.csv'),col_types='cddd') %>% 
+  select(port_code,Lon,Lat) %>% 
+  set_names(c('port_code','portlon','portlat'))
+```
+
+Filter VMS data to include only the last VMS data point for each trip
+
+```{r}
+fishtix_lastVMS <- vms %>%
+  group_by(Rec_ID) %>%
+  top_n(1, wt=westcoastdate) %>%
+  ungroup()
+```
+
+Add port locations to last VMS points
+
+```{r port_coords}
+fishtix_lastVMS <- left_join(fishtix_lastVMS, portlist_coords, by=c("pacfin_port_code" = "port_code"))
+```
+
+How many port lat/lon coordinates are NA? For `r process_year`, `r round(sum(is.na(fishtix_lastVMS$portlat)) / length(fishtix_lastVMS$portlat)*100,2)` percent of trips are missing coordinates. We remove these observations.
+
+Note: why is this happening?
+
+```{r}
+fishtix_lastVMS %<>% filter(!is.na(portlat),!is.na(portlon))
+```
+
+
+### Find distance between end VMS and port
+
+Calculate distance with geosphere
+
+```{r calc_dist}
+lastVMS_sf <- fishtix_lastVMS %>%  st_as_sf(coords=c('LONGITUDE','LATITUDE'))
+ports_sf <- fishtix_lastVMS %>% st_as_sf(coords=c('portlon','portlat'))
+
+# port_dists <- st_distance(lastVMS_sf,ports_sf,by_element=TRUE)
+
+port_dists <- geosphere::distHaversine(p1=cbind(fishtix_lastVMS$portlon, fishtix_lastVMS$portlat),
+                                    p2=cbind(fishtix_lastVMS$LONGITUDE, fishtix_lastVMS$LATITUDE))
+```
+
+Add the distances as another column
+
+```{r}
+fishtix_lastVMS %<>%
+  mutate(port_to_VMS = port_dists / 1000)
+```
+
+### Sort Trips to Keep or Remove
+
+```{r filter_retain}
+trips_to_keep <- fishtix_lastVMS %>%
+  filter(port_to_VMS <= 50) %>% 
+  mutate(keep_remove='keep')
+trips_to_remove <- fishtix_lastVMS %>%
+  filter(port_to_VMS > 50) %>% 
+  mutate(keep_remove='remove')
+```
+
+For `r process_year`, we retain `r length(unique(trips_to_keep$Rec_ID))` trips, and remove `r length(unique(trips_to_remove$Rec_ID))` trips, which is about `r round(length(unique(trips_to_remove$Rec_ID))/length(unique(fishtix_lastVMS$Rec_ID))*100,2)` percent of all trips.
+
+```{r filter_rm}
+dcrb_trips_to_keep <- fishtix_lastVMS %>%
+  filter(port_to_VMS <= 50) %>%
+  filter(TARGET_rev == "DCRB")
+dcrb_trips_to_remove <- fishtix_lastVMS %>%
+  filter(port_to_VMS > 50) %>%
+  filter(TARGET_rev=="DCRB")
+```
+
+With respect to Dungeness crab trips, for `r process_year`, we retain `r length(unique(dcrb_trips_to_keep$Rec_ID))` trips, and remove `r length(unique(dcrb_trips_to_remove$Rec_ID))` trips, which is about `r round(length(unique(dcrb_trips_to_remove$Rec_ID))/length(unique(fishtix_lastVMS$Rec_ID))*100,2)` percent of all Dungeness trips.
+
+```{r}
+retained_trips_plot <- trips_to_keep %>% 
+  select(Rec_ID, pacfin_port_code) %>% 
+  distinct() %>%
+  ggplot(aes(x=pacfin_port_code)) +
+  geom_bar() +
+  labs(x="Port",y="Number of Unique Trips",title="Retained Trips Ending <= 50km from a Port")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5))
+retained_trips_plot
+```
+```{r}
+trips_removed_plot <- trips_to_remove %>% 
+  select(Rec_ID, pacfin_port_code) %>% 
+  distinct() %>%
+  ggplot(aes(x=pacfin_port_code)) +
+  geom_bar() +
+  labs(x="Port",y="Number of Trips Removed",title="Removed Trips Ending > 50km from a Port")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5))
+trips_removed_plot
+```
+
+Sort the VMS and fish ticket data by the output of this filtering exercise.
+
+```{r}
+keeps <- trips_to_keep %>%
+  select(Rec_ID,keep_remove) %>% 
+  distinct()
+removes <- trips_to_remove %>% 
+  select(Rec_ID,keep_remove) %>% 
+  distinct()
+keeps_removes <- bind_rows(keeps,removes)
+
+vms_keeps <- vms %>% 
+  left_join(keeps_removes,by='Rec_ID') %>% 
+  filter(keep_remove=='keep')
+
+vms_removes <- vms %>% 
+  left_join(keeps_removes,by='Rec_ID') %>% 
+  filter(keep_remove=='remove')
+```
+
+## Save Results
+
+### Write out VMS data that was removed
+
+```{r rm_out}
+write_rds(x=vms_removes, here::here('data','processed','matched',paste0(process_year,'matched_far_from_port.rds')))
+write_rds(x=vms_keeps, here::here('data','processed','matched',paste0(process_year,'matched_port_dist_filter.rds')))
+```
+

@@ -1,0 +1,42 @@
+---
+title: "Pre-Process 2019"
+author: "Owen Liu"
+date: "12/12/2019"
+output: html_document
+---
+
+# Purpose
+
+Import and join together all months' VMS data for 2019. We import each separate month's .csv file and then bind them together. Then, we rename column headers to match other years.
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(here)
+library(magrittr)
+```
+
+## Import and Bind Rows
+
+```{r import2019}
+mths <- c("Jan","Feb","March","April","May","June","July","Aug","Sept","Oct","Nov","Dec")
+all2019<-purrr::map_df(mths,function(x){
+  read_csv(here::here('data','raw','vms',paste0(x,"_2019.csv")),col_types = 'cccTddddddc')
+})
+glimpse(all2019)
+```
+
+
+## Fix Column Names and Reorder
+
+```{r}
+all2019 <- all2019 %>% 
+  set_names(c("DOCNUM","VESSEL_NAM","DECLARATIO","UTCDATETIM","COURSE","SPEED","AVG_COURSE","AVG_SPEED","LATITUDE","LONGITUDE","PROVIDER"))
+
+glimpse(all2019)
+```
+
+## Save Output
+
+```{r}
+write_csv(all2019,path = here::here('data','raw','vms','VMS_all_data_2019.csv'))
+```
