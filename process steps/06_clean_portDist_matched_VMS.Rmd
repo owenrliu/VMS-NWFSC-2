@@ -27,7 +27,7 @@ theme_set(plot_theme)
 rm(list=setdiff(ls(),c('process_year','alltime')))
 
 # process year (if running this script only, not as part of the pipeline)
-# process_year=2012
+process_year=2012
 ```
 
 ### Read in the data
@@ -79,8 +79,8 @@ fishtix_lastVMS %<>% filter(!is.na(portlat),!is.na(portlon))
 Calculate distance with geosphere
 
 ```{r calc_dist}
-lastVMS_sf <- fishtix_lastVMS %>%  st_as_sf(coords=c('LONGITUDE','LATITUDE'))
-ports_sf <- fishtix_lastVMS %>% st_as_sf(coords=c('portlon','portlat'))
+# lastVMS_sf <- fishtix_lastVMS %>%  st_as_sf(coords=c('LONGITUDE','LATITUDE'))
+# ports_sf <- fishtix_lastVMS %>% st_as_sf(coords=c('portlon','portlat'))
 
 # port_dists <- st_distance(lastVMS_sf,ports_sf,by_element=TRUE)
 
@@ -100,10 +100,10 @@ fishtix_lastVMS %<>%
 ```{r filter_retain}
 trips_to_keep <- fishtix_lastVMS %>%
   filter(port_to_VMS <= 50) %>% 
-  mutate(keep_remove='keep')
+  mutate(keep_remove_portdist='keep')
 trips_to_remove <- fishtix_lastVMS %>%
   filter(port_to_VMS > 50) %>% 
-  mutate(keep_remove='remove')
+  mutate(keep_remove_portdist='remove')
 ```
 
 For `r process_year`, we retain `r length(unique(trips_to_keep$Rec_ID))` trips, and remove `r length(unique(trips_to_remove$Rec_ID))` trips, which is about `r round(length(unique(trips_to_remove$Rec_ID))/length(unique(fishtix_lastVMS$Rec_ID))*100,2)` percent of all trips.
@@ -146,20 +146,20 @@ Sort the VMS and fish ticket data by the output of this filtering exercise.
 
 ```{r}
 keeps <- trips_to_keep %>%
-  select(Rec_ID,keep_remove) %>% 
+  select(Rec_ID,keep_remove_portdist) %>% 
   distinct()
 removes <- trips_to_remove %>% 
-  select(Rec_ID,keep_remove) %>% 
+  select(Rec_ID,keep_remove_portdist) %>% 
   distinct()
 keeps_removes <- bind_rows(keeps,removes)
 
 vms_keeps <- vms %>% 
   left_join(keeps_removes,by='Rec_ID') %>% 
-  filter(keep_remove=='keep')
+  filter(keep_remove_portdist=='keep')
 
 vms_removes <- vms %>% 
   left_join(keeps_removes,by='Rec_ID') %>% 
-  filter(keep_remove=='remove')
+  filter(keep_remove_portdist=='remove')
 ```
 
 ## Save Results

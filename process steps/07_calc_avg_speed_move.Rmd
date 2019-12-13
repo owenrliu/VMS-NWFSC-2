@@ -3,22 +3,22 @@ title: "Calculate Average Speed"
 output: html_document
 ---
 
-12/21/2018
+## Purpose
+
 This script calculates the average speed for each VMS record, using the package `move`. It is meant to be run on the VMS records that have already been matched to fish tickets. In order to calculate average speed, the script also has to remove duplicated VMS records (i.e., same time stamp for same vessel.)
 
+## Setup and Data Import
 
-<br>
-```{r "setup", include=FALSE}
-knitr::opts_knit$set(root.dir = "D:/VMS-repo") 
-getwd()
-```
-
-### Prep for running code
-Clear workspace
 ```{r}
-rm(list=ls())
+library(tidyverse)
+library(here)
+library(sf)
+
+rm(list=setdiff(ls(),c('process_year','alltime')))
+
+# process year (if running this script only, not as part of the pipeline)
+# process_year=2012
 ```
-<br>
 
 Install packages
 ```{r}
@@ -26,28 +26,25 @@ library(tidyverse)
 library(move)
 ```
 
-Input variables
-```{r}
-vmsdir <- "C:/Users/owenr/Documents/postdocs/NOAA NRC/NWFSC work/VMS DATA CONFIDENTIAL/Processed Data/owen processed/clean/"
-years <- c(2009)
-max_speed <- 20 # in m/s
-```
-<br>
-
-
 ### Read in data
-First, the cleaned VMS data
-```{r read}
-vmsdat <- read_csv(paste0(vmsdir,"VMS_Outputs_wTARGET_10d_lookback_", years[1],"_cleaned.csv"),col_types = 'dcTdddcddcdddTDccc')
-if(length(years) > 1){
-  for(i in years[2:length(years)])
-  tmp_vmsdat <- read_csv(paste0(vmsdir,"VMS_Outputs_wTARGET_10d_lookback_", i,"_cleaned.csv"))
-  if(length(colnames(vmsdat)) == length(colnames(tmp_vmsdat))){
-    vmsdat <- rbind(vmsdat, tmp_vmsdat)
-  } else(message("ERROR: dimensions of new VMS data do not match dimensions of previous VMS data."))
-}
+
+First, the cleaned VMS data from the previous step
+
+```{r}
+vms <- read_rds(here::here('data','processed','matched',paste0(process_year,'matched_port_dist_filter.rds')))
 ```
-<br>
+
+## Calculate Speeds
+
+Convert to `sf` object, using the UTM-converted units
+
+```{r}
+vms_sf <- vms %>% 
+  st_as_sf(coords=c('X_COORD','Y_COORD'),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+
+# Calculate distances by grouping by Vessel then lagging observations by one
+
+```
 
 
 ### Convert to `move` data frame
