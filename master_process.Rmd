@@ -1,7 +1,7 @@
 ---
 title: "Step by Step VMS Processing"
 author: "Owen Liu"
-date: "11/25/2019"
+date: Last Run "`r Sys.Date()`"
 output: 
   html_document:
     toc: true
@@ -61,9 +61,9 @@ x<-proc.time()-alltime
 
 **So far, this pipeline for `r process_year` VMS data has taken `r round(x[3]/60,2)` minutes to run.**
 
-# Step 5: Match VMS and Fish Ticket Data
+# Step 4: Match VMS and Fish Ticket Data
 
-```{r step5, message=F,warning=F,child=here::here('process steps','05_match_vms_fishtix.Rmd')}
+```{r step5, message=F,warning=F,child=here::here('process steps','04_match_vms_fishtix.Rmd')}
 ```
 ```{r}
 x<-proc.time()-alltime
@@ -72,9 +72,19 @@ x<-proc.time()-alltime
 
 **So far, this pipeline for `r process_year` VMS data has taken `r round(x[3]/60,2)` minutes to run.**
 
-# Step 6: Filter Data by Distance to Port of Landing
+# Step 5: Filter Matched Data by Speed and Proximity to Ports
 
-```{r step5, message=F,warning=F,child=here::here('process steps','06_clean_portDist_matched_VMS.Rmd')}
+```{r step5, message=F,warning=F,child=here::here('process steps','05_filter_matched_data.Rmd')}
+```
+```{r}
+x<-proc.time()-alltime
+```
+
+**So far, this pipeline for `r process_year` VMS data has taken `r round(x[3]/60,2)` minutes to run.**
+
+# Step 6: Interpolate and Regularize Data
+
+```{r step5, message=F,warning=F,child=here::here('process steps','06_interpolate.Rmd')}
 ```
 ```{r}
 x<-proc.time()-alltime

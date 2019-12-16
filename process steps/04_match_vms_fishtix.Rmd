@@ -251,8 +251,9 @@ fishtix_vms %>%
 Save a version that has all fish ticket data, including records with no VMS match, as well as a filtered dataset that excludes non-VMS records.
 
 ```{r}
+fishtix_vms %<>% select(-month)
 fishtix_vms_all <- fishtix_vms
 fishtix_vms_only <- fishtix_vms %>% filter(has_vms==1)
-write_rds(fishtix_vms_all,here::here('data','processed','matched',paste0(process_year,'matched_all.rds')))
-write_rds(fishtix_vms_only,here::here('data','processed','matched',paste0(process_year,'matched_vms_only.rds')))
+write_rds(fishtix_vms_all,here::here('data','processed','matched','matching',paste0(process_year,'matched_alltix.rds')))
+write_rds(fishtix_vms_only,here::here('data','processed','matched','matching',paste0(process_year,'matched_vmstix_only.rds')))
 ```

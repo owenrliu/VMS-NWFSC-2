@@ -71,9 +71,9 @@ Are any records missing lat/lon?
 
 ```{r}
 missing_lat <- sum(is.na(vms_raw$LATITUDE)); missing_lat
-if(missing_lat > 0){
-  View(vms_raw %>% filter(is.na(LATITUDE)))
-}
+# if(missing_lat > 0){
+#   View(vms_raw %>% filter(is.na(LATITUDE)))
+# }
 ```
 
 **AFTER CHECKING ORIGINAL OLE FILE**, delete the missing record.
