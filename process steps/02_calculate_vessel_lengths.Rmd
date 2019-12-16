@@ -286,6 +286,7 @@ if(plot_output){
 }
 
 ```
+
 ## Assess Missing Data for Fish Tickets
 
 For each year, join vessel length data with landings. How many fish tickets are missing a vessel length, by agency? Non-specific.

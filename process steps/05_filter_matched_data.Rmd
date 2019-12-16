@@ -9,10 +9,13 @@ output: html_document
 
 This final step cleans up the matched fish ticket/VMS records spatially through filtering. The script:
 
-*Removes outlier trips where the Port of Landing is > 50km from the last VMS point of the associated trip
-*Recalculates average speed for each trip and filters out segments with unrealistically large speed. This speed cutoff is set by default at 20 m/s, but can be altered in this script.
-*Flags VMS points that have a bathymetry value > 0
-*Flags VMS points that are within a 3-kilometer buffer of a port, so we can remove points that are not directly associated with a fishing trip (e.g., because the boat is sitting in port between trips)
+* Removes outlier trips where the Port of Landing is > 50km from the last VMS point of the associated trip
+
+* Recalculates average speed for each trip and filters out segments with unrealistically large speed. This speed cutoff is set by default at 20 m/s, but can be altered in this script.
+
+* Flags VMS points that have a bathymetry value > 0
+
+* Flags VMS points that are within a 3-kilometer buffer of a port, so we can remove points that are not directly associated with a fishing trip (e.g., because the boat is sitting in port between trips)
 
 ## Setup and Data Import
 
@@ -199,7 +202,7 @@ vms_speeds %<>%
 
 ### Compare Reported and Calculated Speeds
 
-Correlation between new and old calculations is Subsample randomly for consistency.
+Using a subsample of 100 thousand records here.
 
 ```{r}
 set.seed(0401)

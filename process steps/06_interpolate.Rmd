@@ -157,9 +157,11 @@ orig_vms <- interpolated_data %>%
   dplyr::select(-UTCDATETIM,-X_COORD,-Y_COORD) %>% 
   rename(UTCDATETIM=timestamps,X_COORD=coords.x1,Y_COORD=coords.x2) %>% 
   left_join(vms_move,by = c("Rec_ID", "drvid", "UTCDATETIM", "X_COORD", "Y_COORD"))
+
 vms_trip_info <- vms_move %>% 
   dplyr::select(-VMS_RECNO,-UTCDATETIM,-LATITUDE,-LONGITUDE,-NGDC_M,-X_COORD,-Y_COORD,-AVG_SPEED,-AVG_COURSE,-westcoastdate,-westcoastdate_notime,-segment_dur,-avg_speed_recalc,-in_port,-recnum,-keep_remove_timelag,-longest_seg,-last_seg_longest,-is_last_seg) %>%
   distinct()
+
 new_vms <- interpolated_data %>% 
   filter(sensor=="interpolateTime")%>% 
   dplyr::select(-UTCDATETIM,-X_COORD,-Y_COORD) %>% 
