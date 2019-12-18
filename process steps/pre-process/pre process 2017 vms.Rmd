@@ -1,0 +1,87 @@
+---
+title: "Pre-Process 2017"
+author: "Owen Liu"
+date: "12/17/2019"
+output: html_document
+---
+
+## Purpose
+
+Import and join together all months' VMS data for 2017. We import each separate month's .csv file and then bind them together. Then, we rename column headers to match other years.
+
+2017 seems to have one strange file which we handle below.
+
+```{r, include=FALSE}
+library(tidyverse)
+library(here)
+library(magrittr)
+```
+
+## Import
+
+Get the list of .csv's of interest
+
+```{r}
+filesall <- list.files(here::here('data','raw','vms'))
+files2017 <- list.files(here::here('data','raw','vms')) %>% grepl('2017_',.)
+files2017 <- filesall[files2017]
+```
+
+```{r}
+vms2017 <- purrr::map_df(files2017,function(fl){
+  df<-read_csv(here::here('data','raw','vms',fl))
+  # we can print the problems if there are any
+  if(nrow(problems(df))>0) {glimpse(problems(df))}
+})
+```
+
+Everything parsed, but one of the parses looks strange, for the 17th file:
+
+```{r}
+test <- read_csv(here::here('data','raw','vms',files2017[17]))
+glimpse(test)
+```
+
+Somehow, this file has an extra 6 lines at the beginning. We should be able to just skip them and it should read fine.
+
+```{r}
+test2 <- read_csv(here::here('data','raw','vms',files2017[17]),skip=6)
+glimpse(test2)
+```
+
+This all looks great now. Let's do the import again, leaving this particular file out and joining it afterwards
+
+```{r}
+files2017edit <- files2017[-17]
+vms2017_1 <- purrr::map_df(files2017edit,function(fl){
+  df<-read_csv(here::here('data','raw','vms',fl))
+  # we can print the problems if there are any
+  if(nrow(problems(df))>0) {glimpse(problems(df))}
+  return(df)
+})
+vms2017_2 <- read_csv(here::here('data','raw','vms',files2017[17]),skip=6)
+
+vms2017 <- bind_rows(vms2017_1,vms2017_2)
+```
+
+## Fix Column Names and Save Result
+
+Make sure the column names are the same as in other years' raw data and write out the result as a `.csv`
+
+```{r}
+# use 2012 data as template
+correct_colnames <- read_csv(here::here('data','raw','vms',paste0("VMS_all_data_2012.csv")),col_types='cddcddcc',n_max = 5) %>% colnames()
+correct_colnames
+colnames(vms2017)
+
+# reorder then rename columns
+vms2017 %<>% 
+  select(`UTC DATE TIME`,LATITUDE,LONGITUDE,VESSEL_NAME,AVG_SPEED,AVG_COURSE,DOCNUM,DECLARATIONS) %>% 
+  set_colnames(correct_colnames)
+
+#last look
+glimpse(vms2017)
+
+# Save
+write_csv(vms2017,path = here::here('data','raw','vms','VMS_all_data_2017.csv'))
+```

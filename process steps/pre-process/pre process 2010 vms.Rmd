@@ -1,0 +1,78 @@
+---
+title: "Pre-Process 2010"
+author: "Owen Liu"
+date: "12/17/2019"
+output: html_document
+---
+
+## Purpose
+
+Import and join together all months' VMS data for 2010. We import each separate month's .csv file and then bind them together. Then, we rename column headers to match other years.
+
+```{r, include=FALSE}
+library(tidyverse)
+library(here)
+library(magrittr)
+```
+
+## Import
+
+```{r}
+filesall <- list.files(here::here('data','raw','vms'))
+files2010 <- list.files(here::here('data','raw','vms')) %>% grepl('2010_',.)
+files2010 <- filesall[files2010]
+
+# import first file and assess parsing errors
+test <- read_csv(here::here('data','raw','vms',files2010[1]))
+problems(test)
+```
+
+Interestingly, it seems that there is a row of problems exactly every 50,000th record. This hints that the problem might be that the original data pull from OLE can only pull 50,000 records at a time before it starts over with a new header row. We can see this if we look at what we tried to parse as the 50001st row of data:
+
+```{r}
+slice(test,50001)
+```
+
+It looks just like a new set of column headers.
+
+The fix for this is easy: just remove those erroneous rows.
+
+```{r}
+# find problematic row numbers
+problem_rows <- problems(test) %>% distinct(row) %>% pull(row)
+
+#remove problem rows and check
+test2 <- test %>% slice(-problem_rows)
+test2 %>% slice(50000:50002)
+```
+
+This looks good. Let's apply this to all the files
+
+```{r}
+vms2010 <- purrr::map_df(files2010,function(fl){
+  df<-read_csv(here::here('data','raw','vms',fl))
+  # we can print the problems
+  glimpse(problems(df))
+  problem_rows <- problems(test) %>% distinct(row) %>% pull(row)
+  df %<>% slice(-problem_rows)
+  return(df)
+})
+```
+
+It seems that all the files have the same issue, that should be solved now.
+
+## Fix Column Names and Save Result
+
+Make sure the column names are the same as in other years' raw data and write out the result as a `.csv`
+
+```{r}
+# use 2012 data as template
+correct_colnames <- read_csv(here::here('data','raw','vms',paste0("VMS_all_data_2012.csv")),col_types='cddcddcc',n_max = 5) %>% colnames()
+correct_colnames
+colnames(vms2010)
+vms2010 %<>% set_colnames(correct_colnames)
+
+# Save
+write_csv(vms2010,path = here::here('data','raw','vms','VMS_all_data_2010.csv'))
+```
+

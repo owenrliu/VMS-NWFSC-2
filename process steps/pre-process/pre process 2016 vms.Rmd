@@ -1,0 +1,142 @@
+---
+title: "Pre-Process 2016"
+author: "Owen Liu"
+date: "12/17/2019"
+output: html_document
+---
+## Purpose
+
+Import and join together all months' VMS data for 2016. We import each separate month's .csv file and then bind them together. Then, we rename column headers to match other years.
+
+The problem with 2016 is that the files seem to be fixed-width. We will try to assess how to deal with this using `readr::read_fwf` to read a fixed width file.
+
+```{r, include=FALSE}
+library(tidyverse)
+library(here)
+library(magrittr)
+```
+
+## Assess File Structure
+
+Get the list of .csv's of interest
+
+```{r}
+filesall <- list.files(here::here('data','raw','vms'))
+files2016 <- list.files(here::here('data','raw','vms')) %>% grepl('2016_',.)
+files2016 <- filesall[files2016]
+```
+
+First, read a couple lines and look at them
+
+```{r}
+# import first file and assess parsing errors
+test <- read_lines(here::here('data','raw','vms',files2016[1]),n_max=5)
+
+test
+```
+
+So, the first line contains the column headers, the second line seems to be the delimiter of columns widths, and then the real data begins
+
+Let's see if we can use the second line to obtain a vector of column widths to then use to inform a reading of the fixed width file overall. We split the second line into pieces and measure the width of each.
+
+```{r}
+# get the number of dashes for each column of data, then add 1 to account for the trailing space
+colwidths <- test[2] %>% str_split(" ") %>% map(nchar) %>% pluck(1)
+colwidths <- colwidths + 1
+colwidths
+```
+
+So now we have the width of each column, let's see if we can read the data this way
+
+```{r}
+test2 <- read_fwf(here::here('data','raw','vms',files2016[1]),col_positions = fwf_widths(colwidths),n_max=5)
+test2
+```
+
+Hmmm. This seems like it's getting better, but now let's skip the first two lines, and instead use the first line as column header
+
+```{r}
+colheaders <- test2 %>% slice(1) %>% paste()
+colheaders
+```
+
+Now read again, skipping lines
+
+```{r}
+test3 <- read_fwf(here::here('data','raw','vms',files2016[1]),col_positions = fwf_widths(colwidths,col_names = colheaders),skip=2,n_max=5)
+test3
+```
+
+Okay this is getting quite close! It seems that it is reading all of the data correctly, although we have a few parsing errors in the last column now
+
+```{r}
+problems(test3)
+```
+It seems that the reader is expecting 17 characters, but is getting only 3. There is an option in fixed-width files to have a ragged right edge---that is, the last column can be variable width. Let's see if that option helps.
+
+```{r}
+colwidths_ragged <- colwidths
+colwidths_ragged[length(colwidths_ragged)] <- NA
+test4 <- read_fwf(here::here('data','raw','vms',files2016[1]),col_positions = fwf_widths(colwidths_ragged,col_names = colheaders),skip=2,n_max=5)
+test4
+```
+Looks great!! We should now be able to read all the files
+
+## Import
+
+Apply the solution above to all 2016 files
+
+```{r}
+
+vms2016 <- purrr::map_df(files2016,function(fl){
+  
+  # for each file...
+  # read first few lines
+  testlines <- read_lines(here::here('data','raw','vms',fl),n_max=5)
+  
+  # get column widths and allow for ragged edge
+  colwidths <- testlines[2] %>% str_split(" ") %>% map(nchar) %>% pluck(1)
+  colwidths <- colwidths + 1
+  colwidths_ragged <- colwidths
+  colwidths_ragged[length(colwidths_ragged)] <- NA
+  
+  # get column headers
+  testlines2 <- read_fwf(here::here('data','raw','vms',fl),col_positions = fwf_widths(colwidths_ragged),n_max=5,col_types = 'cccccccccc')
+  colheaders <- testlines2 %>% slice(1) %>% paste()
+  
+  # read full data
+  df<-read_fwf(here::here('data','raw','vms',fl),col_positions = fwf_widths(colwidths_ragged,col_names = colheaders),skip=2)
+  # we can print the problems if there are any
+  if(nrow(problems(df))>0) {glimpse(problems(df))}
+  # return data
+  return(df)
+})
+
+```
+
+## Fix Column Names and Save Result
+
+Make sure the column names are the same as in other years' raw data and write out the result as a `.csv`
+
+In this final step we remove `SPEED` and `COURSE` columns. These may be useful later, but for now we do not have these data for enough years.
+
+```{r}
+colnames(vms2016)
+vms2016 %<>% select(-SPEED,-COURSE)
+
+# use 2012 data as template for column names
+correct_colnames <- read_csv(here::here('data','raw','vms',paste0("VMS_all_data_2012.csv")),col_types='cddcddcc',n_max = 5) %>% colnames()
+correct_colnames
+
+# reorder then rename columns
+vms2016 %<>% 
+  select(`UTC DATE TIME`,LATITUDE,LONGITUDE,VESSEL_NAME,AVG_SPEED,AVG_COURSE,DOCNUM,DECLARATIONS) %>% 
+  set_colnames(correct_colnames)
+
+# a last look
+glimpse(vms2016)
+
+# Save
+write_csv(vms2016,path = here::here('data','raw','vms','VMS_all_data_2016.csv'))
+```
+
