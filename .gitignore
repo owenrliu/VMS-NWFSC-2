@@ -15,6 +15,9 @@
 *.RDS
 *.txt
 
+## knitted html files that may have confidential data
+*.html
+
 ### R ###
 # History files
 .Rhistory
