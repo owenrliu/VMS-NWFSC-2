@@ -15,12 +15,11 @@ library(here)
 
 # Master VMS and Fish Ticket Processing Workflow
 
-This document collates all individual steps of VMS/Fish Ticket processing. For testing, we will print a timer after each step.
+This document collates all individual steps of VMS/Fish Ticket processing for a chosen year.
 
 ```{r timer, include=FALSE}
 alltime <- proc.time()
 ```
-
 
 ## Choose Year to Process
 
@@ -28,7 +27,7 @@ This parameter will get passed through all processing steps
 
 ```{r choose year}
 alltime <- proc.time()
-process_year <- 2015
+process_year <- 2019
 ```
 
 # Step 1: Process Raw Fish Ticket Data

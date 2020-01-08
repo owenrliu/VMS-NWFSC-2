@@ -17,10 +17,12 @@ library(magrittr)
 
 ## Import and Bind Rows
 
+We read date-times as character for now
+
 ```{r import2019}
 mths <- c("Jan","Feb","March","April","May","June","July","Aug","Sept","Oct","Nov","Dec")
 all2019<-purrr::map_df(mths,function(x){
-  read_csv(here::here('data','raw','vms',paste0(x,"_2019.csv")),col_types = 'cccTddddddc')
+  read_csv(here::here('data','raw','vms',paste0(x,"_2019.csv")),col_types = 'ccccddddddc')
 })
 glimpse(all2019)
 ```
@@ -28,9 +30,16 @@ glimpse(all2019)
 
 ## Fix Column Names and Reorder
 
+We choose only some columns for now, to match the VMs data we have for other years.
+
 ```{r}
+# use 2012 data as template
+correct_colnames <- read_csv(here::here('data','raw','vms',paste0("VMS_all_data_2012.csv")),col_types='cddcddcc',n_max = 5) %>% colnames()
+correct_colnames
+
 all2019 <- all2019 %>% 
-  set_names(c("DOCNUM","VESSEL_NAM","DECLARATIO","UTCDATETIM","COURSE","SPEED","AVG_COURSE","AVG_SPEED","LATITUDE","LONGITUDE","PROVIDER"))
+  select(`UTC time`,Lat, Lon, Name, `Avg Speed`, `Avg Course`, Docnum, `Declaration Code`) %>% 
+  set_colnames(correct_colnames)
 
 glimpse(all2019)
 ```

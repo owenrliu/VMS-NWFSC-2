@@ -128,10 +128,10 @@ fishtix %<>%
   
   # add a time for the end of day
   mutate(end = ymd_hms(paste(date, "23:59:59"),tz= "America/Los_Angeles")) %>%
-  arrange(date) %>% 
+  # arrange(date) %>%
 
-  # find the ticket BEFORE each ticket and note its time. Instead of creating NAs for the first ticket of the year for each vessel, assign a default value of January 1st. (CAN CHANGE THIS LATER, but for now allows us to use the first ticket of the year for each vessel)
-  mutate(prev_ticket_dttm=lag(end,1,default=ymd_hms(paste0(process_year,"-01-01", " 23:59:59"),tz= "America/Los_Angeles"))) %>%
+  # find the ticket BEFORE each ticket and note its time. Instead of creating NAs for the first ticket of the year for each vessel, assign a default value of the first ticket minus the lookback window.
+  mutate(prev_ticket_dttm=lag(end,order_by=end,default=first(end,order_by = end)-days(lookback_window))) %>%
 
   # add lookback window
   mutate(lookback_dttm=end-days(lookback_window)) %>%
@@ -160,9 +160,11 @@ join_vms_fishtix <- function(mth){
   tmptix <- fishtix %>% 
     filter(month==mth)
   
+  tmpvms <- vms %>% filter(month(westcoastdate)%in%c(mth-1,mth))
+  
   tmptix %>%
     # Left-join the VMS data by Vessel ID (drvid/DOCNUM)
-    left_join(vms,by=c('drvid'='DOCNUM')) %>% 
+    left_join(tmpvms,by=c('drvid'='DOCNUM')) %>% 
     
     # filter the VMS data such that the data for each trip is correctly truncated to fall within the lookback window. 
     # If any tickets did NOT match VMS data, they will not have associated dates from VMS.
@@ -196,10 +198,6 @@ fishtix_vms <- purrr::map_df(unique(fishtix$month),~join_vms_fishtix(.)) %>%
 x<-proc.time()-ptm
 cat('Joining VMS data and filtering took',x[3]/60,'minutes to run for',process_year)
 
-
-# some checks
-x <- fishtix_vms %>% filter(end<="2012-01-01 23:59:59 PST")
-
 ```
 
 ## Visualize Matching Results
@@ -207,6 +205,12 @@ x <- fishtix_vms %>% filter(end<="2012-01-01 23:59:59 PST")
 We now have the full matched dataset, including retaining `r sum(!fishtix_vms$has_vms)` fish ticket records with no associated VMS data.
 
 ```{r view outputs}
+# test<- fishtix_vms %>% 
+#   select(Rec_ID,trip_dur,has_vms) %>%
+#   mutate(trip_dur=as.integer(trip_dur)) %>% 
+#   distinct() %>% 
+#   ungroup() %>% 
+#   mutate(has_vms=ifelse(has_vms,"VMS Trips","Non-VMS Trips"))
 # How long are trips?
 fishtix_vms %>% 
   select(Rec_ID,trip_dur,has_vms) %>%

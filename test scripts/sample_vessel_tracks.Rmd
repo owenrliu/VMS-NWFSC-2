@@ -1,0 +1,205 @@
+---
+title: "Sample Trip Tracks"
+author: "Owen Liu"
+date: "12/19/2019"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+## Purpose
+
+Here we pull out some example trip tracks to display the results of processing. We use the filtered, non-interpolated VMS data from 2017.
+
+## Setup and Data Import
+
+```{r,include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = FALSE, message=FALSE,warning=FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(magrittr)
+library(sf)
+library(viridis)
+library(here)
+library(rnaturalearth)
+library(extrafont)
+
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="Gill Sans MT",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+
+
+vms <- read_rds(here::here('data','processed','matched','filtering','2017matched_filtered.rds'))
+vms_dcrb <- vms %>% filter(TARGET_rev=='DCRB')
+set.seed(1122)
+```
+
+## Find Representative Trips
+
+We find trips that represent different modes of behavior in the Dungeness fishery. Specifically, we are interested in a few types of trips:
+
+*  Single-day round trips to one home port
+*  Multi-day round trips to one home port
+*  Multi-day trips that transit between ports
+*  Trips with mid-trip returns to port
+
+We extract five random examples of each type of trip and plot them 
+
+```{r}
+# create individual line segments
+# NOTE: This creates look-one-point-ahead line segments
+create_linesegs <- function(sf_df){
+  linesegs <- sf_df %>% 
+    mutate(pt=row_number()) %>% 
+    # create start and end points for each segment by duplicating rows (so that, e.g., the first segment will connect point 1 to 2, the second segment will connect point 2 to 3, etc.)
+    slice(1,rep(2:(n()-1),each=2),n()) %>% 
+    # line segment identifier, such that the segment for each VMS point is composed of its own point and the next point
+    mutate(seg=lag(pt,1)) %>% replace_na(list(seg=1)) %>% 
+    # build the lines
+    group_by(seg) %>% 
+    summarise() %>% 
+    filter(st_geometry_type(.) == "MULTIPOINT") %>% 
+    st_cast("LINESTRING") %>% 
+    ungroup()
+  return(linesegs)
+}
+
+coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington')) %>% 
+  st_transform(crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+
+cpal <- viridis(2,begin=0.2,end=0.8)
+
+# Make trip plot function
+plot_trip <- function(trip_sf){
+  trip_sf %<>% mutate(in_port_bool=!is.na(in_port))
+  segs <- create_linesegs(trip_sf)
+  bbox <- st_bbox(segs)
+  all_ports <- unique(trip_sf$in_port)
+  all_ports <- all_ports[!is.na(all_ports)]
+  port_of_origin <- all_ports[1]
+
+  ggplot()+
+    geom_sf(data=coaststates,color='gray50')+
+    geom_sf(data=segs,color='black')+
+    geom_sf(data=trip_sf,aes(color=in_port_bool),key_glyph='point',size=1.5)+
+    scale_color_manual(values=cpal,labels=c("Not in Port","In Port"))+
+    theme(axis.text.x = element_text(angle=45))+
+    coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+    labs(x="Longitude",y="Latitude",title=paste0("Port of Origin: ",port_of_origin,"\nAll Ports: ",paste0(all_ports,collapse=", ")),color="")
+}
+
+```
+
+
+## Single-day Round-trips
+
+```{r}
+vms_single <- vms_dcrb %>% 
+  filter(trip_dur<2) %>% 
+  group_by(Rec_ID) %>% 
+  filter(any(is.na(in_port))) %>% 
+  filter(first(in_port,order_by = westcoastdate)==pacfin_port_code) %>% 
+  st_as_sf(coords=c('X_COORD','Y_COORD'),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+
+# a random selection of 5 trips
+vms_single_trips <- vms_single %>% pull(Rec_ID) %>% unique() %>% sample(5)
+
+vms_single_wplots <- vms_single %>% 
+  filter(Rec_ID %in% vms_single_trips) %>% 
+  group_by(Rec_ID) %>% nest() %>% 
+  # make plots for those 5 trips
+  mutate(trip_plot=purrr::map(data,~plot_trip(.)))
+
+# plot_grid(plotlist=pluck(vms_single_wplots,'trip_plot'))
+purrr::map(1:5,function(x)vms_single_wplots %>% pluck("trip_plot",x))
+
+```
+
+## Multi-Day Round-Trips
+
+```{r}
+vms_multi <- vms_dcrb %>% 
+  filter(trip_dur>1.5) %>% 
+  group_by(Rec_ID) %>% 
+  filter(any(is.na(in_port))) %>% 
+  filter(first(in_port,order_by = westcoastdate)==pacfin_port_code) %>% 
+  st_as_sf(coords=c('X_COORD','Y_COORD'),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+
+# a random selection of 5 trips
+vms_multi_trips <- vms_multi %>% pull(Rec_ID) %>% unique() %>% sample(5)
+
+vms_multi_wplots <- vms_multi %>% 
+  filter(Rec_ID %in% vms_multi_trips) %>% 
+  group_by(Rec_ID) %>% nest() %>% 
+  # make plots for those 5 trips
+  mutate(trip_plot=purrr::map(data,~plot_trip(.)))
+
+# plot_grid(plotlist=pluck(vms_single_wplots,'trip_plot'))
+purrr::map(1:5,function(x)vms_multi_wplots %>% pluck("trip_plot",x))
+```
+
+## Multi-Day "Transits"
+
+```{r}
+vms_transit <- vms_dcrb %>% 
+  filter(trip_dur>1.5) %>% 
+  group_by(Rec_ID) %>% 
+  filter(any(is.na(in_port))) %>% 
+  # filter such that the first port on the trip is not equal to the last
+  filter(first(in_port,order_by = westcoastdate)!=last(in_port,order_by = westcoastdate)) %>% 
+  st_as_sf(coords=c('X_COORD','Y_COORD'),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+
+# a random selection of 5 trips
+vms_transit_trips <- vms_transit %>% pull(Rec_ID) %>% unique() %>% sample(5)
+
+vms_transit_wplots <- vms_transit %>% 
+  filter(Rec_ID %in% vms_transit_trips) %>% 
+  group_by(Rec_ID) %>% nest() %>% 
+  # make plots for those 5 trips
+  mutate(trip_plot=purrr::map(data,~plot_trip(.)))
+
+# plot_grid(plotlist=pluck(vms_single_wplots,'trip_plot'))
+purrr::map(1:5,function(x)vms_transit_wplots %>% pluck("trip_plot",x))
+```
+
+## Mid-Trip Returns to Port
+
+
+```{r}
+vms_returns <- vms_dcrb %>%
+  mutate(is_in_port=!is.na(in_port)) %>% 
+  group_by(Rec_ID) %>% 
+  mutate(last_in_port=lag(is_in_port,1,order_by = westcoastdate)) %>%
+  mutate(return_leave=case_when(
+    is_in_port & last_in_port ~ "port",
+    is_in_port & !last_in_port ~ "return",
+    !is_in_port & last_in_port ~ "depart",
+    !is_in_port & !last_in_port ~ "not in port"
+  )) %>% 
+  mutate(num_returns=sum(return_leave=='return',na.rm=T)) %>% 
+  filter(num_returns>1) %>%
+  ungroup() %>% 
+  st_as_sf(coords=c('X_COORD','Y_COORD'),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+
+# a random selection of 5 trips
+vms_returns_trips <- vms_returns %>% pull(Rec_ID) %>% unique() %>% sample(5)
+
+vms_returns_wplots <- vms_returns %>% 
+  filter(Rec_ID %in% vms_returns_trips) %>% 
+  group_by(Rec_ID) %>% nest() %>% 
+  # make plots for those 5 trips
+  mutate(trip_plot=purrr::map(data,~plot_trip(.)))
+
+# plot_grid(plotlist=pluck(vms_single_wplots,'trip_plot'))
+purrr::map(1:5,function(x)vms_returns_wplots %>% pluck("trip_plot",x))
+```

@@ -77,29 +77,22 @@ source(here::here('process steps',"Report_Vessel_Length_processedtix_functions.R
 Enter processing options: Year desired to be processed, whether to only process Dungeness vessels, and whether to plot outputs.
 
 ```{r process options}
-# process_year <- c(2011)
+# process_year <- 2018
 dcrb_only <- FALSE
 plot_output <- TRUE
 ```
 
 ## Vessel Permit Data
 
-Load permits data for 2016-2017 
+Load permits data
 
 ```{r load perm}
-permits1 <- read_csv(here::here('data','raw','vessel registration','Vessel_Registrations_2016_2017.csv'),col_types='ddcddccdcccccdddcccccccddll')
-```
 
-Load permits data since 1981
-```{r}
-permits2 <- read_csv(here::here('data','raw','vessel registration','Vessel_Registrations_1981_2016.csv'),col_types='ddcddccdcccccdddcccccccddll')
-```
+permitsfiles <- list.files(here::here('data','raw','vessel registration'),full.names = T)
 
-Bind data frames
-
-```{r permits}
-permits <- bind_rows(permits1, permits2)
-rm(permits1, permits2)
+permits <- purrr::map_df(permitsfiles,function(fl){
+  read_csv(fl,col_types='ddcddccdcccccdddcccccccddll')
+}) %>% distinct()
 ```
 
 ## Subset Permit Data

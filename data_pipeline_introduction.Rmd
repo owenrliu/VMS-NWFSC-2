@@ -1,0 +1,60 @@
+---
+title: "VMS Pipeline Introduction"
+author: "Owen Liu"
+date: "1/7/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(here)
+library(tidyverse)
+```
+
+## Purpose
+
+This repository collates the code used to process VMS data and link it to PacFIN fish ticket data for the west coast. These outputs are useful for a wide array of applications in west coast fishery management. For example, fish-ticket-linked VMS data are useful for describing fishing behavior and dynamics, risk to protected resources, and drivers of change in west coast fisheries.
+
+This is a direct update to work done primarily by M. Fisher and J. Samhouri on a previous version of this workflow.
+
+## General Structure
+
+This VMS-fish ticket data processing pipeline is organized in six steps required to clean, match, and interpolate the data for each year. Each step is briefly described here, with the details and step-by-step code available for each year in the `master process htmls` folder. The six steps are (with associated example file names):
+
+1. **Clean and organize PacFIN fish tickets**. This step takes the raw PacFIN fish tickets, checks for errors, extracts and renames the variables of interest (such as gear type and catches of various species), and, most importantly, defines target species for each ticket based on both landed pounds and revenue.
+
+2. **Assign vessel lengths to the fish tickets**, based on a separate database of vessel registrations and a set of decision rules to address vessels with multiple conflicting records, missing records, etc.
+
+3. **Clean and organize raw VMS data**. We add unique identification numbers for each VMS record, remove records that are outside our spatial domain (west coast US EEZ), and attach depth via a spatial bathymetry layer.
+
+4. **Match the cleaned VMS and fish ticket data**. This is one of the more involved steps because it involves making important decisions on how to join VMS data to fish ticket data. At its base, the match is done through the unique vessel identification numbers that are common to both data sources. Then, we assign VMS records to individual fish tickets by their timestamps: the VMS records associated with a fish ticket are those that fall between each ticket and the previous ticket associated with that vessel, OR within the last 7 days, whichever window of time is shorter. The result of this step is one matched dataset, including the information from both the fish tickets and the VMS data
+
+5. **Filter the matched data**. We impose a few filters to remove seemingly erroneous records. The filters include removing trips that do not seem to return to the correct landing port; removing VMS segments whose calculated speed is unrealistically high (>20 m/s); removing VMS points that are seemingly on land (have a positive depth value); and removing VMS points that are between fishing trips, i.e. VMS pings from a vessel sitting in port idle between trips.
+
+6. **Create an interpolated, regularized version of the matched data**. For some applications, analytical methods require spatial records to be evenly distributed across time. We perform linear interpolation of each fishing trip, placing some new VMS points along vessel trajectories such that there is one record exactly every hour.
+
+## Intermediate Datasets
+
+Throughout the data pipeline, there are intermediate versions of the dataset that may be useful to practitioners for different applications. These datasets are associated with each major step of the pipeline, and are stored under the `data/processed` folder of this repository:
+
+1. Cleaned fish tickets with associated target species. `/fish tickets/2009fishtix.rds`
+
+2. Same as above but with associated vessel lengths. `/fish tickets/2009fishtix_vlengths.rds`. Also saved the derived matching key that combines vessel identification numbers with their final assigned vessel length. `/vessel length keys/vessel_length_key_2009.rds`
+
+3. Cleaned VMS data (pre-matching). `/vms/2009_vms_clean.rds`. Also saved the VMS records that have duplicates in the data (less useful but kept for quality control and error checking). `/vms/2009_duplicates_only.rds`
+
+4. Matched data, in two versions, one that retains fish ticket data that were *not* matched to any VMS data (`/matched/matching/2009matched_alltix.rds`), and one where these unmatched fish ticket records were removed (`/matched/matching/2009matched_vmstix_only.rds`)
+
+5. In the filtering of the matched data, we also retain two versions of the data, one where the appropriate filters are calculated and noted, but where the data are not actually filtered (`/matched/filtering/2009matched_unfiltered.rds`, primarily for quality checking); and one version where the filtering is actually performed (`/matched/filtering/2009matched_filtered.rds`)
+
+6. The final, matched, interpolated and regularized data. `/matched/interpolation/2009interpolated.rds`
+
+## Glossary
+
+Below is a table of all of the variables included in the final versions of the data and their descriptions.
+
+```{r, echo=FALSE}
+dat <- read_csv(here::here('data','rosetta.csv'),col_types = 'ccc')
+kable(dat)
+```
+

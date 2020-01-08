@@ -2,7 +2,7 @@
 Update to the NOAA/NWFSC VMS and fish ticket data processing pipeline
 
 # Purpose
-This repository collates the code used to process VMS data and link it to PacFIN fish ticket data for the west coast. These outputs are useful for a wide array of applications in west coast fishery management. For example, fish-ticket-linked VMS data are useful for descrbing fishing behavior and dynamics, risk to protected resources, and drivers of change in west coast fisheries.
+This repository collates the code used to process VMS data and link it to PacFIN fish ticket data for the west coast. These outputs are useful for a wide array of applications in west coast fishery management. For example, fish-ticket-linked VMS data are useful for describing fishing behavior and dynamics, risk to protected resources, and drivers of change in west coast fisheries.
 
 This is a direct update to work done primarily by M. Fisher and J. Samhouri on a previous version of this workflow.
 
