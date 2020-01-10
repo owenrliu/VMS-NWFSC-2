@@ -1,0 +1,116 @@
+---
+title: "Create Port Group/Crab Season Template"
+author: "Owen Liu"
+date: "1/9/2020"
+output: html_document
+---
+
+## Purpose
+
+To add crab/fishing season to the fish ticket data, we need to do some manual defining of fishing start dates. In this script, we make an 'empty' template for defining these crab seasons.
+
+We find, for all of the fish tickets in the data, all of the year/port-group combinations that have recorded commercial landings of Dungeness crab.
+
+For comparison, we then denote the first trip after November 1 of each year that is tagged as 'commercial' crab landings, to compare later to the official start dates.
+
+### Import Data
+```{r}
+library(tidyverse)
+library(magrittr)
+library(here)
+library(lubridate)
+```
+
+```{r}
+fishtix <- purrr::map_df(2009:2019, function(yr){
+  read_rds(paste0(here::here('data','processed','fish tickets'),"/",yr,"fishtix.rds"))
+})
+
+# only Dungeness target
+fishtix %<>% filter(TARGET_rev=="DCRB")
+```
+
+### Find Year and Port-Group Combinations
+
+Find the unique year and port group combintions for all commercial Dungeness crab trips.
+
+First, how many tickets of different removal types do we have?
+```{r}
+removal_code_counts <- fishtix %>% distinct() %>% count(removal_type_name,removal_type_code)
+removal_code_counts %>% arrange(desc(n))
+```
+
+The large majority, as we would expect, are commercial removals, followed by personal use.
+
+Now, we filter for commercial sales and find the unique combinations of port-groups and years.
+
+```{r}
+year_ports <- fishtix %>% 
+  filter(removal_type_code %in% c("C","D")) %>%
+  # add general indicator of crab season
+  mutate(crab_season=case_when(
+    month(date)>10 ~ paste0(year,"-",year+1),
+    month(date)<=10 ~ paste0(year-1,"-",year))) %>% 
+  distinct(agency_code,port_group_code,crab_season) %>% 
+  arrange(crab_season,agency_code,port_group_code)
+year_ports
+```
+
+### Find First Commercial Landing for Each Port
+
+For each of the years and port groups in the above table, find the first commercial landing after November 1.
+
+```{r}
+first_commercial_landings <- fishtix %>% 
+  filter(removal_type_code %in% c("C","D")) %>%
+  # add general indicator of crab season
+  mutate(crab_season=case_when(
+    month(date)>10 ~ paste0(year,"-",year+1),
+    month(date)<=10 ~ paste0(year-1,"-",year))) %>% 
+  group_by(agency_code,port_group_code,crab_season) %>% 
+  summarise(first_ticket=first(date,order_by = date)) %>% 
+  ungroup()
+```
+
+
+### Add Empty Columns to Fill In
+
+Finally, add `season_start` and `season_end` columns that we will fill in ourselves manually for later joining to the overall data to define crab seasons.
+
+```{r}
+crab_season_template <- first_commercial_landings %>% 
+  mutate(season_start=NA_character_,season_end=NA_character_)
+```
+
+### Save
+
+```{r}
+write_csv(crab_season_template,here::here('test scripts','crab_season_template.csv'))
+```
+
+### Visualize
+
+Let's look at the first commercial landing date, by port group and year
+```{r,fig.height=8,fig.width=10}
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+
+# calculate days after Nov 1
+test <- crab_season_template %>% 
+  mutate(start_yr=substr(crab_season,1,4) %>% as.numeric()) %>% 
+  mutate(start_date=as_date(paste0(start_yr,"-11-01"))) %>% 
+  mutate(days_after_nov1=difftime(first_ticket,start_date,units='days'))
+test %>% 
+  ggplot(aes(crab_season,days_after_nov1,color=agency_code))+
+  geom_point(size=2)+
+  labs(x="Season",y="Days after Nov. 1",title="Dates of First Commercial Landing\nin Days After November 1st",color="State")+
+  facet_wrap(~port_group_code)+
+  theme(axis.text.x = element_text(angle = 90,vjust=+0.5))
+```
+
