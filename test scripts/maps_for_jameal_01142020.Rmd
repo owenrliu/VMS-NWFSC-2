@@ -1,0 +1,387 @@
+---
+title: "Maps For Jameal"
+author: "Owen Liu"
+date: "1/14/2020"
+output: html_document
+---
+
+## Maps for Jameal, 01/14/2020
+```{r setup}
+knitr::opts_chunk$set(echo=FALSE,message=F,warning=F)
+```
+
+```{r}
+library(tidyverse)
+library(magrittr)
+library(sf)
+library(here)
+library(rnaturalearth)
+library(viridis)
+```
+
+```{r}
+load(here::here('test scripts','Scenario_Analysis_Data_2009_2018.RData'))
+grd <- read_sf(here::here('data','raw','grid','regions_master_final_lamb.shp'))
+# background map
+coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington')) %>% 
+  st_transform(st_crs(grd))
+
+# BIAs
+BIA <- read_csv(here::here('data','raw','grid','Grid5km_BIA_overlap.csv'),col_types = cols())
+BIA %<>% select(GRID5KM_ID,BIA_mn,BIA_bm)
+
+grd %<>% left_join(BIA,by='GRID5KM_ID')
+
+BIA_mn <- grd %>% 
+  filter(BIA_mn==1) %>% 
+  group_by(BIA_mn) %>% 
+  summarise()
+BIA_bm <- grd %>% 
+  filter(BIA_bm==1) %>% 
+  group_by(BIA_bm) %>% 
+  summarise()
+BIA_both <- grd %>% 
+  mutate(BIA=BIA_mn==1|BIA_bm==1) %>% 
+  filter(BIA) %>% 
+  group_by(BIA) %>% 
+  summarise()
+  
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=10,color="black"),
+        legend.text = element_text(size=10),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+
+## humpback whales during winter DCRB season (Nov-Mar)
+
+```{r}
+names(full.df)
+# get coordinates of data in correct projection
+
+# Average Nov-Mar humpback abundance
+h_nov_mar <- full.df %>% 
+  filter(month %in% c(11,12,1,2,3)) %>% 
+  group_by(Region, GRID5KM_ID) %>% 
+  summarise(abund=mean(H_Avg_Abund,na.rm=T)) %>% 
+  ungroup()
+
+# central CA
+cenCA_h_nov_mar <- h_nov_mar %>% 
+  filter(Region=="CenCA") %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(cenCA_h_nov_mar)
+cenCA_h_nov_mar_plot <- ggplot()+
+  geom_sf(data=BIA_mn,fill='gray80',col='black')+
+  geom_sf(data=cenCA_h_nov_mar,aes(fill=abund),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  scale_fill_viridis(na.value=NA,option="D",name="Humpback Abundance",breaks=seq(0,1,by=0.25),limits=c(0,1))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Average Humpback Abundance\nNov-Mar 2009-2018")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16))
+cenCA_h_nov_mar_plot
+
+# northern CA
+norCA_h_nov_mar <- h_nov_mar %>% 
+  filter(Region=="NorCA") %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(norCA_h_nov_mar)
+norCA_h_nov_mar_plot<-ggplot()+
+  geom_sf(data=BIA_mn,fill='gray80',col='black')+
+  geom_sf(data=norCA_h_nov_mar,aes(fill=abund),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  scale_fill_viridis(na.value=NA,option="D",name="Humpback Abundance",breaks=seq(0,1,by=0.25),limits=c(0,1))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Average Humpback Abundance\nNov-Mar 2009-2018")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16))
+```
+
+## humpback whales during spring DCRB season (Apr-Jul)
+
+```{r}
+# Average April to July humpback abundance
+h_apr_jul <- full.df %>% 
+  filter(month %in% c(4,5,6,7)) %>% 
+  group_by(Region, GRID5KM_ID, BIA_mn_noNAs) %>% 
+  summarise(abund=mean(H_Avg_Abund,na.rm=T)) %>% 
+  ungroup()
+
+# central CA
+cenCA_h_apr_jul <- h_apr_jul %>% 
+  filter(Region=="CenCA") %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(cenCA_h_apr_jul)
+cenCA_h_apr_jul_plot <- ggplot()+
+  geom_sf(data=BIA_mn,fill='gray80',col='black')+
+  geom_sf(data=cenCA_h_apr_jul,aes(fill=abund),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  scale_fill_viridis(na.value=NA,option="D",name="Humpback Abundance",breaks=seq(0,1,by=0.25),limits=c(0,1))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Average Humpback Abundance\nApr-Jul 2009-2018")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16))
+cenCA_h_apr_jul_plot
+
+# northern CA
+norCA_h_apr_jul <- h_apr_jul %>% 
+  filter(Region=="NorCA") %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(norCA_h_apr_jul)
+norCA_h_apr_jul_plot <- ggplot()+
+  geom_sf(data=BIA_mn,fill='gray80',col='black')+
+  geom_sf(data=norCA_h_apr_jul,aes(fill=abund),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  scale_fill_viridis(na.value=NA,option="D",name="Humpback Abundance",breaks=seq(0,1,by=0.25),limits=c(0,1))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Average Humpback Abundance\nApr-Jul 2009-2018")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16))
+norCA_h_apr_jul_plot
+```
+
+## blue whales during winter DCRB season (Nov-Mar)
+
+```{r}
+# Average Nov-Mar blue abundance
+blue_nov_mar <- full.df %>% 
+  filter(month %in% c(11,12,1,2,3)) %>% 
+  group_by(Region, GRID5KM_ID, BIA_bm_noNAs) %>% 
+  summarise(abund=mean(Blue_occurrence,na.rm=T)) %>% 
+  ungroup()
+
+# central CA
+cenCA_blue_nov_mar <- blue_nov_mar %>% 
+  filter(Region=="CenCA") %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(cenCA_blue_nov_mar)
+cenCA_blue_nov_mar_plot <- ggplot()+
+  geom_sf(data=BIA_bm,fill='lightblue',col='firebrick1',alpha=0.8)+
+  geom_sf(data=cenCA_blue_nov_mar,aes(fill=abund),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  scale_fill_viridis(na.value=NA,option="D",name="Blue Whale occurrence",breaks=seq(0,1,by=0.25),limits=c(0,1))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Average Blue Whale occurrence\nNov-Mar 2009-2018")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16))
+cenCA_blue_nov_mar_plot
+
+# northern CA
+norCA_blue_nov_mar <- blue_nov_mar %>% 
+  filter(Region=="NorCA") %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(norCA_blue_nov_mar)
+norCA_blue_nov_mar_plot <- ggplot()+
+  geom_sf(data=BIA_bm,fill='lightblue',col='firebrick1',alpha=0.8)+
+  geom_sf(data=norCA_blue_nov_mar,aes(fill=abund),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  scale_fill_viridis(na.value=NA,option="D",name="Blue Whale occurrence",breaks=seq(0,1,by=0.25),limits=c(0,1))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Average Blue Whale occurrence\nNov-Mar 2009-2018")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16))
+norCA_blue_nov_mar_plot 
+```
+
+## blue whales during spring DCRB season (Apr-Jul)
+
+```{r}
+# Average spring blue abundance
+blue_apr_jul <- full.df %>% 
+  filter(month %in% c(4:7)) %>% 
+  group_by(Region, GRID5KM_ID, BIA_bm_noNAs) %>% 
+  summarise(abund=mean(Blue_occurrence,na.rm=T)) %>% 
+  ungroup()
+
+# central CA
+cenCA_blue_apr_jul <- blue_apr_jul %>% 
+  filter(Region=="CenCA") %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(cenCA_blue_apr_jul)
+cenCA_blue_apr_jul_plot <- ggplot()+
+  geom_sf(data=BIA_bm,fill='lightblue',col='firebrick1',alpha=0.8)+
+  geom_sf(data=cenCA_blue_apr_jul,aes(fill=abund),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  scale_fill_viridis(na.value=NA,option="D",name="Blue Whale occurrence",breaks=seq(0,1,by=0.25),limits=c(0,1))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Average Blue Whale occurrence\nApr-Jul 2009-2018")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16))
+cenCA_blue_apr_jul_plot
+
+# northern CA
+norCA_blue_apr_jul <- blue_apr_jul %>% 
+  filter(Region=="NorCA") %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(norCA_blue_apr_jul)
+norCA_blue_apr_jul_plot <- ggplot()+
+  geom_sf(data=BIA_bm,fill='lightblue',col='firebrick1',alpha=0.8)+
+  geom_sf(data=norCA_blue_apr_jul,aes(fill=abund),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  scale_fill_viridis(na.value=NA,option="D",name="Blue Whale occurrence",breaks=seq(0,1,by=0.25),limits=c(0,1))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Average Blue Whale occurrence\nApr-Jul 2009-2018")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16))
+norCA_blue_apr_jul_plot
+```
+
+## DCRB vessel activity (VMS pings) during winter DCRB season (Nov-Mar)
+
+```{r}
+# Average Nov-Mar VMS pings abundance
+dcrb_nov_mar <- full.df %>% 
+  filter(month %in% c(11,12,1,2,3)) %>% 
+  group_by(Region, GRID5KM_ID) %>% 
+  summarise(pings=mean(Num_DCRB_VMS_pings,na.rm=T)) %>% 
+  ungroup()
+
+# central CA
+cenCA_dcrb_nov_mar <- dcrb_nov_mar %>% 
+  filter(Region=="CenCA") %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(cenCA_dcrb_nov_mar)
+cenCA_dcrb_nov_mar_plot <- ggplot()+
+  geom_sf(data=BIA_mn,fill='gray80',col='black',alpha=0.8)+
+  geom_sf(data=BIA_bm,fill='lightblue',col='firebrick1',alpha=0.8)+
+  geom_sf(data=cenCA_dcrb_nov_mar,aes(fill=pings),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  scale_fill_viridis(na.value=NA,option="D",name="DCRB pings",breaks=seq(0,100,by=20),limits=c(0,100))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Average Number of VMS pings\nNov-Mar 2009-2018")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16))
+cenCA_dcrb_nov_mar_plot
+
+# northern CA
+norCA_dcrb_nov_mar <- dcrb_nov_mar %>% 
+  filter(Region=="NorCA") %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(norCA_dcrb_nov_mar)
+norCA_dcrb_nov_mar_plot<- ggplot()+
+  geom_sf(data=BIA_mn,fill='gray80',col='black',alpha=0.8)+
+  geom_sf(data=BIA_bm,fill='lightblue',col='firebrick1',alpha=0.8)+
+  geom_sf(data=norCA_dcrb_nov_mar,aes(fill=pings),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  scale_fill_viridis(na.value=NA,option="D",name="DCRB pings",breaks=seq(0,100,by=20),limits=c(0,100))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Average Number of VMS pings\nNov-Mar 2009-2018")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16))
+norCA_dcrb_nov_mar_plot
+```
+
+## DCRB vessel activity (VMS pings) during spring DCRB season (Apr-Jul)
+
+```{r}
+# Average Nov-Mar VMS pings abundance
+dcrb_apr_jul <- full.df %>% 
+  filter(month %in% c(4:7)) %>% 
+  group_by(Region, GRID5KM_ID) %>% 
+  summarise(pings=mean(Num_DCRB_VMS_pings,na.rm=T)) %>% 
+  ungroup()
+
+# central CA
+cenCA_dcrb_apr_jul <- dcrb_apr_jul %>% 
+  filter(Region=="CenCA") %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(cenCA_dcrb_apr_jul)
+cenCA_dcrb_apr_jul_plot <- ggplot()+
+  geom_sf(data=BIA_mn,fill='gray80',col='black',alpha=0.8)+
+  geom_sf(data=BIA_bm,fill='lightblue',col='firebrick1',alpha=0.8)+
+  geom_sf(data=cenCA_dcrb_apr_jul,aes(fill=pings),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  scale_fill_viridis(na.value=NA,option="D",name="DCRB pings",breaks=seq(0,100,by=20),limits=c(0,100))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Average Number of VMS pings\nApr-Jul 2009-2018")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16))
+cenCA_dcrb_apr_jul_plot
+
+# northern CA
+norCA_dcrb_apr_jul <- dcrb_apr_jul %>% 
+  filter(Region=="NorCA") %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(norCA_dcrb_apr_jul)
+norCA_dcrb_apr_jul_plot <- ggplot()+
+  geom_sf(data=BIA_mn,fill='gray80',col='black',alpha=0.8)+
+  geom_sf(data=BIA_bm,fill='lightblue',col='firebrick1',alpha=0.8)+
+  geom_sf(data=norCA_dcrb_apr_jul,aes(fill=pings),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  scale_fill_viridis(na.value=NA,option="D",name="DCRB pings",breaks=seq(0,100,by=20),limits=c(0,100))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Average Number of VMS pings\nApr-Jul 2009-2018")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16))
+norCA_dcrb_apr_jul_plot
+```
+
+```{r}
+ggsave(here::here('test scripts','cenCA_mn_nov_mar.png'),cenCA_h_nov_mar_plot,h=6,w=8)
+ggsave(here::here('test scripts','norCA_mn_nov_mar.png'),norCA_h_nov_mar_plot,h=8,w=6)
+ggsave(here::here('test scripts','cenCA_mn_apr_jul.png'),cenCA_h_apr_jul_plot,h=6,w=8)
+ggsave(here::here('test scripts','norCA_mn_apr_jul.png'),norCA_h_apr_jul_plot,h=8,w=6)
+
+ggsave(here::here('test scripts','cenCA_bm_nov_mar.png'),cenCA_blue_nov_mar_plot,h=6,w=8)
+ggsave(here::here('test scripts','norCA_bm_nov_mar.png'),norCA_blue_nov_mar_plot,h=8,w=6)
+ggsave(here::here('test scripts','cenCA_bm_apr_jul.png'),cenCA_blue_apr_jul_plot,h=6,w=8)
+ggsave(here::here('test scripts','norCA_bm_apr_jul.png'),norCA_blue_apr_jul_plot,h=8,w=6)
+
+ggsave(here::here('test scripts','cenCA_dcrb_nov_mar.png'),cenCA_dcrb_nov_mar_plot,h=6,w=8)
+ggsave(here::here('test scripts','norCA_dcrb_nov_mar.png'),norCA_dcrb_nov_mar_plot,h=8,w=6)
+ggsave(here::here('test scripts','cenCA_dcrb_apr_jul.png'),cenCA_dcrb_apr_jul_plot,h=6,w=8)
+ggsave(here::here('test scripts','norCA_dcrb_apr_jul.png'),norCA_dcrb_apr_jul_plot,h=8,w=6)
+```
+
+## Coastwide 
+
+```{r}
+h_nov_mar_sf <- h_nov_mar %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(h_nov_mar_sf)
+h_nov_mar_plot <- ggplot()+
+  geom_sf(data=BIA_mn,fill='gray80',col='black')+
+  geom_sf(data=h_nov_mar_sf,aes(fill=abund),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  scale_fill_viridis(na.value=NA,option="D",name="Humpback Abundance",breaks=seq(0,1,by=0.25),limits=c(0,1))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Average Humpback Abundance\nNov-Mar 2009-2018")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16))
+h_nov_mar_plot
+ggsave(here::here('test scripts','CA_mn_nov_mar.png'),h_nov_mar_plot,h=8,w=6)
+
+```
+
