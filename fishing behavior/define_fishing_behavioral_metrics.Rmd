@@ -1,0 +1,550 @@
+---
+title: "Calculating Fishing Behavioral Metrics"
+author: "Owen Liu"
+date: "2/4/2020"
+output: html_document
+---
+
+## Purpose
+
+Following O'Farrell et al. (2019), we want to use VMS and fish ticket data to define behavioral metrics for the west coast Dungeness crab fishery. These can then be used for classifying behavior through clustering and perhaps looking at behavior change surrounding whale entanglement and the 2014-16 marine heat wave.
+
+## Import Data
+```{r}
+library(tidyverse)
+library(magrittr)
+library(here)
+library(lubridate)
+library(sf)
+
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+
+# DCRB fish tickets only, with day of season included
+fishtix <- read_rds(here::here('data','processed','fish tickets','fish_tickets_w_dayofseason.rds'))
+
+# All fish tickets, including non-DCRB trips
+fishtix_all <- purrr::map_df(2009:2019, function(yr){
+  read_rds(paste0(here::here('data','processed','fish tickets'),"/",yr,"fishtix_vlengths.rds"))
+}) %>% left_join(select(fishtix,Rec_ID,crab_season))
+
+# crab season indicator
+recid_crabseason <- fishtix %>% select(Rec_ID,crab_season) %>% distinct()
+
+# Non-interpolated VMS data, filtered for DCRB trips
+vms <- purrr::map_df(2009:2019, function(yr){
+  read_rds(paste0(here::here('data','processed','matched','filtering',yr),"matched_filtered.rds"))
+}) %>% 
+  filter(TARGET_rev=='DCRB') %>% 
+  # join crab season indicator
+  left_join(recid_crabseason,by='Rec_ID')
+```
+
+## Metrics to Calculate
+
+Here is a running list of the metrics to calculate. Some metrics have multiple types or options of calculations to perform
+
+1.  Port use: Number of ports visited per month, average ports visited per trip, Shannon diversity index of port use
+2.  Revenue: Mean Dungeness revenue per trip, SD revenue per trip
+3.  Trip Length: Days per trip, distance per trip, SD days per trip, SD distance per trip
+4.  Exploration: Mean cumulative choice entropy
+5.  Mobility: Home range
+6.  Risk-taking: Propensity to fish in high winds
+7.  Derby fishing: Mean day-of-season of 90% annual catch reached
+8.  Participation in other fisheries: percent of revenue from non-DCRB fisheries
+9.  Number of crab traps?
+
+```{r}
+# Start with a version of the fish tickets that has only the information that we need to calculate metrics
+fishtix %<>%
+  select(Rec_ID:agency_code,date,crab_season,DCRB_revenue,FINAL_LENGTH,ticket_day_of_season)
+```
+
+We only want to investigate boats that participate in the Dungeness crab fishery. We can make a list of those, with some cutoff for revenue from the DCRB fishery.
+
+```{r}
+dcrb_revenue <- vms %>% 
+  filter(drvid!="MISSING") %>% 
+  mutate(year=year(UTCDATETIM)) %>% 
+  mutate(nov1_season=case_when(
+    month(date)>10 ~ paste0(year,"-",year+1),
+    month(date)<=10 ~ paste0(year-1,"-",year),
+    TRUE ~ NA_character_)) %>% 
+  group_by(drvid,nov1_season) %>% 
+  summarise(dcrb_revenue=sum(DCRB_revenue[which(TARGET_rev=="DCRB")]))
+
+# what is the distribution of annual revenue, removing vessels with zero DCRB revenue
+dcrb_revenue %>% 
+  filter(dcrb_revenue!=0) %>% 
+  ggplot(aes(dcrb_revenue))+
+  geom_density(fill='#33638DFF')+
+  labs(x='annual total DCRB revenue per vessel')
+
+# what's the 5 percent quantile?
+dcrb_revenue %>% filter(dcrb_revenue != 0) %>% pluck("dcrb_revenue") %>% quantile(0.05)
+
+```
+
+Five percent of the vessels made less than $101813 in at least one year of the data. We retain only those vessels that made more than this
+
+```{r}
+dcrb_vessels <- dcrb_revenue %>%
+  filter(dcrb_revenue != 0) %>% 
+  group_by(nov1_season) %>% 
+  filter(dcrb_revenue>quantile(dcrb_revenue,0.05)) %>% 
+  ungroup() %>% 
+  distinct()
+vessel_list <- unique(dcrb_vessels$drvid)
+```
+
+### Port Use Metrics
+
+Calculate number of ports visited per month, average ports visited per trip, and Shannon diversity index of port use. We calculate these from the VMS data
+
+```{r}
+# Average number of ports per fishing trip
+ports_by_trip <- vms %>% 
+  group_by(Rec_ID,drvid,crab_season) %>% 
+  summarise(n_ports=n_distinct(in_port,na.rm = T)) %>% 
+  mutate(n_ports=max(n_ports,1)) %>% 
+  ungroup() %>% 
+  group_by(drvid,crab_season) %>% 
+  summarise(n_ports_trip=mean(n_ports,na.rm=T)) %>% 
+  ungroup()
+
+# Average number of ports per month
+ports_by_month <- vms %>% 
+  mutate(mth=month(date)) %>% 
+  group_by(drvid,mth,crab_season) %>% 
+  summarise(n_ports_mth=n_distinct(in_port,na.rm = T)) %>% 
+  mutate(n_ports_mth=max(n_ports_mth,1)) %>% 
+  ungroup() %>% 
+  group_by(drvid,crab_season) %>% 
+  summarise(ports_mean_mth=mean(n_ports_mth,na.rm=T)) %>% 
+  ungroup()
+
+# Shannon diversity index of port use by season
+# For this metric we count each port visit as equal, and calculate the index on
+# total diversity of port use in a given crab season
+ports_diversity <- vms %>% 
+  filter(!is.na(in_port)) %>% 
+  select(drvid,crab_season,in_port) %>% 
+  group_by(drvid,crab_season,in_port) %>% 
+  tally(name="n_visits") %>% 
+  ungroup() %>% 
+  group_by(drvid,crab_season) %>% 
+  mutate(total_visits=sum(n_visits,na.rm=T),prop_visits=n_visits/total_visits) %>% 
+  mutate(plnp=prop_visits*log(prop_visits)) %>% 
+  summarise(port_shannon= -1*sum(plnp)) %>% 
+  ungroup()
+
+# Collected port use metrics
+port_use_metrics <- ports_by_trip %>% 
+  left_join(ports_by_month) %>% 
+  left_join(ports_diversity)
+
+# plot diversity metric
+port_diversity_plot <- port_use_metrics %>% 
+  ggplot(aes(port_shannon))+
+  geom_density(fill='#33638DFF')+
+  labs(x='Diversity of Port Use')
+port_diversity_plot
+ggsave(here::here('fishing behavior','plots','port_diversity_metric.png'),port_diversity_plot,w=6,h=4)
+```
+
+### Revenue Metrics
+
+Calculate mean and SD Dungeness revenue per trip. We can calculate this straight from the fish tickets
+
+```{r}
+revenue_metrics <- fishtix %>%
+  filter(drvid %in% vessel_list) %>% 
+  distinct(drvid,crab_season,Rec_ID,DCRB_revenue) %>% 
+  group_by(drvid,crab_season) %>% 
+  summarise(revenue_mean=mean(DCRB_revenue,na.rm=T),revenue_sd=sd(DCRB_revenue,na.rm=T)) %>% 
+  ungroup()
+revenue_mean_plot <- revenue_metrics %>% 
+  ggplot(aes(revenue_mean))+
+  geom_density(fill='#33638DFF')+
+  labs(x='mean revenue')
+revenue_sd_plot <- revenue_metrics %>% 
+  ggplot(aes(revenue_sd))+
+  geom_density(fill='#33638DFF')+
+  labs(x='SD revenue')
+revenue_mean_plot
+ggsave(here::here('fishing behavior','plots','revenue_mean_metric.png'),revenue_mean_plot,w=6,h=4)
+revenue_sd_plot
+ggsave(here::here('fishing behavior','plots','revenue_sd_metric.png'),revenue_sd_plot,w=6,h=4)
+```
+
+
+### Trip Length Metrics
+
+Using the VMS data, we can calculate days per trip, distance traveled per trip, and the standard deviations of these.
+
+```{r}
+trip_metrics <- vms %>% 
+  filter(drvid %in% vessel_list) %>% 
+  mutate(segment_dist=segment_dur*avg_speed_recalc) %>% 
+  group_by(Rec_ID,drvid,crab_season,trip_dur) %>%
+  # trip distance IN KILOMETERS
+  summarise(trip_dist=sum(segment_dist,na.rm=T)/1000) %>% 
+  ungroup() %>% 
+  group_by(drvid,crab_season) %>% 
+  summarise(trip_dist_mean=mean(trip_dist,na.rm = T),trip_dur_mean=mean(trip_dur,na.rm = T),trip_dist_sd=sd(trip_dist,na.rm=T),trip_dur_sd=sd(trip_dur,na.rm=T)) %>%
+  ungroup()
+trip_plot <- trip_metrics %>% 
+  ggplot(aes(trip_dist_mean))+
+  geom_density(fill='#33638DFF')+
+  labs(x='trip distance (km)')
+trip_plot
+ggsave(here::here('fishing behavior','plots','trips_metric.png'),trip_plot,w=6,h=4)
+```
+
+### Derby Metric
+
+For each fishing vessel in each year, calculate the day-of-season at which the boat finished catching 90% of its cumulative catch for the year. This metric should give a sense for how much a given vessel participates in the early-season derby. We can calculate this using the fish ticket data.
+
+```{r}
+derby_metric <- fishtix %>% 
+  filter(drvid %in% vessel_list) %>% 
+  group_by(drvid,crab_season) %>% 
+  # find total and 90% revenue for each vessel in each crab season
+  mutate(total_dcrb_revenue=sum(DCRB_revenue,na.rm=T),quant90_dcrb_revenue=0.9*total_dcrb_revenue) %>% 
+  arrange(date) %>% 
+  # cumulative sum of revenue for each vessel across the year
+  mutate(dcrb_cum_revenue=cumsum(DCRB_revenue)) %>% 
+  mutate(is_quant90=dcrb_cum_revenue>=quant90_dcrb_revenue) %>% 
+  # find the ticket that crossed the 90% threshold and mark its date
+  filter(cumany(is_quant90)) %>% 
+  slice(1) %>% 
+  select(drvid,crab_season,ticket_day_of_season) %>% 
+  rename(quant90_day=ticket_day_of_season)
+
+derby_plot <- derby_metric %>% 
+  ggplot(aes(quant90_day))+
+  geom_density(fill='#33638DFF')+
+  labs(x='day of season reaching 90% cumulative catch')
+derby_plot
+ggsave(here::here('fishing behavior','plots','derby_metric.png'),derby_plot,w=6,h=4)
+```
+
+### Participation Metrics
+
+Calculate what percent of a vessel's revenue comes from non-DCRB fisheries. We do this with the unfiltered fish ticket data, counting the non-DCRB revenue across all trips.
+
+Choice made here: Because other fisheries do not have seasons in the same way that crab do, we define November to the end of June as our window to look for other revenue. For example, for a crab season 2008-2009, we search for other revenue from Nov 1, 2008 to June 30, 2009.
+
+```{r}
+participation_metric <- fishtix_all %>% 
+  filter(drvid %in% vessel_list) %>% 
+  # add general indicator of revenue season
+  mutate(revenue_season=case_when(
+    month(date)>10 ~ paste0(year,"-",year+1),
+    month(date)<=6 ~ paste0(year-1,"-",year),
+    TRUE ~ NA_character_)) %>% 
+  filter(!is.na(revenue_season)) %>% 
+  group_by(drvid,revenue_season) %>% 
+  summarise(total_dcrb_revenue=sum(DCRB_revenue,na.rm=T),
+            total_other_revenue=sum(other_rev+SABL_revenue+LOBS_revenue+SPRW_revenue),
+            total_other_tix=n_distinct(Rec_ID[which(TARGET_rev != "DCRB")]),
+            total_dcrb_tix=n_distinct(Rec_ID[which(TARGET_rev == "DCRB")])) %>% 
+  mutate(total_other_revenue=coalesce(total_other_revenue,0)) %>% 
+  mutate(prop_other_revenue=total_other_revenue/(total_other_revenue+total_dcrb_revenue),
+         prop_other_tix=total_other_tix/(total_other_tix+total_dcrb_tix)) %>% 
+  ungroup() %>% 
+  rename(crab_season=revenue_season) %>% 
+  select(drvid,crab_season,prop_other_revenue,prop_other_tix)
+
+participation_rev_plot <- participation_metric %>% 
+  ggplot(aes(prop_other_revenue))+
+  geom_density(fill='#33638DFF')+
+  labs(x='Proportion of Revenue from Other Fisheries')
+participation_tix_plot <- participation_metric %>% 
+  ggplot(aes(prop_other_tix))+
+  geom_density(fill='#33638DFF')+
+  labs(x='Proportion of Tickets Targeting Other Fisheries')
+participation_rev_plot
+participation_tix_plot
+ggsave(here::here('fishing behavior','plots','participation_rev_metric.png'),participation_rev_plot,w=6,h=4)
+homerange_plot
+ggsave(here::here('fishing behavior','plots','participation_tix_metric.png'),participation_tix_plot,w=6,h=4)
+```
+
+### Risk Metric
+
+Following O'Farrell et al., we extract wind speeds from NOAA's ERDAPP server and use them to measure a fisher's propensity to go out in stormy weather. Following Pfeiffer and Gratz (2016), who also studied west coast fishing, we calculate a max (95th percentile) wind speed per trip, and then calculate what percent of a vessel's trips in a given crab season were pursued in those high winds conditions.
+
+Download all winds for the study area.
+DEFAULT: not run because downloading takes a long time
+
+```{r, eval=FALSE}
+library(rerddap)
+# Range of Lat/Lon for entire dataset
+range(vms$LATITUDE)
+windslat <- c(34,49)
+360+range(vms$LONGITUDE) # Longitudes in the winds dataset are in degrees E
+windslon <- c(233,245)
+
+# Have to use some if statements here because of weird breaks in the two datasets
+winds_all <- purrr::map_df(2009:2018, function(yr) {
+  if(yr < 2011){
+    times <- c(paste0(yr,"-01-01"),paste0(yr,"-12-31"))
+    winds <- griddap("ncdcOwDly", # daily blended winds dataset
+                      time=times,
+                      latitude=windslat,
+                      longitude=windslon,
+                      fields=c("w")) %>%  # scalar wind speed
+      pluck("data")
+  } 
+  if(yr == 2011){
+    times1 <- c(paste0(yr,"-01-01"),paste0(yr,"-09-30"))
+    winds1 <- griddap("ncdcOwDly", # daily blended winds dataset
+                      time=times1,
+                      latitude=windslat,
+                      longitude=windslon,
+                      fields=c("w")) %>% # scalar wind speed
+      pluck("data")
+    
+    times2 <- c(paste0(yr,"-10-01"),paste0(yr,"-12-31"))
+    winds2 <- griddap("ncdcOwDlyP", # daily blended winds dataset
+                      time=times2,
+                      latitude=windslat,
+                      longitude=windslon,
+                      fields=c("w") )%>%    # scalar wind speed
+      pluck("data")
+    winds <- bind_rows(winds1,winds2)
+  } 
+  if(yr>2011&yr<2018){
+    times <- c(paste0(yr,"-01-01"),paste0(yr,"-12-31"))
+    winds <- griddap("ncdcOwDlyP", # daily blended winds dataset
+                      time=times,
+                      latitude=windslat,
+                      longitude=windslon,
+                      fields=c("w")) %>% # scalar wind speed
+      pluck("data") 
+  }
+  if(yr==2018){
+    times <- c(paste0(yr,"-01-01"),paste0(yr,"-10-09"))
+    winds <- griddap("ncdcOwDlyP", # daily blended winds dataset
+                      time=times,
+                      latitude=windslat,
+                      longitude=windslon,
+                      fields=c("w")) %>% # scalar wind speed
+      pluck("data") 
+  }  
+  out <- winds %>% as_tibble() %>% mutate(utcdate=as_date(time)) %>% select(-altitude)
+  out
+})
+write_rds(winds_all,here::here('data','raw','blended winds','erddap_raw_daily_winds.rds'))
+```
+
+Match winds to VMS pings
+
+```{r}
+# if not loaded
+winds_all <- read_rds(here::here('data','raw','blended winds','erddap_raw_daily_winds.rds'))
+
+library(RANN)
+vms_latlons <- vms %>% select(LATITUDE,LONGITUDE) %>%
+  # longitude has to be in degrees E
+  mutate(LONGITUDE=360+LONGITUDE)
+
+winds_latlons <- winds_all %>% select(lat,lon) %>% distinct()
+
+# Match VMS lat/lon to ERDDAP lat/lon
+erddap_vms_match <- RANN::nn2(winds_latlons,vms_latlons,k=1)$nn.idx
+
+# add appropriate erddap lat/lons to vms lat/lons data
+vms_latlons %<>% mutate(matchlat=winds_all$lat[erddap_vms_match],matchlon=winds_all$lon[erddap_vms_match]) %>% mutate(LONGITUDE=LONGITUDE-360)
+
+# Finally, join winds data to VMS data
+vms_winds <- vms %>% 
+  # join the lat/lon matching key
+  bind_cols(select(vms_latlons,matchlat,matchlon)) %>% 
+  select(drvid,crab_season,Rec_ID,UTCDATETIM,LATITUDE,LONGITUDE,matchlat,matchlon) %>% 
+  #convert UTC times to dates
+  mutate(utcdate=as_date(UTCDATETIM)) %>% 
+  # join winds data by date and matching latitude/longitude
+  left_join(select(winds_all,-time),by=c('utcdate'='utcdate','matchlat'='lat','matchlon'='lon'))
+```
+
+Calculate an extreme wind value for each trip (95th percentile of wind speed per trip).
+
+```{r}
+winds_per_trip <- vms_winds %>% 
+  filter(drvid %in% vessel_list) %>% 
+  group_by(drvid,crab_season,Rec_ID) %>% 
+  summarise(wind_quant95=quantile(w,0.95,na.rm = T)) %>% 
+  ungroup()
+winds_per_trip %>% 
+  ggplot(aes(wind_quant95))+
+  geom_density(fill='#33638DFF')+
+  labs(x='95th percentile of wind speed (m/s)')
+
+risk_metric <- winds_per_trip %>% 
+  # define whether a trip is 'high wind'
+  mutate(is_high_winds=wind_quant95>=7.5) %>% 
+  # count proportion of high wind trips by vessel/season
+  group_by(drvid,crab_season) %>% 
+  summarise(prop_highwinds=sum(is_high_winds,na.rm=T)/n_distinct(Rec_ID)) %>% 
+  ungroup()
+
+risk_plot <- risk_metric %>% 
+  ggplot(aes(prop_highwinds))+
+  geom_density(fill='#33638DFF')+
+  labs(x='Propensity to Fish in High Winds (>7.5m/s)')
+risk_plot
+ggsave(here::here('fishing behavior','plots','risk_metric.png'),risk_plot,w=6,h=4)
+```
+
+### Cumulative Choice Entropy
+
+For our 'exploration' metric, we follow O'Farrell et al. (2019) and calculate choice entropy. We use the 5km grid cells to define different 'locations'
+
+```{r}
+vms_all_grd <- read_rds(here::here('data','processed','vms','vms_all_w_grd.rds'))
+vms_all_grd %<>%
+  filter(TARGET_rev=='DCRB') %>% 
+  # join crab season indicator
+  left_join(recid_crabseason,by='Rec_ID')
+vms_grd_only <- vms_all_grd %>% 
+  as_tibble() %>% 
+  select(VMS_RECNO,Rec_ID,UTCDATETIM,port_group_code,drvid,crab_season,GRID5KM_ID)
+
+# To calculate entropy, we need a cumulative record of location choices in time, that is, a record of the grid cells visited by the vessel that accumulates over time
+
+vms_cum_locs <- vms_grd_only %>% 
+  group_by(drvid,crab_season) %>% 
+  arrange(UTCDATETIM) %>% 
+  mutate(locations=accumulate(GRID5KM_ID,c))
+
+# test vessel/season to see if it worked
+test <- vms_cum_locs %>% filter(crab_season=="2008-2009",drvid=="264147")
+
+# this is the sequence of grid cells visited by this vessel up until VMS point 62 of the 2008-2009 season
+test$locations[[62]]
+
+# to calculate entropy, we use the equation from O'Farrell et al.
+calc_entropy <- function(vec){
+  locs <- unique(na.exclude(vec))
+  freqs <- map_dbl(locs,~sum(vec==.x,na.rm=T)/length(vec))
+  sum(freqs*log(freqs,base=2))*-1
+}
+
+test %<>% ungroup() %>% mutate(obs=row_number(),entropy=map_dbl(locations,calc_entropy))
+
+test %>% ggplot(aes(obs,entropy))+geom_line()+labs(x="VMS observation number",y="Entropy",title="Example Choice Entropy Time Series")
+
+# Apply to all VMS observations
+vms_entropy <- vms_cum_locs %>% 
+  ungroup() %>% 
+  mutate(entropy=map_dbl(locations,calc_entropy))
+
+# test another arbitrary vessel/season
+vms_entropy %>% 
+  filter(drvid=="580135",crab_season=='2009-2010') %>% 
+  ggplot(aes(UTCDATETIM,entropy))+
+  geom_line()+
+  labs(x="VMS observation number",y="Entropy",title="Example Choice Entropy Time Series")
+
+# as a final entropy 'score' for each year, take 90th quantile of max entropy
+entropy_metric <- vms_entropy %>% 
+  filter(drvid %in% vessel_list) %>% 
+  group_by(drvid,crab_season) %>% 
+  summarise(entropy_quant90=quantile(entropy,0.9))
+
+entropy_plot <- entropy_metric %>% 
+  ggplot(aes(entropy_quant90))+
+  geom_density(fill='#33638DFF')+
+  labs(x='Location Choice Entropy (90th percentile by Vessel/Season)')
+entropy_plot
+ggsave(here::here('fishing behavior','plots','entropy_metric.png'),entropy_plot,w=6,h=4)
+```
+
+### Home range
+
+Calculate 95% convex polygons for each vessel/year
+
+```{r}
+test_hull <-  vms_all_grd %>% 
+  filter(drvid=="580135",crab_season=='2009-2010') %>%
+  select(VMS_RECNO,X_COORD,Y_COORD)
+dsts <- nn2(test_hull[,c('X_COORD','Y_COORD')],k=100)$nn.dists %>% rowMeans()
+test_hull %<>%
+  mutate(meandist=dsts) %>% 
+  # remove top 5% spatial outliers based on distance from other points
+  mutate(rnk=percent_rank(dsts)) %>% 
+  filter(rnk<0.95) %>% 
+  ungroup() %>% 
+  summarise() %>% 
+  st_convex_hull()
+
+test_hull %>% 
+  ggplot()+
+  geom_sf()
+
+st_area(test_hull)
+
+# apply to all vessels/seasons
+find_hull95 <- function(df){
+  dsts <- nn2(df %>% as_tibble() %>% select(X_COORD,Y_COORD),k=min(100,nrow(df)))$nn.dists %>% rowMeans()
+  hull<-df %>% 
+    mutate(meandist=dsts) %>% 
+    # remove top 5% spatial outliers based on distance from other points
+    mutate(rnk=percent_rank(dsts)) %>% 
+    filter(rnk<0.95) %>% 
+    ungroup() %>% 
+    summarise() %>% 
+    st_convex_hull()
+  st_area(hull)*1e-6
+}
+
+homerange_calc <- vms_all_grd %>% 
+  filter(drvid %in% vessel_list) %>% 
+  select(drvid,crab_season,VMS_RECNO,X_COORD,Y_COORD) %>% 
+  group_by(drvid,crab_season) %>% 
+  nest() %>% 
+  ungroup() %>% 
+  mutate(nobs=map_dbl(data,nrow)) %>% 
+  filter(nobs>10) %>% 
+  mutate(homerange=purrr::map_dbl(data,find_hull95))
+
+homerange_metric <- homerange_calc %>% 
+  select(drvid,crab_season,homerange)
+
+homerange_plot <- homerange_metric %>% 
+  ggplot(aes(homerange))+
+  geom_density(fill='#33638DFF')+
+  labs(x='Home Range (95% Convex Hull Area, km^2)')
+homerange_plot
+ggsave(here::here('fishing behavior','plots','homerange_metric.png'),homerange_plot,w=6,h=4)
+```
+
+## Collect all Metrics
+
+```{r}
+all_metrics <- port_use_metrics %>% 
+  full_join(revenue_metrics) %>% 
+  full_join(trip_metrics) %>% 
+  full_join(derby_metric) %>% 
+  full_join(participation_metric) %>% 
+  full_join(risk_metric) %>% 
+  full_join(entropy_metric) %>% 
+  full_join(homerange_metric) %>% 
+  filter(drvid %in% vessel_list)
+```
+
+Save
+```{r}
+write_rds(all_metrics,here::here('fishing behavior','fishing_behavior_metrics_vessel_season.rds'))
+```
+
+
+

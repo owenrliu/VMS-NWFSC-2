@@ -33,6 +33,12 @@ This VMS-fish ticket data processing pipeline is organized in six steps required
 
 6. **Create an interpolated, regularized version of the matched data**. For some applications, analytical methods require spatial records to be evenly distributed across time. We perform linear interpolation of each fishing trip, placing some new VMS points along vessel trajectories such that there is one record exactly every hour.
 
+## Post-Processing
+
+There are some post-pipeline steps that have bene pursued for specific end-uses.
+
+1.  **Add Day-of-Season Indicator**. For some analytical uses, it is important to know the day of the fishing season, rather than the raw date. This is because for some fisheries (including Dungeness crab), the season can start at different times in different years in different ports. Hence, we use a matching key to match the date of fish tickets to the appropriate 'day of season' for each port group in each year.
+
 ## Intermediate Datasets
 
 Throughout the data pipeline, there are intermediate versions of the dataset that may be useful to practitioners for different applications. These datasets are associated with each major step of the pipeline, and are stored under the `data/processed` folder of this repository:

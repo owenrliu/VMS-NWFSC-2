@@ -69,7 +69,8 @@ h_nov_mar <- full.df %>%
   filter(month %in% c(11,12,1,2,3)) %>% 
   group_by(Region, GRID5KM_ID) %>% 
   summarise(abund=mean(H_Avg_Abund,na.rm=T)) %>% 
-  ungroup()
+  ungroup() %>% 
+  mutate(z=(abund-mean(abund,na.rm=T))/sd(abund,na.rm=T))
 
 # central CA
 cenCA_h_nov_mar <- h_nov_mar %>% 
@@ -256,7 +257,8 @@ dcrb_nov_mar <- full.df %>%
   filter(month %in% c(11,12,1,2,3)) %>% 
   group_by(Region, GRID5KM_ID) %>% 
   summarise(pings=mean(Num_DCRB_VMS_pings,na.rm=T)) %>% 
-  ungroup()
+  ungroup()%>% 
+  mutate(z=(pings-mean(pings,na.rm=T))/sd(pings,na.rm=T))
 
 # central CA
 cenCA_dcrb_nov_mar <- dcrb_nov_mar %>% 
@@ -373,15 +375,52 @@ h_nov_mar_sf <- h_nov_mar %>%
 bbox <- st_bbox(h_nov_mar_sf)
 h_nov_mar_plot <- ggplot()+
   geom_sf(data=BIA_mn,fill='gray80',col='black')+
-  geom_sf(data=h_nov_mar_sf,aes(fill=abund),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=h_nov_mar_sf,aes(fill=z),col=NA,na.rm=T,alpha=0.8)+
   geom_sf(data=coaststates,col=NA,fill='gray60')+
-  scale_fill_viridis(na.value=NA,option="D",name="Humpback Abundance",breaks=seq(0,1,by=0.25),limits=c(0,1))+
+  scale_fill_viridis(na.value=NA,option="D",name="Humpback Abundance",breaks=seq(-2,3,by=0.5),limits=c(-2,3))+
   coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
   labs(title="Average Humpback Abundance\nNov-Mar 2009-2018")+
   theme(axis.text.x.bottom = element_text(angle=45),
           title=element_text(size=16))
 h_nov_mar_plot
 ggsave(here::here('test scripts','CA_mn_nov_mar.png'),h_nov_mar_plot,h=8,w=6)
+
+# for DCRB, with z-score
+dcrb_nov_mar_sf <- dcrb_nov_mar %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(dcrb_nov_mar_sf)
+dcrb_nov_mar_plot <- ggplot()+
+  geom_sf(data=BIA_mn,fill='gray80',col='black')+
+  geom_sf(data=dcrb_nov_mar_sf,aes(fill=z),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  scale_fill_viridis(na.value=NA,option="D",name="DCRB Pings\n(Z-score)")+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Dungeness Crab Pings\nNov-Mar 2009-2018")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16))
+dcrb_nov_mar_plot
+ggsave(here::here('test scripts','CA_dcrb_nov_mar_z.png'),dcrb_nov_mar_plot,h=8,w=6)
+
+# for DCRB, with percentiles
+dcrb_nov_mar_sf <- dcrb_nov_mar %>%
+  mutate(perc=percent_rank(pings)) %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(dcrb_nov_mar_sf)
+dcrb_nov_mar_plot <- ggplot()+
+  geom_sf(data=BIA_mn,fill='gray80',col='black')+
+  geom_sf(data=dcrb_nov_mar_sf,aes(fill=perc),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  scale_fill_viridis(na.value=NA,option="D",name="DCRB Pings\n(Percentile)",breaks=seq(0,1,by=0.2),limits=c(0,1))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Dungeness Crab Pings\nNov-Mar 2009-2018")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16))
+dcrb_nov_mar_plot
+ggsave(here::here('test scripts','CA_dcrb_nov_mar_perc.png'),dcrb_nov_mar_plot,h=8,w=6)
 
 ```
 

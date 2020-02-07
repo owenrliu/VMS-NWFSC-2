@@ -1,0 +1,164 @@
+---
+title: "Add Day of Season"
+output: html_document
+---
+
+## Purpose
+
+Add a day-of-season indicator for all fish tickets. These will be at the scale of year and port-group (instead of state, since different parts of each state may open at different times).
+
+Currently (2/4/2020), we use a season start indicator derived from the fish ticket data itself, not from the official start dates. There are pros and cons of this approach.
+
+```{r,message=F,warning=F}
+library(here)
+library(tidyverse)
+library(magrittr)
+library(lubridate)
+
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3),
+        panel.grid.minor = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+## Import Fish Tickets
+
+Import all fish ticket data and sort by tickets whose target (measured through revenue) is Dungeness Crab.
+
+```{r}
+fishtix <- purrr::map_df(2009:2019, function(yr){
+  read_rds(paste0(here::here('data','processed','fish tickets'),"/",yr,"fishtix_vlengths.rds"))
+})
+
+# only Dungeness target
+fishtix %<>% filter(TARGET_rev=="DCRB")
+```
+
+## Example Fishing Seasons for Different Ports
+
+Test with an example from each state (arbitrarily chosen): 
+Crescent City, 2008-2009 season
+Coos Bay, OR, 2012-2013 season
+Coastal Washington ports, 2011-12 season
+
+```{r,fig.width=8,fig.height=6}
+# general function to do a cumulative landings curve
+plot_cumlandings <- function(state,season,savedir){
+  stateabbr <- substr(state,1,1)
+  subdat <- fishtix %>% 
+    filter(removal_type_code %in% c("C","D")) %>%
+    # add general indicator of crab season
+    mutate(crab_season=case_when(
+      month(date)>10 ~ paste0(year,"-",year+1),
+      month(date)<=10 ~ paste0(year-1,"-",year))) %>% 
+    filter(crab_season ==season,agency_code==stateabbr)%>%
+    group_by(agency_code,port_group_code) %>% 
+    select(agency_code,port_group_code,date,DCRB_lbs) %>% 
+    arrange(date) %>% 
+    mutate(cum_landings=cumsum(DCRB_lbs)) %>% 
+    mutate(prop_tot=cum_landings/last(cum_landings)) %>% 
+    ungroup() %>% 
+    group_by(agency_code,port_group_code) %>% 
+    mutate(startdate = first(date[prop_tot>=0.01]))
+  
+  # calculate date of 1% landings achievement
+  # startdate <-  subdat %>% filter(prop_tot>=0.01) %>% slice(1) %>% pluck("date")
+  
+  out <-subdat %>% 
+    ggplot()+
+    geom_line(aes(date,prop_tot),col='gray50')+
+    geom_point(aes(date,prop_tot),col='gray50')+
+    geom_hline(yintercept=0.01,linetype=1,col='red')+
+    geom_vline(aes(xintercept = startdate),linetype=1,col='red',size=1)+
+    geom_text(aes(x=startdate,label=paste0("Start:",startdate)),y=0.8,hjust=-0.1,check_overlap=TRUE)+
+    labs(title=paste0('Cumulative landings by Port Group\n',season," ",state),x="Date",y="Cumulative Proportion Total Landings")+
+    facet_wrap(~port_group_code)
+  fn <- paste0(here::here('fishing behavior','plots'),'/',state,str_replace_all(season,"-","_"),".png")
+  ggsave(fn,out,h=6,w=8)
+}
+# plot and save
+states <- c("California","Oregon","Washington")
+seasons <- fishtix %>%
+  mutate(crab_season=case_when(
+      month(date)>10 ~ paste0(year,"-",year+1),
+      month(date)<=10 ~ paste0(year-1,"-",year))) %>% 
+  pluck('crab_season') %>% unique() %>% setdiff("2019-2020")
+
+for(i in states) {
+  for(k in seasons){
+    plot_cumlandings(i,k)
+  }
+}
+
+```
+
+## Calculate One Percent Landings Achievement
+
+These cumulative distribution suggest that a nice way might be to indicate the date of 1% landings achievement for each port group, since each season, no matter when it starts, begins with an intense derby that should be clear in the landings data. Using a 1 percent cutoff seems robust to the landings that 'dribble in' before the official season starts.
+
+```{r}
+one_percent_landings_achievement <- fishtix %>% 
+  filter(removal_type_code %in% c("C","D")) %>%
+  # add general indicator of crab season
+  mutate(crab_season=case_when(
+    month(date)>10 ~ paste0(year,"-",year+1),
+    month(date)<=10 ~ paste0(year-1,"-",year))) %>% 
+  group_by(agency_code,port_group_code,crab_season) %>% 
+  arrange(date) %>% 
+  mutate(cum_landings=cumsum(DCRB_lbs)) %>% 
+  mutate(prop_tot=cum_landings/last(cum_landings)) %>% 
+  filter(prop_tot>=0.01) %>% 
+  summarise(start_of_season_oneperc=first(date,order_by = date)) %>% 
+  ungroup()
+```
+
+## Apply to Fish Ticket Data
+
+```{r}
+fishtix_dos <- fishtix %>% 
+  filter(removal_type_code %in% c("C","D")) %>%
+  # add general indicator of crab season
+  mutate(crab_season=case_when(
+    month(date)>10 ~ paste0(year,"-",year+1),
+    month(date)<=10 ~ paste0(year-1,"-",year))) %>% 
+  
+  # Join the one percent landings key
+  left_join(one_percent_landings_achievement)
+
+names(fishtix_dos)
+```
+
+Finally, add day of season to each ticket as a difference between the ticket's landing date and the start date of the season
+
+```{r}
+fishtix_dos %<>%
+  ungroup() %>% 
+  mutate(ticket_day_of_season=difftime(date,start_of_season_oneperc,units='days')) %>% 
+  mutate(ticket_day_of_season=as.numeric(ticket_day_of_season))
+
+glimpse(fishtix_dos %>% select(Rec_ID,port_group_code,date,crab_season,start_of_season_oneperc,ticket_day_of_season))
+```
+
+Overall distribution of tickets by day of season
+
+```{r}
+fishtix_dos %>% 
+  ggplot(aes(ticket_day_of_season))+
+  geom_density(fill='blue',alpha=0.5)
+```
+
+There's a little bit of weirdness at the end. Some seasons in some places seem like they may start before Nov 1...?
+
+## Save 
+
+Save a version of the fish tickets with day of season included.
+
+```{r}
+write_rds(fishtix_dos,here::here('data','processed','fish tickets','fish_tickets_w_dayofseason.rds'))
+```
+
