@@ -6,11 +6,12 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE,warning=F,message=F)
 library(tidyverse)
 library(magrittr)
 library(here)
 library(NbClust)
+library(viridis)
 
 # ggplot theme
 plot_theme <-   theme_minimal()+
@@ -24,18 +25,15 @@ theme_set(plot_theme)
 
 ## Purpose
 
-The goal of this analysis is to perform a clustering analysis on a suite of behavioral metrics describing the 2009-2018 west coast Dungeness crab fishing fleet. The metrics have been compiled based on fish ticket and VMS data, and include information on:
+The goal of this analysis is to perform a clustering analysis on a suite of behavioral metrics describing the 2009-2019 west coast Dungeness crab fishing fleet. The metrics have been compiled based on fish ticket and VMS data, and include information on port use, revenue, and trip lengths, as well as more advanced metrics from analysis of VMS data, like distance traveled, exploratory behavior and propensity to fish in high winds.
 
-1.  Port use: Number of ports visited per month, average ports visited per trip, Shannon diversity index of port use
-2.  Revenue: Mean Dungeness revenue per trip, SD revenue per trip
-3.  Trip Length: Days per trip, distance per trip, SD days per trip, SD distance per trip
-4.  Exploration: Mean cumulative choice entropy
-5.  Mobility: Home range
-6.  Risk-taking: Propensity to fish in high winds
-7.  Derby fishing: Mean day-of-season of 90% annual catch reached
-8.  Participation in other fisheries: percent of revenue from non-DCRB fisheries
+All metrics (to the extent data allow) were calculated for each vessel and crab season. The unit of observation in clustering is one vessel's crab season, e.g. Vessel A in crab season 2012-2013.
 
-All metrics (to the extent data allow) were calculated for each vessel and crab season.
+Our guiding questions are:
+
+1. **Can the behavior of the west coast Dungeness crab fishing fleet be classified into distinct behavioral types?**
+2. **Which behavioral variables are particularly important in defining these behavioral types?**
+3. **Have individual vessels moved between behavioral types across years?**
 
 ## Import Data
 
@@ -44,9 +42,35 @@ dat <- read_rds(here::here('fishing behavior','fishing_behavior_metrics_vessel_s
 glimpse(dat)
 ```
 
-## Check collinearity
+More specifically, the metrics are as follows for each vessel (`drvid`) in each `crab_season`:
 
-Let's look at the variables and see if any are highly correlated
+1.  Port use: 
+  *  `n_ports_trip` Average ports visited per trip
+  *  `ports_mean_mth` Number of ports visited per month 
+  *  `port_shannon` Shannon diversity index of port use
+2.  Revenue: 
+  *  `revenue_mean` Mean Dungeness revenue per trip
+  *  `revenue_sd` SD revenue per trip
+3.  Trip Length: 
+  *  `trip_dist_mean` Mean distance per fishing trip, 
+  *  `trip_dur_mean` Mean number of days per fishing trip
+  *  `trip_dist_sd` SD distance per trip
+  *  `trip_dur_sd` SD days per trip
+5.  Derby fishing:
+  *  `quant90_day` Day-of-season on which fisher reach 90% of eventual annual catch
+6.  Participation in other fisheries:
+  *  `prop_other_revenue` Proportion of revenue from non-DCRB fisheries
+  *  `prop_other_tix` Proportion of all fish tickets form non-DCRB fisheries
+7.  Risk-taking:
+  *  `prop_highwinds` Propensity to fish in high winds. Proportion of trips pursued where the 95% quantile of wind speed was greater than 7.5 m/s
+8.  Exploration: 
+  *  `entropy_quant90` Cumulative choice entropy, measuring how likely a vessel is to fish in new versus past locations
+9.  Mobility:
+  * `homerange` Home range defined as the area of the convex hull surrounding all of a vessel's VMS pings during the season, excluding the top 5% spatial outliers
+
+## Check Collinearity
+
+Before clustering, we take a look at all the variables to search for extreme collinearity, which would suggest that we should trim our variables down.
 
 ```{r}
 vars.corrs <- dat %>% select(-(1:2)) %>% 
@@ -55,15 +79,24 @@ vars.corrs <- dat %>% select(-(1:2)) %>%
   pivot_longer(-var1,names_to = "var2",values_to = "corr")
 glimpse(vars.corrs)
 
+vars.corrs %>% 
+  ggplot(aes(var1,var2,fill=corr))+
+  geom_tile()+
+  coord_equal()+
+  scale_fill_gradient2()+
+  labs(x="",y="",title="Variable Pearson Correlation Matrix",fill="")+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5,hjust=1))
 ```
 
-There are some correlated variables, but not too many are greater than 0.7. Fishing trip mean and SD, and revenue per trip mean and SD, are all correlated with each other. Addtionally, the trip distance metrics are correlated with our measure of location choice entropy.
+There are some correlated variables, but not too many are greater than 0.7. Fishing trip distance mean and SD, and revenue per trip mean and SD, are all correlated with each other. Addtionally, the trip distance metrics are correlated with our measure of location choice entropy.
 
-We remove SD trip distance and SD revenue for the following analyses.
+We remove SD trip distance and SD revenue for the following analyses to reduce collinearity issues.
 
 ## Re-scale variables
 
-We want to re-scale variables to a 0 to 1 scale to avoid clustering artifacts caused simply by scale differences between variables.
+For clustering analyses, we need to re-scale variables to a 0 to 1 scale to avoid artifacts caused simply by scale differences between variables.
+
+Re-scaling is done by dividing each metric by its maximum value.
 
 ```{r}
 dat_scaled <- dat %>% 
@@ -73,29 +106,35 @@ dat_scaled <- dat %>%
 
 ## Do Clustering
 
-```{r}
+We then perform a clustering of the data, using Ward aggregation that attempts to minimize total within-cluster variance. However, instead of choosing the number of resulting classes rather arbitrarily from the results, we utilize the package `NbClust` that calculates 22 clustering indices defined in the literature, and then recommends the optimal number of clusters via majority vote.
+
+```{r,results=FALSE}
 dat_clust <- dat_scaled %>% select(-(1:2)) %>% NbClust(method="ward.D2",min.nc = 3,max.nc=10,index='all')
 ```
 
+After clustering, there was a range of number of classes suggested by the clustering indices, but the **majority vote was 3 classes**. For now, we utilize those 3 classes to explore the clusters.
+
 ## Explore Clustering
 
-`NbClust` calculates a number of different indices to try to determine the relevant number of clusters in a dataset. By majority rule (most indices), 3 is proposed as the best number of clusters (between 3 and 10).
-
-```{r}
+```{r,include=FALSE,eval=FALSE}
 dat_clust$All.index %>% as.tibble(rownames="n_clust")
 dat_clust$All.CriticalValues
 dat_clust$Best.partition %>% length()
 ```
 
-Apply the majority-rule partitions to the dataset
+We apply the majority-rule partitions from clustering to the dataset.
 
 ```{r}
 library(factoextra)
-library(viridis)
 dat_clustered <- dat_scaled %>% na.omit() %>% 
   mutate(partition=dat_clust$Best.partition) %>% 
   as_tibble()
+```
 
+We can visualize the results of clustering through a clustering dendrogram. Below we can see all of the data (unique season-vessel combinations), colored by the cluster into which they were grouped.
+
+```{r}
+library(ggdendro)
 dat_nolabs <- dat_scaled %>% na.omit() %>% select(-(1:2))
 
 # calc distances
@@ -104,12 +143,42 @@ dat.d <- dat_scaled %>% na.omit() %>% select(-(1:2)) %>% get_dist()
 # calc clustering
 dat.ward <- dat.d %>% hclust(method="ward.D2")
 
-dat.pca <- FactoMineR::PCA(dat_nolabs)
+# ggdendro::ggdendrogram(dat.ward,leaf_labels = F,labels = FALSE)
+
+# Rectangular lines dendrogram
+dend <- as.dendrogram(dat.ward) %>% dendro_data(type = "rectangle")
+
+# figure out colors for segments
+# partitions <- tibble(obs=1:3261,partition=dat_clust$Best.partition)
+# head(dend$segments)
+# test <- dend$segment %>% as_tibble() %>%
+#   mutate(obs=paste(label) %>% as.numeric()) %>% 
+#   left_join(partitions,by=c('obs'))
+
+segs <- dend$segments %>% as_tibble() %>% 
+  mutate(partition=case_when(
+    round(xend)<=1853 ~ 1,
+    round(xend)>1853 & round(xend)<=2595 ~ 2,
+    round(xend)>2595 ~ 3
+  ))
+p <- ggplot(segs) + 
+  geom_segment(aes(x = x, y = y, xend = xend, yend = yend,col=factor(partition)))+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(3),name="Behavioral Group")+
+  labs(x="",y="",title="Dendrogram of all Data with 3 Behavioral Classes")+
+  theme(axis.text=element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor=element_blank())
+p
+```
+
+We can also use the same data to perform a principal component analysis to help visualize our clusters.
+
+```{r}
+dat.pca <- FactoMineR::PCA(dat_nolabs,graph=FALSE)
 
 # factoextra::fviz_dend(dat.hclust,k=4,palette=viridis_pal()(4),show_labels=FALSE,rect=T,rect_lty=2)
-summary(dat.pca)
+# summary(dat.pca)
 ```
-### Plot PCA with Groups
 
 ```{r}
 # pca.inds <- dat.pca$ind$coord %>% as_tibble() %>% mutate(partition=dat_clust$Best.partition) %>% mutate(partition=factor(partition))
@@ -119,33 +188,19 @@ summary(dat.pca)
 
 fviz_pca(dat.pca,geom.ind="point",
          col.ind=dat_clust$Best.partition %>% as.factor,
-         col.var='black',addEllipses=TRUE,
-         palette=viridis_pal()(3),alpha.ind=0.6)
-
+         addEllipses=TRUE,col.var="black",
+         palette=viridis_pal(begin=0.2,end=0.8)(3),alpha.ind=0.4)+
+  labs(color="",shape="",fill="",shape="")+
+  scale_x_continuous(expand = c(.1,0))
 ```
 
+Here, with both observations and variables plotted along the first two principal components, we can start to see the variables that are defining the classes. In general, the first class seems to be associated with lower mean trip distance, revenue, and exploration, along with smaller home ranges and larger variance in trip duration.
 
-## Variable Importance
+The second group is associated with greater port number and diversity, larger home ranges, and greater choice entropy.
 
-Use `randomForest` to perform supervised classification and see which variables contribute most to classification
+The third group seems to be associated with lower variance in trip duration and greater mean revenue, but also a greater proportion of tickets from other fisheries.
 
-```{r}
-library(randomForest)
-rf <- randomForest(x=dat_nolabs,y=as.factor(dat_clust$Best.partition),importance = TRUE,ntree=1000)
-var_imp <- rf$importance %>% as_tibble(rownames="variable") %>% 
-  select(variable,MeanDecreaseAccuracy) %>% 
-  mutate(rel_imp=MeanDecreaseAccuracy*100)
-var_imp %>% 
-  arrange(desc(rel_imp)) %>% 
-  mutate(varname=factor(variable,levels=variable)) %>% 
-  ggplot(aes(varname,rel_imp))+
-  geom_col()+
-  scale_y_continuous(breaks=seq(0,10,by=2))+
-  labs(x="Variable",y="Relative Importance")+
-  theme(axis.text.x = element_text(angle=90))
-```
-
-We can also look at distribution of variable values across groups
+As another visualization of differences between clusters, we can look at distribution of specific variable values across groups
 
 ```{r,fig.height=8,fig.width=8}
 library(multcompView)
@@ -170,7 +225,7 @@ group_means <- dat %>%
       ggplot(aes(factor(partition),value,fill=factor(partition)))+
       geom_boxplot(col='gray50')+
       geom_text(aes(partition,y=(max(value)-min(value))*0.9+min(value),label=letter),check_overlap = T,nudge_x=-0.15,size=4)+
-      scale_fill_manual(values=viridis_pal()(3))+
+      scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(3))+
       labs(y="",x="",title=j)+
       guides(fill='none')
   })) %>% 
@@ -179,7 +234,105 @@ group_means <- dat %>%
 library(cowplot)
 
 plot_grid(plotlist=group_means$plotvars,labels=LETTERS[1:nrow(group_means)])
-
 ```
 
+Letters in the plot above show the results of Tukey's honest significant difference test between the values of each variable amongst classes. We can use these to further define each class, and give each a nickname.
 
+1. Group 1 have a pattern that seems to indicate more localized fishing. Low diversity in port use and generally shorter trips, but with the highest variance in trip duration relative to other groups. The least derby-like fishers (i.e., latest day reaching 90% cumulative landings). Reliant on Dungeness crab, with low participation in other fisheries. Least likely to fish in high wind conditions and have the lowest choice entropy amongst groups.
+
+2. Group 2 are the rovers. They have the highest port use by number and diversity, as well as the highest mean revenue per trip. They travel the furthest per trip on average, and have the highest location choice entropy, indicating exploratory behavior. They are similar to Group 1 in that they have low participation in other fisheries.
+
+3. Group 3 is defined by its participation in other fisheries. Highest propensity for derby fishing (i.e., earliest day reaching 90% cumulative landings), and highest participation in other fisheries, by number of tickets and overall revenue. Fishers in this group visit a relatively lower number of ports per trip and have smaller port use diversity, with middling revenue per trip and trip distance. Group 3 exhibits greater trip duration than group 1. Their location choice entropy is greater than Group 1 but less than Group 2, and their home ranges are similar to Group 1.
+
+## Variable Importance
+
+We can investigate the contribution of individual variables to the eventual classification. We use random forests in the package `randomForest` to perform supervised classification and see which variables contribute most to classification.
+
+Random forests are built from a number of individual classification trees (we use 1000). Each tree is built by recursive binary partitioning of the data, using a predictor variable (e.g., `trip_dur_mean`) to make a split in the data to create the most homogenous subgroups, where homogeneity is measured by the Gini coefficient on the relative proportions of class (Group 1, 2, or 3) membership. The tree keeps dividing until the Gini index no longer declines with further splitting, at which point the tree is "fully grown".
+
+Random forests build many of these trees, with two differences from single classification trees. First, for each tree, only a bootstrapped subsample of the original data are chosen for classification. Second, only a subset of the predictor variables are "available" to the tree for binary partitioning, chosen randomly. Therefore, each tree is twice randomized---first through bootstrapping, and then through the random selection of partitioning variables; hence creating the "random forest". Once many trees are grown from the bootstrapped sample, the classes for the observations from the original data set that were not chosen for fitting (known as out-of-bag observations) are predicted by each tree in the forest. We compile the rate at which the forest mis-classifies observations into the incorrect class. The measure of variable importance is the *change* in this mis-classification rate when a variable is randomly permuted in the out-of-bag sample. In other words, we measure how much worse our classification performs without the correctly-ordered variable.
+
+We apply this procedure to our data, using the 3 classes from above and growing 1000 trees.
+
+```{r}
+library(randomForest)
+rf <- randomForest(x=dat_nolabs,y=as.factor(dat_clust$Best.partition),importance = TRUE,ntree=1000)
+var_imp <- rf$importance %>% as_tibble(rownames="variable") %>% 
+  select(variable,MeanDecreaseAccuracy) %>% 
+  mutate(rel_imp=MeanDecreaseAccuracy*100)
+var_imp %>% 
+  arrange(desc(rel_imp)) %>% 
+  mutate(varname=factor(variable,levels=variable)) %>% 
+  ggplot(aes(varname,rel_imp))+
+  geom_col()+
+  scale_y_continuous(breaks=seq(0,10,by=2))+
+  labs(x="Variable",y="Relative Importance")+
+  theme(axis.text.x = element_text(angle=90))
+```
+
+The variables that, when permuted, had the greatest effect on classification errors were port use diversity, risk-taking as measured by propensity to fish in high winds, and the proportion of tickets from other fisheries.
+
+## Class Transition Across Years
+
+We have described the behavior of some broad groups of Dungeness crab fishers, and explored the importance of individual behavioral variables in distinguishing between groups. Lastly, we want to investigate how the total number of vessels in each class may have shifted over the course of years on our data, as well as explore interannual movements of individual vessels between the three classes.
+
+```{r}
+class_by_yr <- dat_clustered %>% 
+  group_by(crab_season,partition) %>% 
+  summarise(n_vessels=n_distinct(drvid)) %>% 
+  ungroup()
+class_by_yr %>% 
+  ggplot(aes(crab_season,n_vessels,fill=factor(partition)))+
+  geom_col()+
+  labs(x="Crab Season",y="Number of Vessels",title="Number of Vessels by Behavior Class and Year",fill="Group")+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(3))+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        legend.position = 'bottom')
+class_by_yr %>% 
+  ggplot(aes(crab_season,n_vessels,group=factor(partition),color=factor(partition)))+
+  geom_line(size=2)+
+  labs(x="Crab Season",y="Number of Vessels",title="Number of Vessels by Behavior Class and Year",color="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(3))+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        legend.position = 'bottom')
+```
+
+The number of vessels in Group 1 has been climbing since after the 2015-16 season.
+
+We can also look at the flows of vessels between classes and years.
+
+```{r,warning=F,message=F}
+
+library(ggalluvial)
+
+dat_alluvium <- dat_clustered %>% 
+  select(drvid,crab_season,partition) %>% 
+  distinct() %>% 
+  mutate(class=case_when(
+    partition==1 ~ "Group 1",
+    partition==2 ~ "Group 2",
+    partition==3 ~ "Group 3"
+  )) %>% 
+  complete(drvid,crab_season,fill=list('class'="Not Fishing"))
+
+# with boats not fishing in a given season
+# dat_alluvium %>%
+#   ggplot(aes(crab_season,stratum=class,alluvium=drvid,fill=class,label=class))+
+#   scale_fill_manual(values=viridis_pal()(4),name="Class")+
+#   geom_flow()+
+#   geom_stratum()+
+#   theme(axis.text.x = element_text(angle=90,vjust=0.5))
+
+# non-fishing vessels removed
+dat_alluvium %>%
+  filter(class!="Not Fishing") %>% 
+  ggplot(aes(crab_season,stratum=class,alluvium=drvid,fill=class,label=class))+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(3),name="")+
+  geom_flow()+
+  geom_stratum()+
+  labs(x="Crab Season",y="Number of Vessels")+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        legend.position = 'bottom')
+```
+
+This is the same plot as above but with the flows from each class included between years. The most dramatic interannual change in class membership is from 2017-18 to 2018-19, when all fishers started behaving like Group 1 members.

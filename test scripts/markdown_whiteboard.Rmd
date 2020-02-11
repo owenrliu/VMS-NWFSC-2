@@ -1,0 +1,56 @@
+---
+title: "markdown whiteboard"
+author: "Owen Liu"
+date: "2/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Purpose
+
+The goal of this analysis is to perform a clustering analysis on a suite of behavioral metrics describing the 2009-2019 west coast Dungeness crab fishing fleet. The metrics have been compiled based on fish ticket and VMS data, and include information on port use, revenue, and trip lengths, as well as more advanced metrics from analysis of VMS data, like distance traveled, exploratory behavior and propensity to fish in high winds.
+
+All metrics (to the extent data allow) were calculated for each vessel and crab season. The unit of observation in clustering is one vessel's crab season, e.g. Vessel A in crab season 2012-2013.
+
+Our guiding questions are:
+
+1. **Can the behavior of the west coast Dungeness crab fishing fleet be classified into distinct behavioral types?**
+2. **Which behavioral variables are particularly important in defining these behavioral types?**
+3. **Have individual vessels moved between behavioral types across years?**
+
+More specifically, the metrics are as follows for each vessel (`drvid`) in each `crab_season`:
+
+1.  Port use: 
+  *  `n_ports_trip` Average ports visited per trip
+  *  `ports_mean_mth` Number of ports visited per month 
+  *  `port_shannon` Shannon diversity index of port use
+2.  Revenue: 
+  *  `revenue_mean` Mean Dungeness revenue per trip
+  *  `revenue_sd` SD revenue per trip
+3.  Trip Length: 
+  *  `trip_dist_mean` Mean distance per fishing trip, 
+  *  `trip_dur_mean` Mean number of days per fishing trip
+  *  `trip_dist_sd` SD distance per trip
+  *  `trip_dur_sd` SD days per trip
+5.  Derby fishing:
+  *  `quant90_day` Day-of-season on which fisher reach 90% of eventual annual catch
+6.  Participation in other fisheries:
+  *  `prop_other_revenue` Proportion of revenue from non-DCRB fisheries
+  *  `prop_other_tix` Proportion of all fish tickets form non-DCRB fisheries
+7.  Risk-taking:
+  *  `prop_highwinds` Propensity to fish in high winds. Proportion of trips pursued where the 95% quantile of wind speed was greater than 7.5 m/s
+8.  Exploration: 
+  *  `entropy_quant90` Cumulative choice entropy, measuring how likely a vessel is to fish in new versus past locations
+9.  Mobility:
+  * `homerange` Home range defined as the area of the convex hull surrounding all of a vessel's VMS pings during the season, excluding the top 5% spatial outliers
+  
+Letters in the plot above show the results of Tukey's honest significant difference test between the values of each variable amongst classes. We can use these to further define each class.
+
+1. Group 1 have a pattern that seems to indicate more localized fishing. The group is characterized by low diversity in port use and generally shorter trips, but with the highest variance in trip duration relative to other groups. They are the least derby-like fishers (i.e., latest day reaching 90% cumulative landings). Reliant on Dungeness crab, Group 1 has low participation in other fisheries. They are the least likely to fish in high wind conditions and have the lowest choice entropy amongst groups.
+
+2. Group 2 are the rovers. They have the highest port use by number and diversity, as well as the highest mean revenue per trip. They travel the furthest per trip on average, and have the highest location choice entropy, indicating exploratory behavior. They are similar to Group 1 in that they have low participation in other fisheries.
+
+3. Group 3, on the other hand, is defined by its participation in other fisheries. Highest propensity for derby fishing (i.e., earliest day reaching 90% cumulative landings), and highest participation in other fisheries, by number of tickets and overall revenue. Fishers in this group visit a relatively lower number of ports per trip and have smaller port use diversity, with middling revenue per trip and trip distance. Group 3 exhibits greater trip duration than group 1. Their location choice entropy is greater than Group 1 but less than Group 2, and their home ranges are similar to Group 1.

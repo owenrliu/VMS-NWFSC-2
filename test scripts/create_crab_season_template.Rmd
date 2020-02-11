@@ -249,6 +249,32 @@ ggsave(here::here('fishing behavior','plots','OR_startdate_comparison.png'),OR_d
 ggsave(here::here('fishing behavior','plots','WA_startdate_comparison.png'),WA_dates,h=8,w=8)
 ```
 
+Compare California with official start dates
+
+```{r,fig.width=8,fig.height=8}
+# data from M. Fisher on official start dates from press releases and news
+ca_starts <- read_csv(here::here('test scripts','ca_port_starts.csv')) %>% 
+  mutate(official_start=as_date(official_start,format="%m/%d/%Y",tz="America/Los_Angeles")) %>% 
+  mutate(type='official') %>%
+  rename(date=official_start) %>% 
+  mutate(start_yr=substr(crab_season,1,4) %>% as.numeric()) %>% 
+  mutate(start_date=as_date(paste0(start_yr,"-11-01"))) %>% 
+  mutate(days_after_nov1=difftime(date,start_date,units='days'))
+
+CA_dates2 <- compare_first_tickets %>% 
+  filter(agency_code=='C')%>% 
+  full_join(ca_starts) %>% 
+  ggplot(aes(crab_season,days_after_nov1,col=type,fill=type,shape=type))+
+  scale_color_discrete(name="Calculation Type",labels=c('First ticket',"First large ticket","One percent\nlandings achieved","Official"))+
+  scale_fill_discrete(name="Calculation Type",labels=c('First ticket',"First large ticket","One percent\nlandings achieved","Official"))+
+  scale_shape_manual(values = c(21:24),name="Calculation Type",labels=c('First ticket',"First large ticket","One percent\nlandings achieved","Official"))+
+  labs(y='Days After Nov. 1',x="Crab Season",title="California Season Start Date Comparison")+
+  geom_point(alpha=0.6,size=3)+
+  facet_wrap(~port_group_code)+
+  coord_flip()
+CA_dates2
+ggsave(here::here('fishing behavior','plots','CA_startdate_comparison2.png'),CA_dates2,h=8,w=8)
+```
 
 
 

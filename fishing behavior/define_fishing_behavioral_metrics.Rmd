@@ -58,7 +58,6 @@ Here is a running list of the metrics to calculate. Some metrics have multiple t
 6.  Risk-taking: Propensity to fish in high winds
 7.  Derby fishing: Mean day-of-season of 90% annual catch reached
 8.  Participation in other fisheries: percent of revenue from non-DCRB fisheries
-9.  Number of crab traps?
 
 ```{r}
 # Start with a version of the fish tickets that has only the information that we need to calculate metrics
