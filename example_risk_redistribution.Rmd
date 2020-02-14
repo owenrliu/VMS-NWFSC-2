@@ -1,0 +1,164 @@
+---
+title: "Delayed Opening Effort Shift Example"
+author: "Owen Liu"
+date: "2/14/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(magrittr)
+library(here)
+
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+## Example Year
+
+
+```{r}
+load(here::here('test scripts','Scenario_Analysis_Data_2009_2018.RData'))
+
+dat <- full.df %>% filter(year %in% c(2012,2013)) %>% 
+  select(crab.year,year,month,Region,GRID5KM_ID,Num_DCRB_VMS_pings,H_Avg_Abund)
+
+# Group by region and summarise whale occurrence and VMS pings
+dat_base <- dat %>% 
+  # for each region, year, and month
+  group_by(Region,crab.year,year,month) %>% 
+  # calculate total pings, total number of grid cells, ping density, mean whale abundance, and risk metric
+  summarise(totpings=sum(Num_DCRB_VMS_pings,na.rm=T),
+            n_cells=n_distinct(GRID5KM_ID),
+            ping_density=totpings/n_cells,
+            # mean humpback abundance (could do sum or max?)
+            humpback=mean(H_Avg_Abund,na.rm=T),
+            # risk as mean abundance time total pings divided by number of grid cells
+            risk=sum(Num_DCRB_VMS_pings*H_Avg_Abund)/n_cells) %>% 
+  ungroup() %>% 
+  mutate(scenario="Base")
+
+# Match months of the year to months of the crab season (starting in November)
+month_of_season_match <- tibble(month=c(1:7,11,12),month_of_season=c(3:9,1:2))
+test <- dat_base %>% 
+  filter(crab.year=="2012-2013",Region=="CenCA") %>% 
+  left_join(month_of_season_match)
+
+test %>% 
+  ggplot(aes(month_of_season))+
+  geom_line(aes(y=totpings,col='Pings'))+
+  geom_point(aes(y=totpings,col='Pings'))+
+  geom_line(aes(y=humpback*4000,col='Whales'))+
+  geom_point(aes(y=humpback*4000,col='Whales'))+
+  scale_y_continuous(sec.axis=sec_axis(~./4000,name="Mean Humpback Abund"))+
+  scale_color_manual(values=c('black','darkgreen'))+
+  labs(x="Month of the Season",y="Total VMS pings")+
+  scale_x_continuous(breaks=1:9,limits=c(1,9))
+```
+
+## Scenarios- 1 Month or 2 Month Delay
+
+```{r,fig.height=8,fig.width=6}
+  
+scenario1_dat <- dat %>% 
+  # Make sure that there is a record for all grid cells for all months, and fill in missing ping values with zeroes
+  # this is necessary because we need to "look back" (use lags) in the next step
+  complete(nesting(Region,GRID5KM_ID),crab.year,month=1:12,fill=list(Num_DCRB_VMS_pings=0)) %>% 
+  # lag number of pings by 1 month to simulate redistribution
+  group_by(GRID5KM_ID) %>% 
+  arrange(year,month) %>% 
+  mutate(npings_scenario=lag(Num_DCRB_VMS_pings,1)) %>% 
+  # remove any effort in nov
+  mutate(npings_scenario=ifelse(month==11,0,npings_scenario)) %>% 
+  filter(!is.na(npings_scenario)) %>% 
+  ungroup() %>% 
+  group_by(Region,year,month) %>% 
+  summarise(totpings=sum(npings_scenario,na.rm=T),
+            n_cells=n_distinct(GRID5KM_ID,na.rm = T),
+            ping_density=totpings/n_cells,
+            # mean humpback abundance (could do sum or max?)
+            humpback=mean(H_Avg_Abund,na.rm=T),
+            # risk as mean abundance time total pings divided by number of grid cells
+            risk=sum(npings_scenario*H_Avg_Abund,na.rm=T)/n_cells) %>% 
+  ungroup() %>% 
+  mutate(scenario="1 Month Delay")
+
+scenario2_dat <- dat %>% 
+  complete(nesting(Region,GRID5KM_ID),crab.year,month=1:12,fill=list(Num_DCRB_VMS_pings=0)) %>% 
+  # lag number of pings by 1 month to simulate redistribution
+  group_by(GRID5KM_ID) %>% 
+  arrange(year,month) %>% 
+  mutate(npings_scenario=lag(Num_DCRB_VMS_pings,2)) %>%
+  # remove any effort in nov
+  mutate(npings_scenario=ifelse(month%in% c(11,12),0,npings_scenario)) %>%  
+  filter(!is.na(npings_scenario)) %>% 
+  ungroup() %>% 
+  group_by(Region,year,month) %>% 
+  summarise(totpings=sum(npings_scenario,na.rm=T),
+            n_cells=n_distinct(GRID5KM_ID),
+            ping_density=totpings/n_cells,
+            # mean humpback abundance (could do sum or max?)
+            humpback=mean(H_Avg_Abund,na.rm=T),
+            # risk as mean abundance time total pings divided by number of grid cells
+            risk=sum(npings_scenario*H_Avg_Abund,na.rm=T)/n_cells) %>% 
+  ungroup() %>% 
+  mutate(scenario="2 Month Delay")
+
+dat_all <- dat_base %>% bind_rows(scenario1_dat) %>% bind_rows(scenario2_dat) %>% 
+  mutate(scenario=factor(scenario,levels=c("Base","1 Month Delay","2 Month Delay")))
+
+# Group by region and summarise whale occurrence and VMS pings
+test <- dat_all %>% 
+  filter(year %in% c(2012,2013),Region=="CenCA") %>% 
+  filter((year==2012&month%in%c(11,12))|(year==2013&month %in%c(1:10))) %>% 
+  left_join(month_of_season_match)
+
+scenarios_plot1 <- test %>% 
+  ggplot(aes(month_of_season))+
+  geom_line(aes(y=totpings,col='Pings'),size=2)+
+  geom_point(aes(y=totpings,col='Pings'))+
+  geom_line(aes(y=humpback*4000,col='Whales'),size=2)+
+  geom_point(aes(y=humpback*4000,col='Whales'))+
+  scale_y_continuous(sec.axis=sec_axis(~./4000,name="Mean Humpback Abund"))+
+  scale_color_manual(values=c('black','blue'),name="")+
+  labs(x="Month of the Season",y="Total VMS pings",title="VMS Pings and Mean Humpback Abundance\nSeason Delay Scenarios")+
+  scale_x_continuous(breaks=1:9,limits=c(1,9))+
+  facet_wrap(~scenario,nrow = 3)+
+  theme(legend.position = 'bottom')
+
+scenarios_risk <- test %>% 
+  ggplot(aes(month_of_season,risk))+
+  geom_line()+
+  geom_point()+
+  labs(x="Month of Season",y="Risk",title="Risk under Season Delay Scenarios")+
+  scale_x_continuous(breaks=1:9,limits=c(1,9))+
+  facet_wrap(~scenario,nrow=3)
+
+scenarios_cumulative_risk <- test %>% 
+  group_by(scenario) %>% 
+  arrange(month_of_season) %>% 
+  mutate(cum_risk=cumsum(risk)) %>% 
+  ungroup() %>% 
+  ggplot(aes(month_of_season,cum_risk))+
+  geom_line()+
+  geom_point()+
+  geom_area(fill='darkred',alpha=0.5)+
+  facet_wrap(~scenario,nrow=3)+
+  scale_x_continuous(breaks=1:9,limits=c(1,9))+
+  labs(x='Month of Season',y='Cumulative Risk',title="Cumulative Risk under Season Delay Scenarios")
+scenarios_plot1
+scenarios_risk
+scenarios_cumulative_risk
+ggsave(here::here('test scripts','scenarios_plot1.png'),scenarios_plot1,w=6,h=8)
+ggsave(here::here('test scripts','scenarios_risk.png'),scenarios_risk,w=6,h=8)
+ggsave(here::here('test scripts','scenarios_cumulative_risk.png'),scenarios_cumulative_risk,w=6,h=8)
+```
+
+
