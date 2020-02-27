@@ -58,6 +58,7 @@ Here is a running list of the metrics to calculate. Some metrics have multiple t
 6.  Risk-taking: Propensity to fish in high winds
 7.  Derby fishing: Mean day-of-season of 90% annual catch reached
 8.  Participation in other fisheries: percent of revenue from non-DCRB fisheries
+9.  Vessel size (not included as a variable yet)
 
 ```{r}
 # Start with a version of the fish tickets that has only the information that we need to calculate metrics
@@ -101,6 +102,27 @@ dcrb_vessels <- dcrb_revenue %>%
   distinct()
 vessel_list <- unique(dcrb_vessels$drvid)
 ```
+
+### Vessel Size
+
+Use processed fish tickets to extract vessel sizes
+
+```{r}
+vessel_size_metric <-  fishtix %>%
+  filter(drvid %in% vessel_list) %>% 
+  distinct(drvid,crab_season,FINAL_LENGTH) %>% 
+  rename(vessel_size=FINAL_LENGTH)
+
+# plot vessel size metric
+vessel_size_plot <- vessel_size_metric %>% 
+  ggplot(aes(vessel_size))+
+  geom_density(fill='#33638DFF')+
+  labs(x='Vessel Length (m)')
+vessel_size_plot
+ggsave(here::here('fishing behavior','plots','vessel_size_metric.png'),vessel_size_plot,w=6,h=4)
+write_rds(vessel_size_metric,here::here('fishing behavior','vessel_sizes.rds'))
+```
+
 
 ### Port Use Metrics
 
@@ -272,16 +294,19 @@ participation_tix_plot <- participation_metric %>%
 participation_rev_plot
 participation_tix_plot
 ggsave(here::here('fishing behavior','plots','participation_rev_metric.png'),participation_rev_plot,w=6,h=4)
-homerange_plot
 ggsave(here::here('fishing behavior','plots','participation_tix_metric.png'),participation_tix_plot,w=6,h=4)
 ```
 
 ### Risk Metric
 
-Following O'Farrell et al., we extract wind speeds from NOAA's ERDAPP server and use them to measure a fisher's propensity to go out in stormy weather. Following Pfeiffer and Gratz (2016), who also studied west coast fishing, we calculate a max (95th percentile) wind speed per trip, and then calculate what percent of a vessel's trips in a given crab season were pursued in those high winds conditions.
+Following O'Farrell et al., we extract wind speeds from NOAA's ERDAPP server and use them to measure a fisher's propensity to go out in stormy weather. Following Pfeiffer and Gratz (2016), who also studied west coast fishing, we calculate a max (95th percentile) wind speed per trip, and then calculate what percent of a vessel's trips in a given crab season were pursued in winds >7.5m/s.
 
 Download all winds for the study area.
 DEFAULT: not run because downloading takes a long time
+
+02/18/2020: https://www.ncei.noaa.gov/thredds/ncss/uv/clm_agg/Latest_Climatology_of_Ocean_Winds_best.ncd/dataset.html
+https://rdrr.io/github/bocinsky/thredds/f/README.md
+
 
 ```{r, eval=FALSE}
 library(rerddap)
@@ -539,8 +564,9 @@ all_metrics <- port_use_metrics %>%
   full_join(homerange_metric) %>% 
   filter(drvid %in% vessel_list)
 ```
+### Look for Missing Data
 
-Save
+### Save
 ```{r}
 write_rds(all_metrics,here::here('fishing behavior','fishing_behavior_metrics_vessel_season.rds'))
 ```

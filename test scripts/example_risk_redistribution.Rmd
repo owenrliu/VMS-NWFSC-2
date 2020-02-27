@@ -161,4 +161,73 @@ ggsave(here::here('test scripts','scenarios_risk.png'),scenarios_risk,w=6,h=8)
 ggsave(here::here('test scripts','scenarios_cumulative_risk.png'),scenarios_cumulative_risk,w=6,h=8)
 ```
 
+```{r,fig.height=8,fig.width=8}
+dat <- full.df  %>% #filter(year %in% c(2012,2013)) %>% 
+  dplyr::select(crab.year,year,month,GRID5KM_ID,Region,BIA_mn_noNAs,BIA_bm_noNAs,dollars_DCRB,Num_DCRB_VMS_pings,Blue_occurrence,H_Avg_Abund)
+
+df <- dat
+scenario_name <- "1_Month_Delay"
+spatial_domain <- "Region"
+scenario_lag <- 0
+
+month_of_season_match <- tibble(month=c(1:7,11,12),month_of_season=c(3:9,1:2))
+
+# doesn't output df the way i want
+scenario_summary_function <- function(df, spatial_domain, scenario_lag,scenario_name) {
+  #df.tmp <- paste0(scenario_name,"_dat")
+  # spatial_domain <- sym(spatial_domain) # https://dplyr.tidyverse.org/articles/programming.html
+  
+  out <- df %>%
+    complete(nesting(!!ensym(spatial_domain),GRID5KM_ID,crab.year),month=1:12,fill=list(dollars_DCRB=0, Num_DCRB_VMS_pings=0)) %>% 
+    ungroup() %>% 
+    left_join(month_of_season_match,by='month') %>% 
+    # lag number of pings by 1 month to simulate redistribution
+    group_by(GRID5KM_ID,crab.year) %>% 
+    mutate(
+      npings_scenario=lag(Num_DCRB_VMS_pings,scenario_lag,order_by=month_of_season),
+      dollars_scenario=lag(dollars_DCRB,scenario_lag,order_by=month_of_season)
+      ) %>% 
+    # filter_at(vars(dollars_DCRB,Num_DCRB_VMS_pings,npings_scenario,dollars_scenario),any_vars(.>0))%>% 
+    ungroup() %>% 
+    group_by(!!ensym(spatial_domain),crab.year,month_of_season) %>% 
+    summarise(totpings=sum(npings_scenario,na.rm=T),
+              n_cells=n_distinct(GRID5KM_ID),
+              ping_density=totpings/n_cells,
+              # mean humpback abundance (could do sum or max?)
+              humpback=mean(H_Avg_Abund,na.rm=T),
+              # risk as mean abundance time total pings divided by number of grid cells
+              risk=sum(npings_scenario*H_Avg_Abund,na.rm=T)/n_cells) %>% 
+    ungroup() %>% 
+    mutate(scenario=scenario_name)
+  
+  assign(scenario_name,out,envir = .GlobalEnv)
+}
+scenario_summary_function(dat,Region,3,"delay3months")
+test2 <- test %>% filter(GRID5KM_ID==26662)
+
+## test with a few scenarios
+delay0 <- scenario_summary_function(dat,Region,0,'base')
+delay1 <-scenario_summary_function(dat,Region,1,'1-month-delay')
+delay2 <- scenario_summary_function(dat,Region,2,'2-month-delay')
+
+delays <- bind_rows(delay0,delay1,delay2)
+
+delayplot <- delays %>% 
+  mutate(scenario=factor(scenario,levels=c('base','1-month-delay','2-month-delay'))) %>% 
+  group_by(Region,scenario,crab.year) %>% 
+  arrange(crab.year,month_of_season) %>% 
+  mutate(cum_risk=cumsum(risk)) %>% 
+  ungroup() %>% 
+  filter(Region=="NorCA") %>% 
+  ggplot(aes(month_of_season,cum_risk))+
+  geom_line()+
+  geom_point()+
+  geom_area(fill='darkred',alpha=0.5)+
+  facet_grid(crab.year~scenario,scales='free_y')+
+  scale_x_continuous(breaks=1:9,limits=c(1,9))+
+  labs(x='Month of Season',y='Cumulative Risk',title="Cumulative Risk under Season Delay Scenarios")
+delayplot
+```
+
+
 

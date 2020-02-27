@@ -24,10 +24,11 @@ load(here::here('test scripts','Scenario_Analysis_Data_2009_2018.RData'))
 grd <- read_sf(here::here('data','raw','grid','regions_master_final_lamb.shp'))
 # background map
 coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
-  filter(name %in% c('California','Oregon','Washington')) %>% 
+  filter(name %in% c('California','Oregon','Washington','Nevada')) %>% 
   st_transform(st_crs(grd))
 
 # BIAs
+library(smoothr)
 BIA <- read_csv(here::here('data','raw','grid','Grid5km_BIA_overlap.csv'),col_types = cols())
 BIA %<>% select(GRID5KM_ID,BIA_mn,BIA_bm)
 
@@ -36,7 +37,8 @@ grd %<>% left_join(BIA,by='GRID5KM_ID')
 BIA_mn <- grd %>% 
   filter(BIA_mn==1) %>% 
   group_by(BIA_mn) %>% 
-  summarise()
+  summarise() %>% 
+  ungroup()
 BIA_bm <- grd %>% 
   filter(BIA_bm==1) %>% 
   group_by(BIA_bm) %>% 
@@ -412,13 +414,79 @@ dcrb_nov_mar_sf <- dcrb_nov_mar %>%
 bbox <- st_bbox(dcrb_nov_mar_sf)
 dcrb_nov_mar_plot <- ggplot()+
   geom_sf(data=BIA_mn,fill='gray80',col='black')+
-  geom_sf(data=dcrb_nov_mar_sf,aes(fill=perc),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=dcrb_nov_mar_sf,aes(fill=perc*100),col=NA,na.rm=T,alpha=0.8)+
   geom_sf(data=coaststates,col=NA,fill='gray60')+
-  scale_fill_viridis(na.value=NA,option="D",name="DCRB Pings\n(Percentile)",breaks=seq(0,1,by=0.2),limits=c(0,1))+
+  scale_fill_viridis(na.value=NA,option="D",name="DCRB Pings\n(Percentile)",breaks=seq(0,100,by=20),limits=c(0,100))+
   coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
   labs(title="Dungeness Crab Pings\nNov-Mar 2009-2018")+
   theme(axis.text.x.bottom = element_text(angle=45),
           title=element_text(size=16))
+dcrb_nov_mar_plot
+ggsave(here::here('test scripts','CA_dcrb_nov_mar_perc.png'),dcrb_nov_mar_plot,h=8,w=6)
+
+```
+
+## Maps with Regional Definitions
+
+```{r,fig.height=8,fig.width=8}
+# NorCA, CenCA polygons
+norCA <- dcrb_nov_mar_sf %>% 
+  filter(Region=="NorCA") %>% 
+  ungroup() %>% 
+  summarise() %>% 
+  st_bbox()
+cenCA <- dcrb_nov_mar_sf %>% 
+  filter(Region=="CenCA") %>% 
+  ungroup() %>% 
+  summarise() %>% 
+  st_bbox()
+
+CAtop <- 1277869
+CAsplit <- 922869
+CAbot <- 362869
+rgns <- tibble(hlines=c(CAtop,CAsplit,CAbot))
+# norCA[1] <- norCA[1]-100000
+# norCA %<>% 
+#   st_as_sfc()%>% 
+#   st_as_sf() %>% 
+#   mutate(rgn="NorCA")
+# 
+# 
+# cenCA[1] <- cenCA[1]-200000
+# cenCA %<>% 
+#   st_as_sfc() %>% 
+#   st_as_sf() %>% 
+#   mutate(rgn="CenCA")
+# rgns <- st_sym_difference(norCA,cenCA)
+
+# for DCRB, with percentiles
+dcrb_nov_mar_sf <- dcrb_nov_mar %>%
+  mutate(perc=percent_rank(pings)) %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+bbox <- st_bbox(dcrb_nov_mar_sf)
+ltys <- c('Region'=2)
+cols <- c('Humpback BIA'='red')
+dcrb_nov_mar_plot <- ggplot()+
+  geom_hline(data=rgns,aes(yintercept=hlines,linetype='Region'))+
+  geom_sf(data=dcrb_nov_mar_sf,aes(fill=perc*100),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=BIA_mn,fill=NA,aes(col='Humpback BIA'),size=1)+
+  geom_sf(data=coaststates,col=NA,fill='gray60')+
+  annotate("text",x=833000,y=600000,label="CenCA")+
+  annotate("text",x=833000,y=1000000,label="NorCA")+
+  scale_color_manual(values=cols,guide=guide_legend(title=NULL))+
+  scale_linetype_manual(values=ltys,guide=guide_legend(title=NULL))+
+  scale_fill_viridis(na.value=NA,option="D",name="DCRB Pings\n(Percentile)",breaks=seq(0,100,by=20),limits=c(0,100))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Dungeness Crab Pings\nNov-Mar 2009-2018",y="",x="")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        legend.position = c(0.8,0.6),
+        legend.background = element_rect(fill='white'),
+        legend.spacing.y = unit(5,'mm'))
 dcrb_nov_mar_plot
 ggsave(here::here('test scripts','CA_dcrb_nov_mar_perc.png'),dcrb_nov_mar_plot,h=8,w=6)
 

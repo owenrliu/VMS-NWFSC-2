@@ -129,6 +129,7 @@ library(factoextra)
 dat_clustered <- dat_scaled %>% na.omit() %>% 
   mutate(partition=dat_clust$Best.partition) %>% 
   as_tibble()
+write_rds(dat_clustered,here::here('fishing behavior','data_scaled_3clusters.rds'))
 ```
 
 We can visualize the results of clustering through a clustering dendrogram. Below we can see all of the data (unique season-vessel combinations), colored by the cluster into which they were grouped.
@@ -255,8 +256,17 @@ Random forests build many of these trees, with two differences from single class
 We apply this procedure to our data, using the 3 classes from above and growing 1000 trees.
 
 ```{r}
+# including vessel size here even though it wasn't used in the original data
+vessel_sizes <- read_rds(here::here('fishing behavior','vessel_sizes.rds'))
+
+dat_nolabs <- dat_clustered %>% 
+  left_join(vessel_sizes) %>% 
+  na.omit() %>% 
+  select(-(1:2)) %>% 
+  mutate(partition=as.factor(partition))
+
 library(randomForest)
-rf <- randomForest(x=dat_nolabs,y=as.factor(dat_clust$Best.partition),importance = TRUE,ntree=1000)
+rf <- randomForest(partition~.,data=dat_nolabs,importance = TRUE,ntree=1000)
 var_imp <- rf$importance %>% as_tibble(rownames="variable") %>% 
   select(variable,MeanDecreaseAccuracy) %>% 
   mutate(rel_imp=MeanDecreaseAccuracy*100)
@@ -336,3 +346,87 @@ dat_alluvium %>%
 ```
 
 This is the same plot as above but with the flows from each class included between years. The most dramatic interannual change in class membership is from 2017-18 to 2018-19, when all fishers started behaving like Group 1 members.
+
+### Fleetwide Changes in Individual Metrics
+
+To investigate the surprising 2018-19 shift in behavioral strategies, can we look at major changes in the important variables over time?
+
+```{r}
+annual_var_means <- dat_clustered %>% 
+  select(-drvid,-partition) %>% 
+  pivot_longer(-crab_season,names_to = 'variable',values_to='value') %>% 
+  group_by(crab_season,variable) %>% 
+  summarise(mean_val=mean(value),sd_val=sd(value)) %>% 
+  ungroup()
+
+annual_var_means %>% 
+  ggplot(aes(crab_season,mean_val,group=1))+
+  geom_point()+
+  geom_line()+
+  facet_wrap(~variable)+
+  geom_hline(yintercept=0)+
+  labs(x="Crab Year",y="Fleet-wide Mean")+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        legend.position = 'bottom')
+
+annual_var_means %>% 
+  filter(variable=='port_shannon') %>% 
+  ggplot(aes(crab_season,mean_val,group=1))+
+  geom_point()+
+  geom_line()+
+  geom_hline(yintercept=0)+
+  labs(x="Crab Year",y="Fleet-wide Mean")+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        legend.position = 'bottom')
+```
+
+
+## Vessel Size Distribution by Class
+
+```{r}
+dat_clustered %>% left_join(vessel_sizes) %>% 
+  ggplot(aes(vessel_size,fill=factor(partition)))+
+  geom_density(alpha=0.5)+
+  labs(x="Vessel Length",y='density',fill='Group',title="Vessel Length Distribution by Behavioral Group")+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(3))+
+  facet_wrap(~crab_season)
+
+```
+
+### Vessel Size Correlations
+
+```{r}
+vars.corrs <- dat_clustered %>% 
+  left_join(vessel_sizes) %>% 
+  select(-(1:2),-partition) %>% 
+  cor(use="complete.obs") %>% 
+  as_tibble(rownames="var1") %>% 
+  pivot_longer(-var1,names_to = "var2",values_to = "corr")
+glimpse(vars.corrs)
+
+vars.corrs %>% 
+  ggplot(aes(var1,var2,fill=corr))+
+  geom_tile()+
+  coord_equal()+
+  scale_fill_gradient2()+
+  labs(x="",y="",title="Variable Pearson Correlation Matrix",fill="")+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5,hjust=1))
+
+vars.corrs %>% 
+  filter(var1=='vessel_size',var2 !='vessel_size') %>% 
+  arrange(desc(corr)) %>% 
+  mutate(varname=factor(var2,levels=var2)) %>% 
+  mutate(is_neg=ifelse(corr<0,"neg","pos")) %>% 
+  ggplot(aes(varname,corr,fill=is_neg))+
+  geom_col()+
+  labs(x="Variable",y="Correlation with Vessel Length")+
+  scale_fill_manual(values=c("red","blue"),name="")+
+  scale_y_continuous(breaks=seq(-1,1,by=0.2))+
+  guides(fill='none')+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5,hjust=1))
+test<-dat_clustered %>% left_join(vessel_sizes)
+dat_clustered %>% left_join(vessel_sizes) %>% 
+  ggplot(aes(vessel_size,trip_dist_mean))+
+  geom_point()+geom_smooth(method='lm')
+```
+
