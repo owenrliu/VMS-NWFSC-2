@@ -23,6 +23,9 @@
 *.sbx
 *.shp
 *.shx
+*.gri
+*.grd
+*.png
 
 ## knitted html files that may have confidential data
 *.html
