@@ -1,0 +1,205 @@
+---
+title: "Blue Whale 5km Grid Matching"
+author: "Owen Liu"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+## Purpose
+
+We want to take blue whale daily predictions from Briana Abrahms and resample them to Blake Feist's 5km grid for comparison with humpback predictions and measurements of fishing effort.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libs,message=FALSE,warning=FALSE}
+library(raster)
+library(sf)
+library(fasterize)
+library(tidyverse)
+library(magrittr)
+library(here)
+
+rm(list=ls())
+
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=10,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+## Import Data
+
+```{r}
+# reference raster (the 5km grid)
+grd <- read_sf(here::here('data','raw','grid','regions_master_final_lamb.shp'))
+names(grd)
+ext <- st_bbox(grd) %>% st_as_sfc() %>% as_Spatial() %>% raster::extent()
+grd_r <- fasterize(grd,raster::raster(crs=st_crs(grd),resolution=5000,ext=ext),field="GRID5KM_ID")
+grd_r
+
+writeRaster(grd_r,here::here('data','raw','grid','raster5km'))
+# example day of data
+head(list.files(here::here('data','Blue whale predictions')))
+r <- raster(here::here('data','Blue whale predictions', '2015-01-01_ensemble.grd'))
+
+```
+
+## Resample to 5km grid
+
+```{r,warning=F,message=F}
+r2 <- r %>% 
+  # project to the new coordinate reference system
+  projectRaster(grd_r) %>% 
+  # resample to the 5km grid, using nearest neighbors
+  resample(grd_r,method='ngb')
+
+# see the results
+
+r2
+plot(r)
+plot(r2)
+```
+
+Okay this seems to work. Let's apply to a month's worth of data and see if it works and how long it takes
+
+```{r}
+resample_5km_grd <- function(fn,returnRaster=FALSE){
+  rast <- raster(here::here('data','Blue whale predictions', fn))
+  raster_name <- paste0('day_',str_trunc(fn,10,ellipsis=""))
+  names(rast) <- raster_name
+  out_rast <- rast %>% 
+    # project to the new coordinate reference system
+    projectRaster(grd_r) %>% 
+    # resample to the 5km grid, using nearest neighbors
+    resample(grd_r,method='ngb')
+  writeRaster(out_rast,paste0(here::here('data','Blue whale predictions','5km grid rasters'),'/',raster_name),overwrite=TRUE)
+  if(returnRaster){return(out_rast)}
+}
+
+all_grd_files <-list.files(here::here('data','Blue whale predictions'))
+all_grd_files <- all_grd_files[str_which(all_grd_files,'.grd')]
+head(all_grd_files)
+
+# 2009 January
+p <- proc.time()
+jan2009 <- all_grd_files[str_which(all_grd_files,'2009-01')] %>% 
+  purrr::map(resample_5km_grd,returnRaster=T)
+proc.time()-p
+```
+
+## Apply to All Years and Days
+
+This will take awhile
+
+```{r}
+p <- proc.time()
+all_grd_files %>% 
+  purrr::walk(resample_5km_grd,returnRaster=F)
+proc.time()-p
+```
+
+Took about 47 minutes
+
+## Calculate Monthly 5km Grid Means
+
+We can put the raster data into tabular form
+
+```{r}
+grd_r <- raster(here::here('data','raw','grid','raster5km'))
+nonNAs <- which(!is.na(getValues(grd_r)))
+template <- tibble(GRID5KM_ID=getValues(grd_r)[nonNAs])
+# assign_raster_to_dataframe <- function(fn){
+#   rast <- raster(fn)
+#   obs_date <- substr(fn,97,106) %>% as_date()
+#   template %>% mutate(date=obs_date,blue_whale_occurrence=getValues(rast)[nonNAs]) %>% 
+#     filter(!is.na(blue_whale_occurrence))
+# }
+fns <- list.files(here::here('data','Blue whale predictions','5km grid rasters'),full.names = T)
+fns=fns[str_which(fns,'.grd')]
+# # test a random day
+# test <- assign_raster_to_dataframe(fns[987])
+# glimpse(test)
+
+# Function to average across a month
+average_month_blwh <- function(yr,mth) {
+  mth_chr <- ifelse(mth<10,paste0('0',mth),paste(mth))
+  yr_mo <- paste(yr,mth_chr,sep="-")
+  yr_mo_fns <- fns[str_which(fns,yr_mo)]
+  rasts <- purrr::map(yr_mo_fns,raster) %>% stack()
+  rasts_mean <- calc(rasts,mean)
+  rasts_sd <- calc(rasts,sd)
+  out <- template %>% mutate(year_mo=str_replace(yr_mo,"-","_"),Blue_occurrence_mean=getValues(rasts_mean)[nonNAs],Blue_occurrence_sd=getValues(rasts_sd)[nonNAs])%>% 
+    filter(!is.na(Blue_occurrence_mean))
+  paste(yr_mo,'done')
+  return(out)
+}
+
+```
+
+Correlation between old and new versions is not that high...
+
+```{r}
+# check_yr_mths <- function(yr,mth) {
+#   mth_chr <- ifelse(mth<10,paste0('0',mth),paste(mth))
+#   yr_mo <- paste(yr,mth_chr,sep="-")
+#   yr_mo_fns <- fns[str_which(fns,yr_mo)]
+#   paste(yr_mo,'has',length(yr_mo_fns),'rasters')
+# }
+# 
+yrs_mths <- crossing(yr=2009:2019,mth=1:12) %>% filter(!(yr==2019&mth>8))
+# chex <- purrr::map2(yrs_mths$yr,yrs_mths$mth,check_yr_mths)
+
+# run
+blwh_by_grd_mth <-purrr::map2(yrs_mths$yr,yrs_mths$mth,average_month_blwh)
+blwh_by_grd_mth %<>% bind_rows()
+blwh_by_grd_mth %<>% mutate(yr=substr(year_mo,1,4) %>% as.numeric(),mth=substr(year_mo,6,7) %>% as.numeric())
+
+write_rds(blwh_by_grd_mth,here::here('data','Blue whale predictions','blwh_by_grd_mth.rds'))
+glimpse(blwh_by_grd_mth)
+
+# Compare to old version of blue whales
+blwh_old <- read_rds(here::here('test scripts','BLWH_5km_year_mo_2009_2018.RDS')) %>% ungroup() %>% mutate(GRID5KM_ID=as.numeric(as.character(GRID5KM_ID)))
+
+test_join <- blwh_old %>% left_join(blwh_by_grd_mth,by=c("GRID5KM_ID","year_mo"))
+glimpse(test_join)
+
+ggplot(test_join,aes(Blue_occurrence,Blue_occurrence_mean))+
+  geom_point()+
+  geom_smooth(method="lm")+
+  labs(x="Blue Whale Occurrence (Old)",y="Blue Whale Occurrence (New)")
+
+cor(test_join$Blue_occurrence,test_join$Blue_occurrence_mean,use='complete.obs')
+```
+
+## Join to Interpolated VMS data
+
+```{r}
+vms <- read_rds(here::here('data','processed','matched','interpolation','vms_all_interpolated_w_grd.rds'))
+
+# reduce whale data to just places with positive fishing effort
+vms_grd_obs <- vms %>% dplyr::select(GRID5KM_ID,westcoastdate_notime) %>% 
+  mutate(yr=year(westcoastdate_notime),mth=month(westcoastdate_notime)) %>% 
+  distinct(yr,mth,GRID5KM_ID)
+all_vms_cells <- vms_grd_obs$GRID5KM_ID %>% unique()
+blwh_vms_cells_only <- blwh_by_grd_mth %>% filter(GRID5KM_ID %in% all_vms_cells)
+
+write_rds(blwh_vms_cells_only,here::here('data','Blue whale predictions','blwh_vms_cells_only.rds'))
+
+vms_blwh_join <- vms %>% 
+  mutate(yr=year(westcoastdate_notime),mth=month(westcoastdate_notime)) %>% 
+  left_join(blwh_vms_cells_only,by=c('yr','mth')) %>% 
+  dplyr::select(-yr,-mth)
+```
+
+
+
+
+
+

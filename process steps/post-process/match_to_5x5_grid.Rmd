@@ -1,0 +1,135 @@
+---
+title: "Matching VMS Data to Spatial Grid"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+## Purpose
+
+Matching the output VMS data to a multi-region grid to use for summarizing fishing effort
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libs,message=FALSE,warning=FALSE}
+library(tidyverse)
+library(magrittr)
+library(sf)
+library(here)
+library(knitr)
+```
+
+
+## Sample Year
+
+Import files for an example year to match. We use the matched, filtered, but non-interpolated VMS data
+
+```{r}
+# clean, interpolated vms data
+vms <- read_rds(here::here('data','processed','matched','interpolation','2012interpolated.rds'))
+
+# 5x5 grid shapefile
+grd <- read_sf(here::here('data','raw','grid','regions_master_final_lamb.shp'))
+names(grd)
+
+```
+
+## Match Points
+
+```{r}
+# convert vms to spatial object (longitude/latitude)
+vms_sf <- vms %>%
+  st_as_sf(coords=c('LONGITUDE','LATITUDE'),crs=4326) %>% 
+  # then, convert to planar projection to match the grid
+  st_transform(st_crs(grd))
+
+# do the join
+pt <- proc.time()
+vms_grd_match <- vms_sf %>%
+  st_join(grd)
+proc.time()-pt
+```
+
+## Check
+
+Did the join work? How many unique 5km, 25km, and 50km cells are represented in the 2009 data?
+
+```{r checks}
+names(vms_grd_match)
+
+length(unique(vms_grd_match$GRID5KM_ID))
+
+length(unique(vms_grd_match$BAND_25KM))
+
+length(unique(vms_grd_match$BAND_50KM))
+```
+
+## All Data
+
+We now match all of the VMS points from all years. We process each year just as one above.
+
+### Import
+
+```{r import all}
+# clear wrkspace
+rm(list=setdiff(ls(),'grd'))
+
+# load RData files
+vms_all <- purrr::map_df(2009:2019, function(yr){
+  read_rds(paste0(here::here('data','processed','matched','interpolation'),'/',yr,"interpolated.rds"))
+})
+```
+
+### Match
+
+```{r}
+# convert VMS to spatial object
+pt <- proc.time()
+vms_all_sf <- vms_all %>%
+  st_as_sf(coords=c('LONGITUDE','LATITUDE'),crs=4326) %>% 
+  # then, convert to planar projection to match the grid
+  st_transform(st_crs(grd))
+x<-proc.time()-pt
+```
+
+Took `r round(x[3]/60,2)` minutes to do the conversion. Now for the join...
+
+```{r join to grid}
+# do the join
+pt <- proc.time()
+vms_all_grd_match <- vms_all_sf %>%
+  st_join(grd)
+x<-proc.time()-pt
+```
+
+The join took`r round(x[3]/60,2)` minutes.
+
+### Add BIAs
+
+We can add whale BIAs into the data as well. They have previously been matched to the 5km grid, courtesy of Sam Woodman.
+
+```{r add BIAs}
+BIA <- read_csv(here::here('data','raw','grid','Grid5km_BIA_overlap.csv'),col_types = cols())
+BIA %<>% select(GRID5KM_ID,BIA_mn,BIA_bm)
+
+vms_all_grd_match %<>% left_join(BIA,by='GRID5KM_ID')
+```
+
+### Save and Write
+
+```{r}
+# non-spatial version
+glimpse(vms_all_grd_match)
+vms_all_grd_match %>% 
+  st_set_geometry(NULL) %>% 
+  write_rds(here::here('data','processed','matched','interpolation','vms_all_interpolated_w_grd.rds'))
+```
+
+
+
+
+
+
