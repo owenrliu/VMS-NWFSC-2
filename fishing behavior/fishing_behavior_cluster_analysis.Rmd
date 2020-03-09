@@ -112,7 +112,7 @@ We then perform a clustering of the data, using Ward aggregation that attempts t
 dat_clust <- dat_scaled %>% select(-(1:2)) %>% NbClust(method="ward.D2",min.nc = 3,max.nc=10,index='all')
 ```
 
-After clustering, there was a range of number of classes suggested by the clustering indices, but the **majority vote was 3 classes**. For now, we utilize those 3 classes to explore the clusters.
+After clustering, there was a range of number of classes suggested by the clustering indices, but the **majority vote was 4 classes**. For now, we utilize those 4 classes to explore the clusters.
 
 ## Explore Clustering
 
@@ -129,7 +129,7 @@ library(factoextra)
 dat_clustered <- dat_scaled %>% na.omit() %>% 
   mutate(partition=dat_clust$Best.partition) %>% 
   as_tibble()
-write_rds(dat_clustered,here::here('fishing behavior','data_scaled_3clusters.rds'))
+write_rds(dat_clustered,here::here('fishing behavior','data_scaled_4clusters.rds'))
 ```
 
 We can visualize the results of clustering through a clustering dendrogram. Below we can see all of the data (unique season-vessel combinations), colored by the cluster into which they were grouped.
@@ -158,13 +158,14 @@ dend <- as.dendrogram(dat.ward) %>% dendro_data(type = "rectangle")
 
 segs <- dend$segments %>% as_tibble() %>% 
   mutate(partition=case_when(
-    round(xend)<=1853 ~ 1,
-    round(xend)>1853 & round(xend)<=2595 ~ 2,
-    round(xend)>2595 ~ 3
+    round(xend)<=960 ~ 1,
+    round(xend)>960 & round(xend)<=1783 ~ 2,
+    round(xend)>1783 & round(xend)<=2904 ~ 3,
+    round(xend)>2904 ~ 4
   ))
 p <- ggplot(segs) + 
   geom_segment(aes(x = x, y = y, xend = xend, yend = yend,col=factor(partition)))+
-  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(3),name="Behavioral Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4),name="Behavioral Group")+
   labs(x="",y="",title="Dendrogram of all Data with 3 Behavioral Classes")+
   theme(axis.text=element_blank(),
         panel.grid.major = element_blank(),
@@ -190,7 +191,7 @@ dat.pca <- FactoMineR::PCA(dat_nolabs,graph=FALSE)
 fviz_pca(dat.pca,geom.ind="point",
          col.ind=dat_clust$Best.partition %>% as.factor,
          addEllipses=TRUE,col.var="black",
-         palette=viridis_pal(begin=0.2,end=0.8)(3),alpha.ind=0.4)+
+         palette=viridis_pal(begin=0.2,end=0.8)(4),alpha.ind=0.4)+
   labs(color="",shape="",fill="",shape="")+
   scale_x_continuous(expand = c(.1,0))
 ```
@@ -200,6 +201,8 @@ Here, with both observations and variables plotted along the first two principal
 The second group is associated with greater port number and diversity, larger home ranges, and greater choice entropy.
 
 The third group seems to be associated with lower variance in trip duration and greater mean revenue, but also a greater proportion of tickets from other fisheries.
+
+The fourth group is smaller, and includes vessels with smaller home range and smaller number of ports visited
 
 As another visualization of differences between clusters, we can look at distribution of specific variable values across groups
 
@@ -213,7 +216,7 @@ find_multcompletters <- function(df){
     mutate(partition=as.factor(partition))
 }
 group_means <- dat %>% 
-  select(-trip_dist_sd,-revenue_sd,-drvid,-crab_season) %>% 
+  select(-drvid,-crab_season) %>% 
   na.omit() %>% 
   mutate(partition=dat_clust$Best.partition %>% as.factor()) %>% 
   pivot_longer(-partition,names_to='variable',values_to = 'value') %>% 
@@ -226,7 +229,7 @@ group_means <- dat %>%
       ggplot(aes(factor(partition),value,fill=factor(partition)))+
       geom_boxplot(col='gray50')+
       geom_text(aes(partition,y=(max(value)-min(value))*0.9+min(value),label=letter),check_overlap = T,nudge_x=-0.15,size=4)+
-      scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(3))+
+      scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
       labs(y="",x="",title=j)+
       guides(fill='none')
   })) %>% 
@@ -275,7 +278,7 @@ var_imp %>%
   mutate(varname=factor(variable,levels=variable)) %>% 
   ggplot(aes(varname,rel_imp))+
   geom_col()+
-  scale_y_continuous(breaks=seq(0,10,by=2))+
+  # scale_y_continuous(breaks=seq(0,10,by=2))+
   labs(x="Variable",y="Relative Importance")+
   theme(axis.text.x = element_text(angle=90))
 ```
@@ -295,14 +298,14 @@ class_by_yr %>%
   ggplot(aes(crab_season,n_vessels,fill=factor(partition)))+
   geom_col()+
   labs(x="Crab Season",y="Number of Vessels",title="Number of Vessels by Behavior Class and Year",fill="Group")+
-  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(3))+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
 class_by_yr %>% 
   ggplot(aes(crab_season,n_vessels,group=factor(partition),color=factor(partition)))+
   geom_line(size=2)+
   labs(x="Crab Season",y="Number of Vessels",title="Number of Vessels by Behavior Class and Year",color="Group")+
-  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(3))+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
 ```
@@ -321,7 +324,8 @@ dat_alluvium <- dat_clustered %>%
   mutate(class=case_when(
     partition==1 ~ "Group 1",
     partition==2 ~ "Group 2",
-    partition==3 ~ "Group 3"
+    partition==3 ~ "Group 3",
+    partition==4 ~ "Group 4"
   )) %>% 
   complete(drvid,crab_season,fill=list('class'="Not Fishing"))
 
@@ -337,7 +341,7 @@ dat_alluvium <- dat_clustered %>%
 dat_alluvium %>%
   filter(class!="Not Fishing") %>% 
   ggplot(aes(crab_season,stratum=class,alluvium=drvid,fill=class,label=class))+
-  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(3),name="")+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4),name="")+
   geom_flow()+
   geom_stratum()+
   labs(x="Crab Season",y="Number of Vessels")+

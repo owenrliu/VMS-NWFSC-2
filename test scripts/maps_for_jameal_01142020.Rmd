@@ -32,7 +32,7 @@ library(smoothr)
 BIA <- read_csv(here::here('data','raw','grid','Grid5km_BIA_overlap.csv'),col_types = cols())
 BIA %<>% select(GRID5KM_ID,BIA_mn,BIA_bm)
 
-grd %<>% left_join(BIA,by='GRID5KM_ID')
+grd %<>% left_join(BIA)
 
 BIA_mn <- grd %>% 
   filter(BIA_mn==1) %>% 
@@ -46,8 +46,15 @@ BIA_bm <- grd %>%
 BIA_both <- grd %>% 
   mutate(BIA=BIA_mn==1|BIA_bm==1) %>% 
   filter(BIA) %>% 
-  group_by(BIA) %>% 
+  mutate(BIA_type=case_when(
+    BIA_mn==1 & BIA_bm!=1 ~ 'Humpback',
+    BIA_bm==1 & BIA_mn!=1 ~ 'Blue',
+    BIA_mn==1&BIA_bm==1 ~ 'Both'
+  )) %>% 
+  group_by(BIA_type) %>% 
   summarise()
+
+write_rds(BIA_both,here::here('data','processed','BIA_mn_bm.rds'))
   
 # ggplot theme
 plot_theme <-   theme_minimal()+
@@ -57,6 +64,8 @@ plot_theme <-   theme_minimal()+
         axis.text=element_text(family="sans",size=8,color="black"),
         panel.grid.major = element_line(color="gray50",linetype=3))
 theme_set(plot_theme)
+
+ggplot()+geom_sf(data=BIA_both,aes(col=BIA_type),fill=NA)
 ```
 
 
