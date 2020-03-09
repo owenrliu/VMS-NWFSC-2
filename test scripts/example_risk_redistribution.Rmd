@@ -25,7 +25,8 @@ theme_set(plot_theme)
 
 
 ```{r}
-load(here::here('test scripts','Scenario_Analysis_Data_2009_2018.RData'))
+#load(here::here('test scripts','Scenario_Analysis_Data_2009_2018.RData'))
+load("~/Documents/RAIMBOW/Processed Data/Samhouri et al. whales risk/Output_Data/Scenario_Analysis_Data_2009_2018.RData")
 
 dat <- full.df %>% filter(year %in% c(2012,2013)) %>% 
   select(crab.year,year,month,Region,GRID5KM_ID,Num_DCRB_VMS_pings,H_Avg_Abund)
