@@ -16,6 +16,7 @@ library(magrittr)
 library(here)
 library(lubridate)
 library(sf)
+library(rnaturalearth)
 
 # ggplot theme
 plot_theme <-   theme_minimal()+
@@ -44,6 +45,7 @@ vms <- purrr::map_df(2009:2019, function(yr){
   filter(TARGET_rev=='DCRB') %>% 
   # join crab season indicator
   left_join(recid_crabseason,by='Rec_ID')
+
 ```
 
 ## Metrics to Calculate
@@ -318,7 +320,7 @@ windslon <- c(233,245)
 
 # Have to use some if statements here because of weird breaks in the two datasets
 winds_all <- purrr::map_df(2009:2018, function(yr) {
-  if(yr < 2011){
+  if(yr <= 2010){
     times <- c(paste0(yr,"-01-01"),paste0(yr,"-12-31"))
     winds <- griddap("ncdcOwDly", # daily blended winds dataset
                       time=times,
@@ -327,42 +329,52 @@ winds_all <- purrr::map_df(2009:2018, function(yr) {
                       fields=c("w")) %>%  # scalar wind speed
       pluck("data")
   } 
-  if(yr == 2011){
-    times1 <- c(paste0(yr,"-01-01"),paste0(yr,"-09-30"))
-    winds1 <- griddap("ncdcOwDly", # daily blended winds dataset
-                      time=times1,
-                      latitude=windslat,
-                      longitude=windslon,
-                      fields=c("w")) %>% # scalar wind speed
-      pluck("data")
-    
-    times2 <- c(paste0(yr,"-10-01"),paste0(yr,"-12-31"))
-    winds2 <- griddap("ncdcOwDlyP", # daily blended winds dataset
-                      time=times2,
-                      latitude=windslat,
-                      longitude=windslon,
-                      fields=c("w") )%>%    # scalar wind speed
-      pluck("data")
-    winds <- bind_rows(winds1,winds2)
-  } 
-  if(yr>2011&yr<2018){
+  if(yr > 2010){
     times <- c(paste0(yr,"-01-01"),paste0(yr,"-12-31"))
-    winds <- griddap("ncdcOwDlyP", # daily blended winds dataset
+    winds <- griddap("erdQAdivmod1day", # daily blended winds dataset
                       time=times,
                       latitude=windslat,
                       longitude=windslon,
-                      fields=c("w")) %>% # scalar wind speed
-      pluck("data") 
-  }
-  if(yr==2018){
-    times <- c(paste0(yr,"-01-01"),paste0(yr,"-10-09"))
-    winds <- griddap("ncdcOwDlyP", # daily blended winds dataset
-                      time=times,
-                      latitude=windslat,
-                      longitude=windslon,
-                      fields=c("w")) %>% # scalar wind speed
-      pluck("data") 
-  }  
+                      fields=c("mod")) %>%  # scalar wind speed
+      pluck("data") %>% rename(w=mod)
+  } 
+  
+  # if(yr == 2011){
+  #   times1 <- c(paste0(yr,"-01-01"),paste0(yr,"-09-30"))
+  #   winds1 <- griddap("ncdcOwDly", # daily blended winds dataset
+  #                     time=times1,
+  #                     latitude=windslat,
+  #                     longitude=windslon,
+  #                     fields=c("w")) %>% # scalar wind speed
+  #     pluck("data")
+  #   
+  #   times2 <- c(paste0(yr,"-10-01"),paste0(yr,"-12-31"))
+  #   winds2 <- griddap("ncdcOwDlyP", # daily blended winds dataset
+  #                     time=times2,
+  #                     latitude=windslat,
+  #                     longitude=windslon,
+  #                     fields=c("w") )%>%    # scalar wind speed
+  #     pluck("data")
+  #   winds <- bind_rows(winds1,winds2)
+  # } 
+  # if(yr>2011&yr<2018){
+  #   times <- c(paste0(yr,"-01-01"),paste0(yr,"-12-31"))
+  #   winds <- griddap("ncdcOwDlyP", # daily blended winds dataset
+  #                     time=times,
+  #                     latitude=windslat,
+  #                     longitude=windslon,
+  #                     fields=c("w")) %>% # scalar wind speed
+  #     pluck("data") 
+  # }
+  # if(yr==2018){
+  #   times <- c(paste0(yr,"-01-01"),paste0(yr,"-10-09"))
+  #   winds <- griddap("ncdcOwDlyP", # daily blended winds dataset
+  #                     time=times,
+  #                     latitude=windslat,
+  #                     longitude=windslon,
+  #                     fields=c("w")) %>% # scalar wind speed
+  #     pluck("data") 
+  # }  
   out <- winds %>% as_tibble() %>% mutate(utcdate=as_date(time)) %>% select(-altitude)
   out
 })
@@ -497,6 +509,12 @@ ggsave(here::here('fishing behavior','plots','entropy_metric.png'),entropy_plot,
 Calculate 95% convex polygons for each vessel/year
 
 ```{r}
+## Coastline
+coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington','Nevada')) %>% 
+  st_transform(st_crs(vms_all_grd)) %>% 
+  summarise()
+
 test_hull <-  vms_all_grd %>% 
   filter(drvid=="580135",crab_season=='2009-2010') %>%
   select(VMS_RECNO,X_COORD,Y_COORD)
