@@ -1,0 +1,214 @@
+---
+title: "Maps For Jameal"
+author: "Jameal Samhouri with help from Owen Liu"
+date: "3/5/2020"
+output: html_document
+---
+
+## Maps for CCCA
+```{r setup}
+knitr::opts_chunk$set(echo=FALSE,message=F,warning=F)
+rm(list=ls())
+```
+
+```{r}
+library(tidyverse)
+library(magrittr)
+library(sf) # for spatial data
+library(here)
+library(viridis)
+library(maps) # for map background
+library(smoothr)
+```
+
+Load the grid, BIAs, and background map. Load some DCRB VMS data. Set the the plot theme.
+```{r}
+#load(here::here('test scripts','Scenario_Analysis_Data_2009_2018.RData'))
+grd <- sf::read_sf("/Users/jameal.samhouri/Documents/RAIMBOW/Processed Data/5x5 Grid/regions_master_final_lamb.shp")
+
+# background map
+states <- st_as_sf(map("state", fill = TRUE, plot=FALSE)) %>% 
+  st_transform(st_crs(grd))
+
+# coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+#   filter(name %in% c('California','Oregon','Washington')) %>% 
+#   st_transform(st_crs(grd))
+
+# BIAs
+#BIA <- read_csv(here::here('data','raw','grid','Grid5km_BIA_overlap.csv'),col_types = cols())
+BIA <- read_csv('~/Documents/RAIMBOW/Processed Data/Samhouri et al. whales risk/Input_Data/BIAs/Grid5km_BIA_overlap.csv',col_types = cols())
+BIA %<>% select(GRID5KM_ID,BIA_mn,BIA_bm)
+
+# BIA_sf <- sf::st_read('~/Documents/RAIMBOW/Processed Data/Samhouri et al. whales risk/Input_Data/BIAs/CetMap_BIA_WGS84/CetMap_BIA_WGS84.shp')
+# blwh_bia <- BIA_sf %>% filter(sci_name == "Balaenoptera musculus", region == "West Coast")
+# huwh_bia <- BIA_sf %>% filter(sci_name == "Megaptera novaeangliae", region == "West Coast")
+
+grd %<>% left_join(BIA,by='GRID5KM_ID')
+glimpse(grd)
+
+# ggplot(grd %>% sample_n(5000)) + 
+#      geom_sf(aes(fill = DEPTH_CATM), colour = NA) + # CA_OFFSHOR
+#      scale_fill_viridis_d("Depth") + # scale_fill_viridis
+#      ggtitle("Depth for 5km Grid Cells") +
+#      theme_bw()
+
+BIA_mn <- grd %>% 
+  filter(BIA_mn==1) %>% 
+  group_by(BIA_mn) %>% 
+  #summarise() 
+  summarise(do_union = FALSE)
+
+BIA_bm <- grd %>% 
+  filter(BIA_bm==1) %>% 
+  group_by(BIA_bm) %>% 
+  #summarise()
+  summarise(do_union = FALSE)
+
+BIA_both <- grd %>% 
+  mutate(BIA=BIA_mn==1|BIA_bm==1) %>% 
+  filter(BIA) %>% 
+  group_by(BIA) %>% 
+  #summarise()
+  summarise(do_union = FALSE)
+
+
+load("/Users/jameal.samhouri/Documents/RAIMBOW/Processed Data/Samhouri et al. whales risk/Output_Data/Scenario_Analysis_Data_2009_2018.RData")
+# Average Nov-Mar VMS pings abundance
+dcrb_nov_mar <- full.df %>% 
+  filter(month %in% c(11,12,1,2,3)) %>% 
+  group_by(Region, GRID5KM_ID) %>% 
+  summarise(pings=mean(Num_DCRB_VMS_pings,na.rm=T)) %>% 
+  ungroup()%>% 
+  mutate(z=(pings-mean(pings,na.rm=T))/sd(pings,na.rm=T))
+
+# for DCRB, with percentiles
+dcrb_nov_mar_sf <- dcrb_nov_mar %>%
+  mutate(perc=percent_rank(pings)) %>% 
+  left_join(grd,by="GRID5KM_ID") %>% 
+  st_as_sf()
+
+
+
+# ggplot theme
+# plot_theme <-   theme_minimal()+
+#   theme(text=element_text(family="sans",size=10,color="black"),
+#         legend.text = element_text(size=10),
+#         axis.title=element_text(family="sans",size=14,color="black"),
+#         axis.text=element_text(family="sans",size=8,color="black"),
+#         panel.grid.major = element_line(color="gray50",linetype=3))
+# theme_set(plot_theme)
+
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="serif",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme) # set new default for all ggplots
+```
+<br>
+
+Make a map of BIAs coastwide
+```{r}
+
+bbox <- st_bbox(BIA_both)
+
+coastwide_hump_blue_BIAs <- ggplot()+
+  geom_sf(data=BIA_mn,fill='firebrick1',col=NA,alpha=0.8)+
+  geom_sf(data=BIA_bm,fill='lightblue',col=NA,alpha=0.8)+
+  #geom_sf(data=cenCA_h_nov_mar,aes(fill=abund),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=states,col=NA,fill='gray60')+
+  #scale_fill_viridis(na.value=NA,option="D",name="Humpback Abundance",breaks=seq(0,1,by=0.25),limits=c(0,1))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title="Humpback and\nBlue Whale BIAs")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=14))
+coastwide_hump_blue_BIAs
+
+ggsave(here::here('test scripts','Coastwide humpback and blue whale BIAs.png'),coastwide_hump_blue_BIAs,h=8,w=6)
+
+# b <- ras_df %>% ggplot()+
+#     geom_tile(aes(x,y,fill=count),na.rm=T,alpha=0.8)+
+#     geom_sf(data=states,col=NA,fill='gray50')+
+#     scale_fill_viridis(na.value=NA,option="C")+
+#     labs(x='',y='',fill='#VMS locs in\nhighest quartile\nwhale habitat')+
+#     theme(legend.position = c(0.6,0.7),
+#           title=element_text(size=13), 
+#           legend.text=element_text(size=12)) +
+#     coord_sf(xlim = c(-125.5,-117), ylim = c(33, 47), expand = FALSE)
+
+```
+
+## Maps with Regional Definitions
+
+
+```{r,fig.height=8,fig.width=8}
+
+bbox_ca <- st_bbox(dcrb_nov_mar_sf)
+
+ca_hump_blue_BIAs <- ggplot()+
+  geom_sf(data=BIA_mn,fill='firebrick1',col=NA,alpha=0.6)+
+  geom_sf(data=BIA_bm,fill='lightblue',col=NA,alpha=0.6)+
+  #geom_sf(data=cenCA_h_nov_mar,aes(fill=abund),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=states,col=NA,fill='gray60')+
+  #scale_fill_viridis(na.value=NA,option="D",name="Humpback Abundance",breaks=seq(0,1,by=0.25),limits=c(0,1))+
+  coord_sf(xlim=c(bbox_ca[1],bbox_ca[3]),ylim=c(bbox_ca[2],bbox_ca[4]))+
+  labs(title="Humpback and\nBlue Whale BIAs")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=14))
+ca_hump_blue_BIAs
+
+ggsave(here::here('test scripts','California humpback and blue whale BIAs.png'),ca_hump_blue_BIAs,h=8,w=6)
+
+
+### i still haven't managed to make this work the way i would like
+
+# NorCA, CenCA polygons
+norCA <- dcrb_nov_mar_sf %>% 
+  filter(Region=="NorCA") %>% 
+  ungroup() %>% 
+  summarise(do_union = FALSE) %>% 
+  st_bbox()
+
+cenCA <- dcrb_nov_mar_sf %>% 
+  filter(Region=="CenCA") %>% 
+  ungroup() %>% 
+  summarise(do_union = FALSE) %>% 
+  st_bbox()
+
+CAtop <- 1277869
+CAsplit <- 922869
+CAbot <- 362869
+rgns <- tibble(hlines=c(CAtop,CAsplit,CAbot))
+
+ltys <- c('Region'=2)
+#cols <- c('Humpback BIA'='firebrick1')
+cols <- c('Humpback BIA'='firebrick1', 'Blue BIA' ='lightblue')
+
+dcrb_nov_mar_plot <- ggplot()+
+  geom_hline(data=rgns,aes(yintercept=hlines,linetype='Region'))+
+  #geom_sf(data=dcrb_nov_mar_sf,aes(fill=perc*100),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=BIA_mn,fill=NA,aes(col='Humpback BIA'),size=1)+
+  #geom_sf(data=BIA_bm,fill=NA,aes(col='Blue BIA'),size=1)+
+  geom_sf(data=states,col=NA,fill='gray60')+
+  annotate("text",x=833000,y=600000,label="CenCA")+
+  annotate("text",x=833000,y=1000000,label="NorCA")+
+  scale_color_manual(values=cols,guide=guide_legend(title=NULL))+
+  scale_linetype_manual(values=ltys,guide=guide_legend(title=NULL))+
+  #scale_fill_viridis(na.value=NA,option="D",name="DCRB Pings\n(Percentile)",breaks=seq(0,100,by=20),limits=c(0,100))+
+  coord_sf(xlim=c(bbox_ca[1],bbox_ca[3]),ylim=c(bbox_ca[2],bbox_ca[4]))+
+  #labs(title="Dungeness Crab Pings\nNov-Mar 2009-2018",y="",x="")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=16),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        legend.position = c(0.8,0.6),
+        legend.background = element_rect(fill='white'),
+        legend.spacing.y = unit(5,'mm'))
+dcrb_nov_mar_plot
+ggsave(here::here('test scripts','CA_dcrb_nov_mar_perc.png'),dcrb_nov_mar_plot,h=8,w=6)
+
+```
+<br>
+
+
