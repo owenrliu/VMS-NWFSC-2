@@ -53,6 +53,8 @@ BIA_both <- grd %>%
   )) %>% 
   group_by(BIA_type) %>% 
   summarise()
+
+write_rds(BIA_both,here::here('data','processed','BIA_mn_bm.rds'))
   
 # ggplot theme
 plot_theme <-   theme_minimal()+
