@@ -35,13 +35,16 @@ states <- st_as_sf(map("state", fill = TRUE, plot=FALSE)) %>%
 #   st_transform(st_crs(grd))
 
 # BIAs
-#BIA <- read_csv(here::here('data','raw','grid','Grid5km_BIA_overlap.csv'),col_types = cols())
-BIA <- read_csv('~/Documents/RAIMBOW/Processed Data/Samhouri et al. whales risk/Input_Data/BIAs/Grid5km_BIA_overlap.csv',col_types = cols())
-BIA %<>% select(GRID5KM_ID,BIA_mn,BIA_bm)
 
-# BIA_sf <- sf::st_read('~/Documents/RAIMBOW/Processed Data/Samhouri et al. whales risk/Input_Data/BIAs/CetMap_BIA_WGS84/CetMap_BIA_WGS84.shp')
-# blwh_bia <- BIA_sf %>% filter(sci_name == "Balaenoptera musculus", region == "West Coast")
-# huwh_bia <- BIA_sf %>% filter(sci_name == "Megaptera novaeangliae", region == "West Coast")
+#BIA <- read_csv(here::here('data','raw','grid','Grid5km_BIA_overlap.csv'),col_types = cols())
+# BIA <- read_csv('~/Documents/RAIMBOW/Processed Data/Samhouri et al. whales risk/Input_Data/BIAs/Grid5km_BIA_overlap.csv',col_types = cols())
+# BIA %<>% select(GRID5KM_ID,BIA_mn,BIA_bm)
+
+# get BIA info straight from shp file
+BIA_sf <- sf::st_read('~/Documents/RAIMBOW/Processed Data/Samhouri et al. whales risk/Input_Data/BIAs/CetMap_BIA_WGS84/CetMap_BIA_WGS84.shp') %>%
+  st_transform(st_crs(grd))
+blwh_bia <- BIA_sf %>% filter(sci_name == "Balaenoptera musculus", region == "West Coast")
+huwh_bia <- BIA_sf %>% filter(sci_name == "Megaptera novaeangliae", region == "West Coast")
 
 grd %<>% left_join(BIA,by='GRID5KM_ID')
 glimpse(grd)
@@ -55,7 +58,7 @@ glimpse(grd)
 BIA_mn <- grd %>% 
   filter(BIA_mn==1) %>% 
   group_by(BIA_mn) %>% 
-  #summarise() 
+  #summarise() # summarise() command on spatial objects should union them
   summarise(do_union = FALSE)
 
 BIA_bm <- grd %>% 
@@ -114,8 +117,12 @@ Make a map of BIAs coastwide
 bbox <- st_bbox(BIA_both)
 
 coastwide_hump_blue_BIAs <- ggplot()+
-  geom_sf(data=BIA_mn,fill='firebrick1',col=NA,alpha=0.8)+
-  geom_sf(data=BIA_bm,fill='lightblue',col=NA,alpha=0.8)+
+  #geom_sf(data=BIA_mn,fill='firebrick1',col=NA,alpha=0.8)+
+  #geom_sf(data=BIA_bm,fill='lightblue',col=NA,alpha=0.8)+
+  # geom_sf(data=BIA_mn,fill=NA,aes(col='firebrick1'),alpha=0.8)+
+  # geom_sf(data=BIA_bm,fill=NA,aes(col='lightblue'),alpha=0.8)+
+  geom_sf(data=BIA_mn,fill=NA,col='firebrick1',alpha=0.8)+
+  geom_sf(data=BIA_bm,fill=NA,col='lightblue',alpha=0.8)+
   #geom_sf(data=cenCA_h_nov_mar,aes(fill=abund),col=NA,na.rm=T,alpha=0.8)+
   geom_sf(data=states,col=NA,fill='gray60')+
   #scale_fill_viridis(na.value=NA,option="D",name="Humpback Abundance",breaks=seq(0,1,by=0.25),limits=c(0,1))+
@@ -136,6 +143,26 @@ ggsave(here::here('test scripts','Coastwide humpback and blue whale BIAs.png'),c
 #           title=element_text(size=13), 
 #           legend.text=element_text(size=12)) +
 #     coord_sf(xlim = c(-125.5,-117), ylim = c(33, 47), expand = FALSE)
+
+cols <- c('Humpback Whale\nBIA'='firebrick1', 'Blue Whale\nBIA' ='lightblue')
+coastwide_hump_blue_BIAs_fromshp <- ggplot()+
+  #geom_sf(data=BIA_mn,fill='firebrick1',col=NA,alpha=0.8)+
+  #geom_sf(data=BIA_bm,fill='lightblue',col=NA,alpha=0.8)+
+  # geom_sf(data=BIA_mn,fill=NA,aes(col='firebrick1'),alpha=0.8)+
+  # geom_sf(data=BIA_bm,fill=NA,aes(col='lightblue'),alpha=0.8)+
+  geom_sf(data=huwh_bia,fill=NA,aes(col='Humpback Whale\nBIA'),alpha=0.8)+
+  geom_sf(data=blwh_bia,fill=NA,aes(col='Blue Whale\nBIA'),alpha=0.8)+
+  #geom_sf(data=cenCA_h_nov_mar,aes(fill=abund),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=states,col=NA,fill='gray60')+
+  scale_color_manual(values=cols,guide=guide_legend(title=NULL)) +
+  #scale_fill_viridis(na.value=NA,option="D",name="Humpback Abundance",breaks=seq(0,1,by=0.25),limits=c(0,1))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  #labs(title="Humpback and\nBlue Whale BIAs")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=14))
+coastwide_hump_blue_BIAs_fromshp
+
+ggsave(here::here('test scripts','Coastwide humpback and blue whale BIAs from shape files.png'),coastwide_hump_blue_BIAs_fromshp,h=8,w=6)
 
 ```
 
@@ -160,8 +187,22 @@ ca_hump_blue_BIAs
 
 ggsave(here::here('test scripts','California humpback and blue whale BIAs.png'),ca_hump_blue_BIAs,h=8,w=6)
 
+cols <- c('Humpback Whale\nBIA'='firebrick1', 'Blue Whale\nBIA' ='lightblue')
+ca_hump_blue_BIAs_fromshp <- ggplot()+
+  geom_sf(data=huwh_bia,fill=NA,aes(col='Humpback Whale\nBIA'),alpha=0.8)+
+  geom_sf(data=blwh_bia,fill=NA,aes(col='Blue Whale\nBIA'),alpha=0.8)+
+  geom_sf(data=states,col=NA,fill='gray60')+
+  #scale_fill_viridis(na.value=NA,option="D",name="Humpback Abundance",breaks=seq(0,1,by=0.25),limits=c(0,1))+
+  coord_sf(xlim=c(bbox_ca[1],bbox_ca[3]),ylim=c(bbox_ca[2],bbox_ca[4]))+
+  scale_color_manual(values=cols,guide=guide_legend(title=NULL)) +
+  #labs(title="Humpback and\nBlue Whale BIAs")+
+  theme(axis.text.x.bottom = element_text(angle=45),
+          title=element_text(size=14))
+ca_hump_blue_BIAs_fromshp
 
-### i still haven't managed to make this work the way i would like
+ggsave(here::here('test scripts','California humpback and blue whale BIAs from shape files.png'),ca_hump_blue_BIAs_fromshp,h=8,w=6)
+
+# add DCRB fishing activity
 
 # NorCA, CenCA polygons
 norCA <- dcrb_nov_mar_sf %>% 
@@ -182,31 +223,32 @@ CAbot <- 362869
 rgns <- tibble(hlines=c(CAtop,CAsplit,CAbot))
 
 ltys <- c('Region'=2)
-#cols <- c('Humpback BIA'='firebrick1')
-cols <- c('Humpback BIA'='firebrick1', 'Blue BIA' ='lightblue')
+#cols <- c('Humpback Whale BIA'='firebrick1')
+cols <- c('Humpback Whale BIA'='firebrick1', 'Blue Whale BIA' ='lightblue')
 
 dcrb_nov_mar_plot <- ggplot()+
-  geom_hline(data=rgns,aes(yintercept=hlines,linetype='Region'))+
-  #geom_sf(data=dcrb_nov_mar_sf,aes(fill=perc*100),col=NA,na.rm=T,alpha=0.8)+
-  geom_sf(data=BIA_mn,fill=NA,aes(col='Humpback BIA'),size=1)+
-  #geom_sf(data=BIA_bm,fill=NA,aes(col='Blue BIA'),size=1)+
+  geom_hline(data=rgns,aes(yintercept=hlines,linetype='Region'), show.legend = FALSE) +
+  geom_sf(data=dcrb_nov_mar_sf,aes(fill=perc*100),col=NA,na.rm=T,alpha=0.8)+
+  geom_sf(data=huwh_bia,fill=NA,aes(col='Humpback Whale BIA'),size=1)+
+  geom_sf(data=blwh_bia,fill=NA,aes(col='Blue Whale BIA'),size=1)+
   geom_sf(data=states,col=NA,fill='gray60')+
-  annotate("text",x=833000,y=600000,label="CenCA")+
-  annotate("text",x=833000,y=1000000,label="NorCA")+
+  #annotate("text",x=833000,y=600000,label="CenCA")+
+  #annotate("text",x=833000,y=1000000,label="NorCA")+
   scale_color_manual(values=cols,guide=guide_legend(title=NULL))+
-  scale_linetype_manual(values=ltys,guide=guide_legend(title=NULL))+
-  #scale_fill_viridis(na.value=NA,option="D",name="DCRB Pings\n(Percentile)",breaks=seq(0,100,by=20),limits=c(0,100))+
+  #scale_linetype_manual(values=ltys,guide=guide_legend(NULL))+
+  scale_fill_viridis(na.value=NA,option="D",name="DCRB Pings\n(Percentile)",breaks=seq(0,100,by=20),limits=c(0,100))+
   coord_sf(xlim=c(bbox_ca[1],bbox_ca[3]),ylim=c(bbox_ca[2],bbox_ca[4]))+
   #labs(title="Dungeness Crab Pings\nNov-Mar 2009-2018",y="",x="")+
+  ylab("")+
   theme(axis.text.x.bottom = element_text(angle=45),
-          title=element_text(size=16),
+          #title=element_text(size=12),
         panel.grid.major=element_blank(),
-        panel.grid.minor=element_blank(),
-        legend.position = c(0.8,0.6),
-        legend.background = element_rect(fill='white'),
-        legend.spacing.y = unit(5,'mm'))
+        panel.grid.minor=element_blank()) #,
+        #legend.position = c(0.9,0.6),
+        #legend.background = element_rect(fill='white'))#,
+        #legend.spacing.y = unit(1,'mm'))
 dcrb_nov_mar_plot
-ggsave(here::here('test scripts','CA_dcrb_nov_mar_perc.png'),dcrb_nov_mar_plot,h=8,w=6)
+ggsave(here::here('test scripts','CA_dcrb_nov_mar_perc_from_shapefiles.png'),dcrb_nov_mar_plot,h=8,w=6)
 
 ```
 <br>
