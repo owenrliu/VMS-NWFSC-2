@@ -52,20 +52,21 @@ vms <- purrr::map_df(2009:2019, function(yr){
 
 Here is a running list of the metrics to calculate. Some metrics have multiple types or options of calculations to perform
 
-1.  Port use: Number of ports visited per month, average ports visited per trip, Shannon diversity index of port use
-2.  Revenue: Mean Dungeness revenue per trip, SD revenue per trip
-3.  Trip Length: Days per trip, distance per trip, SD days per trip, SD distance per trip
-4.  Exploration: Mean cumulative choice entropy
-5.  Mobility: Home range
-6.  Risk-taking: Propensity to fish in high winds
-7.  Derby fishing: Mean day-of-season of 90% annual catch reached
-8.  Participation in other fisheries: percent of revenue from non-DCRB fisheries
-9.  Vessel size (not included as a variable yet)
+1.  Vessel size (not included as a variable yet)
+2.  Port use: Number of ports visited per month, average ports visited per trip, Shannon diversity index of port use, total number of distinct ports visited per season.
+3.  Revenue: Mean Dungeness revenue per trip, SD revenue per trip
+4.  Landings: Mean Dungeness landings per trip, SD landings per trip
+5.  Trip Length: Days per trip, distance per trip, SD days per trip, SD distance per trip
+6.  Exploration: Mean cumulative choice entropy
+7.  Mobility: Home range
+8.  Risk-taking: Propensity to fish in high winds
+9.  Derby fishing: Mean day-of-season of 90% annual catch reached
+10.  Participation in other fisheries: percent of revenue from non-DCRB fisheries, Simpson diversity of index of landings by fishery
 
 ```{r}
 # Start with a version of the fish tickets that has only the information that we need to calculate metrics
 fishtix %<>%
-  select(Rec_ID:agency_code,date,crab_season,DCRB_revenue,FINAL_LENGTH,ticket_day_of_season)
+  select(Rec_ID:agency_code,date,crab_season,DCRB_revenue,DCRB_lbs,FINAL_LENGTH,ticket_day_of_season)
 ```
 
 We only want to investigate boats that participate in the Dungeness crab fishery. We can make a list of those, with some cutoff for revenue from the DCRB fishery.
@@ -167,10 +168,18 @@ ports_diversity <- vms %>%
   summarise(port_shannon= -1*sum(plnp)) %>% 
   ungroup()
 
+total_ports <- vms %>% 
+  filter(!is.na(in_port)) %>% 
+  select(drvid,crab_season,in_port) %>% 
+  group_by(drvid,crab_season) %>% 
+  summarise(total_ports=n_distinct(in_port)) %>% 
+  ungroup()
+
 # Collected port use metrics
 port_use_metrics <- ports_by_trip %>% 
   left_join(ports_by_month) %>% 
-  left_join(ports_diversity)
+  left_join(ports_diversity) %>% 
+  left_join(total_ports)
 
 # plot diversity metric
 port_diversity_plot <- port_use_metrics %>% 
@@ -206,6 +215,30 @@ revenue_sd_plot
 ggsave(here::here('fishing behavior','plots','revenue_sd_metric.png'),revenue_sd_plot,w=6,h=4)
 ```
 
+### Landings Metrics
+
+Calculate mean and SD Dungeness landings per trip. We can calculate this straight from the fish tickets
+
+```{r}
+landings_metrics <- fishtix %>%
+  filter(drvid %in% vessel_list) %>% 
+  distinct(drvid,crab_season,Rec_ID,DCRB_lbs) %>% 
+  group_by(drvid,crab_season) %>% 
+  summarise(landings_mean=mean(DCRB_lbs,na.rm=T),landings_sd=sd(DCRB_lbs,na.rm=T)) %>% 
+  ungroup()
+landings_mean_plot <- landings_metrics %>% 
+  ggplot(aes(landings_mean))+
+  geom_density(fill='#33638DFF')+
+  labs(x='mean landings')
+landings_sd_plot <- landings_metrics %>% 
+  ggplot(aes(landings_sd))+
+  geom_density(fill='#33638DFF')+
+  labs(x='SD landings')
+landings_mean_plot
+ggsave(here::here('fishing behavior','plots','landings_mean_metric.png'),revenue_mean_plot,w=6,h=4)
+landings_sd_plot
+ggsave(here::here('fishing behavior','plots','landings_sd_metric.png'),revenue_sd_plot,w=6,h=4)
+```
 
 ### Trip Length Metrics
 
@@ -285,6 +318,26 @@ participation_metric <- fishtix_all %>%
   rename(crab_season=revenue_season) %>% 
   select(drvid,crab_season,prop_other_revenue,prop_other_tix)
 
+participation_diversity <- fishtix_all %>% 
+  filter(drvid %in% vessel_list) %>% 
+  # add general indicator of revenue season
+  mutate(revenue_season=case_when(
+    month(date)>10 ~ paste0(year,"-",year+1),
+    month(date)<=6 ~ paste0(year-1,"-",year),
+    TRUE ~ NA_character_)) %>% 
+  filter(!is.na(revenue_season)) %>% 
+  select(-TARGET_lbs) %>% 
+  select(drvid,revenue_season,contains('_lbs')) %>% 
+  pivot_longer(contains('_lbs'),names_to='fishery',values_to='lbs') %>% 
+  group_by(drvid,revenue_season,fishery) %>%  
+  summarise(tot_lbs=sum(lbs,na.rm=T)) %>% 
+  ungroup() %>% 
+  group_by(drvid,revenue_season) %>% 
+  mutate(prop_lbs=tot_lbs/sum(tot_lbs)) %>% 
+  summarise(landings_diversity=1/sum(prop_lbs^2)) %>% 
+  ungroup() %>% 
+  rename(crab_season=revenue_season)
+
 participation_rev_plot <- participation_metric %>% 
   ggplot(aes(prop_other_revenue))+
   geom_density(fill='#33638DFF')+
@@ -293,10 +346,29 @@ participation_tix_plot <- participation_metric %>%
   ggplot(aes(prop_other_tix))+
   geom_density(fill='#33638DFF')+
   labs(x='Proportion of Tickets Targeting Other Fisheries')
+participation_div_plot <- participation_diversity %>% 
+  ggplot(aes(landings_diversity))+
+  geom_density(fill='#33638DFF')+
+  labs(x='Inverse Simpson Diversity Index of Landings by Fishery')
+
 participation_rev_plot
 participation_tix_plot
+participation_div_plot
 ggsave(here::here('fishing behavior','plots','participation_rev_metric.png'),participation_rev_plot,w=6,h=4)
 ggsave(here::here('fishing behavior','plots','participation_tix_metric.png'),participation_tix_plot,w=6,h=4)
+ggsave(here::here('fishing behavior','plots','participation_diversity_metric.png'),participation_div_plot,w=6,h=4)
+
+participation_metrics <- participation_metric %>% 
+  full_join(participation_diversity)
+
+# comparing participation metrics
+participation_metrics %>% 
+  ggplot(aes(prop_other_tix,landings_diversity))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  labs(x='Proportion of Tickets Targeting Other Fisheries',y='Inverse Simpson Diversity Index of Landings')
+# not correlated really
+cor(participation_metrics$prop_other_tix,participation_metrics$landings_diversity,use='complete.obs')
 ```
 
 ### Risk Metric
@@ -320,7 +392,7 @@ windslon <- c(233,245)
 
 # Have to use some if statements here because of weird breaks in the two datasets
 winds_all <- purrr::map_df(2009:2018, function(yr) {
-  if(yr <= 2010){
+  if(yr < 2010){
     times <- c(paste0(yr,"-01-01"),paste0(yr,"-12-31"))
     winds <- griddap("ncdcOwDly", # daily blended winds dataset
                       time=times,
@@ -328,8 +400,8 @@ winds_all <- purrr::map_df(2009:2018, function(yr) {
                       longitude=windslon,
                       fields=c("w")) %>%  # scalar wind speed
       pluck("data")
-  } 
-  if(yr > 2010){
+  }
+  if(yr > 2009){
     times <- c(paste0(yr,"-01-01"),paste0(yr,"-12-31"))
     winds <- griddap("erdQAdivmod1day", # daily blended winds dataset
                       time=times,
@@ -501,6 +573,7 @@ entropy_plot <- entropy_metric %>%
   geom_density(fill='#33638DFF')+
   labs(x='Location Choice Entropy (90th percentile by Vessel/Season)')
 entropy_plot
+write_rds(entropy_metric,here::here('fishing behavior','entropy_metric.rds'))
 ggsave(here::here('fishing behavior','plots','entropy_metric.png'),entropy_plot,w=6,h=4)
 ```
 
@@ -526,11 +599,16 @@ test_hull %<>%
   filter(rnk<0.95) %>% 
   ungroup() %>% 
   summarise() %>% 
-  st_convex_hull()
+  st_convex_hull %>% 
+  #cut out land
+  st_difference(coaststates)
 
+bbox <- st_bbox(test_hull)
 test_hull %>% 
   ggplot()+
-  geom_sf()
+  geom_sf()+
+  # geom_sf(data=coaststates,fill='tan')+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))
 
 st_area(test_hull)
 
@@ -544,8 +622,11 @@ find_hull95 <- function(df){
     filter(rnk<0.95) %>% 
     ungroup() %>% 
     summarise() %>% 
-    st_convex_hull()
-  st_area(hull)*1e-6
+    st_convex_hull()%>% 
+    st_difference(coaststates)
+  out <- st_area(hull)*1e-6
+  if(length(out)==0) {out <- NA}
+  as.numeric(out)
 }
 
 homerange_calc <- vms_all_grd %>% 
@@ -566,6 +647,8 @@ homerange_plot <- homerange_metric %>%
   geom_density(fill='#33638DFF')+
   labs(x='Home Range (95% Convex Hull Area, km^2)')
 homerange_plot
+
+write_rds(homerange_metric,here::here('fishing behavior','homerange_metric.rds'))
 ggsave(here::here('fishing behavior','plots','homerange_metric.png'),homerange_plot,w=6,h=4)
 ```
 
@@ -576,10 +659,11 @@ all_metrics <- port_use_metrics %>%
   full_join(revenue_metrics) %>% 
   full_join(trip_metrics) %>% 
   full_join(derby_metric) %>% 
-  full_join(participation_metric) %>% 
+  full_join(participation_metrics) %>% 
   full_join(risk_metric) %>% 
   full_join(entropy_metric) %>% 
   full_join(homerange_metric) %>% 
+  full_join(vessel_size_metric) %>% 
   filter(drvid %in% vessel_list)
 ```
 ### Look for Missing Data
