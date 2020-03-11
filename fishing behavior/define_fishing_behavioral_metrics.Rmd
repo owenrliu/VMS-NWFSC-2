@@ -387,29 +387,62 @@ library(rerddap)
 # Range of Lat/Lon for entire dataset
 range(vms$LATITUDE)
 windslat <- c(34,49)
-360+range(vms$LONGITUDE) # Longitudes in the winds dataset are in degrees E
-windslon <- c(233,245)
+# 360+range(vms$LONGITUDE) # Longitudes in the winds dataset are in degrees E
+windslon <- c(233,245)-360
+
+# sample day of winds data, to obtain lat/lons
+wind_sample <- griddap("nceiPH53sstn1day", # daily Pathfinder winds dataset
+                      time=c("2009-01-01","2009-01-02"),
+                      latitude=windslat,
+                      longitude=windslon,
+                      fields=c("wind_speed")) %>%  # scalar wind speed
+      pluck("data")
+
+library(RANN)
+vms_latlons <- vms %>% select(LATITUDE,LONGITUDE)
+
+winds_latlons <- wind_sample %>% select(lat,lon) %>% distinct()
+
+# Match VMS lat/lon to ERDDAP lat/lon
+erddap_vms_match <- RANN::nn2(winds_latlons,vms_latlons,k=1)$nn.idx
+
+# add appropriate erddap lat/lons to vms lat/lons data
+vms_latlons %<>% mutate(matchlat=wind_sample$lat[erddap_vms_match],matchlon=wind_sample$lon[erddap_vms_match])
+
+# only pull the winds data for the lat/lons that we need
+needed_latlons <- vms_latlons %>% select(matchlat,matchlon) %>% distinct()
+# another to try
+# nceiPH53sstn1day
 
 # Have to use some if statements here because of weird breaks in the two datasets
-winds_all <- purrr::map_df(2009:2018, function(yr) {
-  if(yr < 2010){
-    times <- c(paste0(yr,"-01-01"),paste0(yr,"-12-31"))
-    winds <- griddap("ncdcOwDly", # daily blended winds dataset
-                      time=times,
-                      latitude=windslat,
-                      longitude=windslon,
-                      fields=c("w")) %>%  # scalar wind speed
-      pluck("data")
-  }
-  if(yr > 2009){
-    times <- c(paste0(yr,"-01-01"),paste0(yr,"-12-31"))
-    winds <- griddap("erdQAdivmod1day", # daily blended winds dataset
-                      time=times,
-                      latitude=windslat,
-                      longitude=windslon,
-                      fields=c("mod")) %>%  # scalar wind speed
-      pluck("data") %>% rename(w=mod)
-  } 
+winds_all <- purrr::map_df(2009:2019, function(yr) {
+  times <- c(paste0(yr,"-01-01"),paste0(yr,"-12-31"))
+  winds <- griddap("nceiPH53sstn1day", # daily blended winds dataset
+                    time=times,
+                    latitude=windslat,
+                    longitude=windslon,
+                    fields=c("wind_speed")) %>%  # scalar wind speed
+    pluck("data") %>% 
+    filter(lat %in% unique(needed_latlons$matchlat)&lon %in% unique(needed_latlons$matchlon))
+  # if(yr < 2010){
+  #   times <- c(paste0(yr,"-01-01"),paste0(yr,"-12-31"))
+  #   winds <- griddap("ncdcOwDly", # daily blended winds dataset
+  #                     time=times,
+  #                     latitude=windslat,
+  #                     longitude=windslon,
+  #                     fields=c("w")) %>%  # scalar wind speed
+  #     pluck("data")
+  # }
+  # if(yr > 2008){
+  #   times <- c(paste0(yr,"-01-01"),paste0(yr,"-12-31"))
+  #   winds <- griddap("nceiPH53sstn1day", # daily blended winds dataset
+  #                     time=times,
+  #                     latitude=windslat,
+  #                     longitude=windslon,
+  #                     fields=c("wind_speed")) %>%  # scalar wind speed
+  #     pluck("data")
+  #     
+  # } 
   
   # if(yr == 2011){
   #   times1 <- c(paste0(yr,"-01-01"),paste0(yr,"-09-30"))
@@ -447,30 +480,31 @@ winds_all <- purrr::map_df(2009:2018, function(yr) {
   #                     fields=c("w")) %>% # scalar wind speed
   #     pluck("data") 
   # }  
-  out <- winds %>% as_tibble() %>% mutate(utcdate=as_date(time)) %>% select(-altitude)
+  out <- winds %>% as_tibble() %>% mutate(utcdate=as_date(time))
   out
 })
-write_rds(winds_all,here::here('data','raw','blended winds','erddap_raw_daily_winds.rds'))
+# write_rds(winds_all,here::here('data','raw','blended winds','erddap_raw_daily_winds.rds'))
 ```
 
 Match winds to VMS pings
 
 ```{r}
 # if not loaded
-winds_all <- read_rds(here::here('data','raw','blended winds','erddap_raw_daily_winds.rds'))
+# winds_all <- read_rds(here::here('data','raw','blended winds','erddap_raw_daily_winds.rds'))
 
-library(RANN)
-vms_latlons <- vms %>% select(LATITUDE,LONGITUDE) %>%
-  # longitude has to be in degrees E
-  mutate(LONGITUDE=360+LONGITUDE)
-
-winds_latlons <- winds_all %>% select(lat,lon) %>% distinct()
-
-# Match VMS lat/lon to ERDDAP lat/lon
-erddap_vms_match <- RANN::nn2(winds_latlons,vms_latlons,k=1)$nn.idx
-
-# add appropriate erddap lat/lons to vms lat/lons data
-vms_latlons %<>% mutate(matchlat=winds_all$lat[erddap_vms_match],matchlon=winds_all$lon[erddap_vms_match]) %>% mutate(LONGITUDE=LONGITUDE-360)
+# library(RANN)
+# vms_latlons <- vms %>% select(LATITUDE,LONGITUDE) %>%
+#   # longitude has to be in degrees E
+#   mutate(LONGITUDE=360+LONGITUDE)
+# 
+# winds_latlons <- winds_all %>% select(lat,lon) %>% distinct()
+# 
+# # Match VMS lat/lon to ERDDAP lat/lon
+# erddap_vms_match <- RANN::nn2(winds_latlons,vms_latlons,k=1)$nn.idx
+# 
+# # add appropriate erddap lat/lons to vms lat/lons data
+# vms_latlons %<>% mutate(matchlat=winds_all$lat[erddap_vms_match],matchlon=winds_all$lon[erddap_vms_match]) %>% mutate(LONGITUDE=LONGITUDE-360)
+# 
 
 # Finally, join winds data to VMS data
 vms_winds <- vms %>% 
@@ -489,7 +523,7 @@ Calculate an extreme wind value for each trip (95th percentile of wind speed per
 winds_per_trip <- vms_winds %>% 
   filter(drvid %in% vessel_list) %>% 
   group_by(drvid,crab_season,Rec_ID) %>% 
-  summarise(wind_quant95=quantile(w,0.95,na.rm = T)) %>% 
+  summarise(wind_quant95=quantile(wind_speed,0.95,na.rm = T)) %>% 
   ungroup()
 winds_per_trip %>% 
   ggplot(aes(wind_quant95))+
@@ -509,6 +543,9 @@ risk_plot <- risk_metric %>%
   geom_density(fill='#33638DFF')+
   labs(x='Propensity to Fish in High Winds (>7.5m/s)')
 risk_plot
+
+write_rds(risk_metric,here::here('fishing behavior','risk_metric.rds'))
+
 ggsave(here::here('fishing behavior','plots','risk_metric.png'),risk_plot,w=6,h=4)
 ```
 
@@ -657,6 +694,7 @@ ggsave(here::here('fishing behavior','plots','homerange_metric.png'),homerange_p
 ```{r}
 all_metrics <- port_use_metrics %>% 
   full_join(revenue_metrics) %>% 
+  full_join(landings_metrics) %>% 
   full_join(trip_metrics) %>% 
   full_join(derby_metric) %>% 
   full_join(participation_metrics) %>% 
