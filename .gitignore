@@ -15,6 +15,7 @@
 *.RDS
 *.txt
 *.xlsx
+*.zip
 
 ## spatial data
 *.dbf

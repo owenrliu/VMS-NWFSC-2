@@ -68,6 +68,7 @@ r2 <- r %>%
 # see the results
 
 r2
+plot(grd_r)
 plot(r)
 plot(r2)
 ```
@@ -185,7 +186,7 @@ ggplot(test_join,aes(Blue_occurrence,Blue_occurrence_mean))+
 cor(test_join$Blue_occurrence,test_join$Blue_occurrence_mean,use='complete.obs')
 ```
 
-## Join to Interpolated VMS data
+Write to a .rds file.
 
 ```{r}
 rm(list=ls())
@@ -196,28 +197,115 @@ vms_grd_obs <- vms %>% dplyr::select(GRID5KM_ID,westcoastdate_notime) %>%
   mutate(yr=year(westcoastdate_notime),mth=month(westcoastdate_notime)) %>% 
   distinct(yr,mth,GRID5KM_ID)
 all_vms_cells <- vms_grd_obs$GRID5KM_ID %>% unique()
+all_blwh_cells <- unique(blwh_by_grd_mth$GRID5KM_ID)
 blwh_vms_cells_only <- blwh_by_grd_mth %>% filter(GRID5KM_ID %in% all_vms_cells)
 
 write_rds(blwh_vms_cells_only,here::here('data','Blue whale predictions','blwh_vms_cells_only.rds'))
-
-vms %<>% mutate(yr=year(westcoastdate_notime),mth=month(westcoastdate_notime))
-
-for(i in unique(vms$yr)){
-  vms_sub <- vms %>% filter(yr==i)
-  blwh_sub <- blwh_vms_cells_only %>% filter(yr==i)
-  temp <- vms_sub %>% left_join(blwh_sub,by=c('yr','mth'))
-  nm <- paste0('vms_blwh_',i)
-  assign(nm,temp)
-  paste(i,'done.')
-}
-# vms_blwh_join <- vms %>% 
-#   mutate(yr=year(westcoastdate_notime),mth=month(westcoastdate_notime)) %>% 
-#   left_join(blwh_vms_cells_only,by=c('yr','mth')) %>% 
-#   dplyr::select(-yr,-mth)
 ```
 
 
+## Extend to Inshore Areas
+
+One issue with the blue whale data when using it to compare to fishing activity is that the model domain does not cut very closely to the coastline. When we downscale from a 10km to a 5km grid, this leaves some inshore grid cells that are NA. To fix the issue, we assign whale occurrence values for those inshore cells based on their nearest neighbors in the existing whale data that we just converted.
 
 
+```{r}
+# Find the cells that have VMS data, but no values for blue whales.
+vms_na_cells <- tibble(GRID5KM_ID=setdiff(all_vms_cells,all_blwh_cells)) %>% filter(!is.na(GRID5KM_ID))
+
+#Import shapefile for the grid
+grd_sf <- read_sf(here::here('data','raw','grid','regions_master_final_lamb.shp'))
+
+# Make the VMS cells with NA whale values into a spatial object
+vms_na_cells %<>% left_join(grd_sf) %>% st_as_sf(crs=st_crs(grd_sf))
+
+# Plot to see where the NA cells are
+library(rnaturalearth)
+coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington','Nevada')) %>% 
+  st_transform(st_crs(grd_sf))
+bbox <- st_bbox(vms_na_cells)
+ggplot()+
+  geom_sf(data=coaststates,col=NA)+
+  geom_sf(data=vms_na_cells,fill='red',col=NA)+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))
+
+# match cells with NAs for blwhs with their nearest neighbor that DOES have blwh values
+# Do this by matching centroids of the NA cells above to centroids of the blwh data
+
+# find centroids of the NA cells
+vms_na_cells_centroids <- vms_na_cells %>% st_centroid() %>% st_coordinates()
+vms_na_cells_centroids <- vms_na_cells %>% st_set_geometry(NULL) %>% mutate(x=vms_na_cells_centroids[,1],y=vms_na_cells_centroids[,2])
+
+# find centroids of the blwh cells
+blwh_cells <- tibble(GRID5KM_ID=all_blwh_cells) %>% left_join(grd_sf) %>% filter(!st_is_empty(geometry)) %>% 
+  st_as_sf(crs=st_crs(grd_sf))
+blwh_centroids <- blwh_cells  %>% st_centroid() %>% st_coordinates()
+
+# match the NA cells with their nearest neighbor from the blwh set
+library(RANN)
+matches_na_to_blwh <- nn2(data=blwh_centroids,query=select(vms_na_cells_centroids,x,y),k=1)[[1]]
+
+# make the matching key
+match_NA_vms_to_blwh <- vms_na_cells %>% mutate(blwh_nn_cell=blwh_cells$GRID5KM_ID[matches_na_to_blwh]) %>% 
+  select(GRID5KM_ID,blwh_nn_cell) %>% st_set_geometry(NULL)
+write_csv(match_NA_vms_to_blwh,here::here('data','Blue whale predictions','vms_NA_blwh_match_key.csv'))
+
+# now, compile the new blwh data for the previously-NA cells
+blwh_by_grd_mth_expanded <- match_NA_vms_to_blwh %>% 
+  rename(vms_cell=GRID5KM_ID) %>% 
+  # Join all the blue whale data by the MATCHED cell
+  left_join(blwh_by_grd_mth,by=c('blwh_nn_cell'='GRID5KM_ID')) %>%
+  # Then, reattach to all the rest of the blue whale data from before
+  select(-blwh_nn_cell) %>% 
+  rename(GRID5KM_ID=vms_cell) %>% 
+  bind_rows(blwh_by_grd_mth) %>% 
+  arrange(yr,mth)
+
+# Save expanded blwh occurrence data
+write_rds(blwh_by_grd_mth_expanded,here::here('data','Blue whale predictions','blwh_by_grd_mth_expanded.rds'))
+
+# check to see if any vms cells remain na
+all_blwh_cells_expanded<- unique(blwh_by_grd_mth_expanded$GRID5KM_ID)
+vms_na_cells_new <- tibble(GRID5KM_ID=setdiff(all_vms_cells,all_blwh_cells_expanded)) %>% filter(!is.na(GRID5KM_ID))
+
+# pick a random month and map the output to see the difference
+sample_yr <- 2011
+sample_mth <- 10
+sample_blwh_old <- blwh_by_grd_mth %>% 
+  filter(yr==sample_yr,mth==sample_mth)%>% 
+  left_join(grd_sf) %>% 
+  filter(!st_is_empty(geometry)) %>% 
+  st_as_sf(crs=st_crs(grd_sf))
+sample_blwh_mth_expanded <- blwh_by_grd_mth_expanded %>% 
+  filter(yr==sample_yr,mth==sample_mth) %>% 
+  left_join(grd_sf) %>% 
+  filter(!st_is_empty(geometry)) %>% 
+  st_as_sf(crs=st_crs(grd_sf))
+
+# define a California bounding box
+bbox <- vms_na_cells_centroids %>% 
+  filter(STATE=='CA') %>% 
+  st_as_sf(coords=c('x','y')) %>% 
+  st_bbox()
+
+library(viridis)
+sample_map_old <- ggplot()+
+  geom_sf(data=coaststates,fill='gray70',col=NA)+
+  geom_sf(data=sample_blwh_old,aes(fill=Blue_occurrence_mean),col=NA)+
+  scale_fill_viridis()+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  ggtitle('Old Version')
+sample_map_new <- ggplot()+
+  geom_sf(data=coaststates,fill='gray70',col=NA)+
+  geom_sf(data=sample_blwh_mth_expanded,aes(fill=Blue_occurrence_mean),col=NA)+
+  scale_fill_viridis()+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  ggtitle('New Version')
+sample_map_old
+sample_map_new
+ggsave(here::here('test scripts','blwh_5km_match_old.png'),plot = sample_map_old,w=6,h=4)
+ggsave(here::here('test scripts','blwh_5km_match_new.png'),plot = sample_map_new,w=6,h=4)
+```
 
 
