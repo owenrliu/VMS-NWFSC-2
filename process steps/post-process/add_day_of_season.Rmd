@@ -115,6 +115,7 @@ one_percent_landings_achievement <- fishtix %>%
   filter(prop_tot>=0.01) %>% 
   summarise(start_of_season_oneperc=first(date,order_by = date)) %>% 
   ungroup()
+write_rds(one_percent_landings_achievement,here::here('data','processed','fish tickets','start_dates_by_port_group.rds'))
 ```
 
 ## Apply to Fish Ticket Data
