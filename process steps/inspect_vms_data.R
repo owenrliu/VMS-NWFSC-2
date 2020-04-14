@@ -30,7 +30,12 @@ head(new_vms)
 head(new_vms$Lat)
 
 # function makes a string of 3 characters (degrees, minutes, decimal minutes) into one decimal degrees double
-make_dd <- function(string){as.numeric(string[1])+as.numeric(paste0(string[2],'.',string[3]))/60}
+make_dd <- function(string){
+  deg <- as.numeric(string[1])
+  decmin <- as.numeric(paste0(string[2],'.',string[3]))/60
+  out <- abs(deg)+decmin
+  ifelse(deg<0,-out,out)
+  }
 
 # function takes a string, removes weird unknown characters, then applies the make_dd() function and outputs the new vector
 fix_degrees <- function(string){
@@ -44,6 +49,7 @@ new_vms %<>%
 
 glimpse(new_vms)
 
+new_vms %>% filter(month(`UTC time`)==2) %>% slice(1:9) %>% knitr::kable()
 #################################################
 # rename some columns
 
