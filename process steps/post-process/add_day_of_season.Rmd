@@ -116,7 +116,36 @@ one_percent_landings_achievement <- fishtix %>%
   summarise(start_of_season_oneperc=first(date,order_by = date)) %>% 
   ungroup()
 write_rds(one_percent_landings_achievement,here::here('data','processed','fish tickets','start_dates_by_port_group.rds'))
+write_rds(one_percent_landings_achievement,here::here('data','processed','fish tickets','start_dates_by_port_group.csv'))
 ```
+
+For consistency, we can do one percent landings at the level of CA regions as well
+
+```{r}
+# make a regional key
+fishtix %>% filter(agency_code=="C") %>% pluck("port_group_code") %>% unique()
+
+one_percent_landings_achievement_regions <- fishtix %>% 
+  filter(removal_type_code %in% c("C","D"),agency_code=="C",port_group_code != "CA2") %>%
+  mutate(CA_region=case_when(
+    port_group_code %in% c("ERA","BGA","CCA") ~ "norCA",
+    port_group_code %in% c("BDA","MNA","SFA","MRA","LAA","SBA") ~ "cenCA"
+  )) %>% 
+  # add general indicator of crab season
+  mutate(crab_season=case_when(
+    month(date)>10 ~ paste0(year,"-",year+1),
+    month(date)<=10 ~ paste0(year-1,"-",year))) %>% 
+  group_by(CA_region,crab_season) %>% 
+  arrange(date) %>% 
+  mutate(cum_landings=cumsum(DCRB_lbs)) %>% 
+  mutate(prop_tot=cum_landings/last(cum_landings)) %>% 
+  filter(prop_tot>=0.01) %>% 
+  summarise(start_of_season_oneperc=first(date,order_by = date)) %>% 
+  ungroup()
+write_rds(one_percent_landings_achievement_regions,here::here('data','processed','fish tickets','start_dates_by_CA_region.rds'))
+write_csv(one_percent_landings_achievement_regions,here::here('data','processed','fish tickets','start_dates_by_CA_region.csv'))
+```
+
 
 ## Apply to Fish Ticket Data
 

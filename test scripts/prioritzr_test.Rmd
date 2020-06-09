@@ -1,0 +1,250 @@
+---
+title: "Prioritzr Test"
+author: "Owen Liu"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+## Purpose
+
+Test the speed and utility of `prioritzr` in helping to optimize closed area placement to reduce risk of whale entanglement in the CA Dungeness crab fishery.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(raster)
+library(tidyverse)
+library(magrittr)
+library(here)
+library(prioritizr)
+
+rm(list=ls())
+
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=10,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+## Import Data
+
+```{r}
+# raster version of the 5km grid
+grd_r <- raster(here::here('data','raw','grid','fivekm_grid.tif'))
+grd_r
+
+# one year-month of data
+dat <- read_rds(here::here('test scripts','status_quo_risk_mar2015_2020-05-15.rds'))
+glimpse(dat)
+```
+
+## Set Up Prioritzr Inputs
+
+```{r}
+# subset the raster to only areas with positive fishing
+cells_domain <- unique(dat$GRID5KM_ID)
+grd_r[!(grd_r %in% cells_domain)] <- NA
+plot(grd_r)
+# fix extent
+r1NaM <- is.na(as.matrix(grd_r))
+colNotNA <- which(colSums(r1NaM) != nrow(grd_r))
+rowNotNA <- which(rowSums(r1NaM) != ncol(grd_r))
+grd_r_extent <- extent(grd_r, rowNotNA[1], rowNotNA[length(rowNotNA)],
+   colNotNA[1], colNotNA[length(colNotNA)])
+grd_r_crop <- crop(grd_r, grd_r_extent)
+
+plot(grd_r_crop,main="Cells with Positive Fishing Effort, Mar 2015")
+
+# split conservation features from cost data
+# cost is fishing revenue (i.e., lost fishing revenue)
+cost <- dat %>% 
+  select(GRID5KM_ID,DCRB_rev)
+# make a raster version of the cost layer by substituting into the 5km grid raster by GRID5KM_ID number
+grd_cost <- subs(grd_r_crop,cost,by="GRID5KM_ID",which="DCRB_rev")
+plot(grd_cost,main="DCRB revenue (Cost)")
+
+# conservation feature is risk to whales (using non-normalized humpback risk for now)
+features <- dat %>%
+  select(GRID5KM_ID,risk_humpback)
+
+# make a raster version of the risk layer by substituting into the 5km grid raster by GRID5KM_ID number
+grd_risk <- subs(grd_r_crop,features,by="GRID5KM_ID",which="risk_humpback")
+plot(grd_risk,main="Humpback Risk (Features)")
+```
+
+## Run Prioritizr
+
+
+### Set up Minimum Set Prioritizr Problem
+
+Minimum Set Problem: reach TARGET of 20% whale risk reduction for MINIMUM cost (minimum lost fishing revenue)
+
+```{r}
+p1 <- problem(grd_cost,grd_risk)
+print(p1)
+
+# add minimum set objective (minimize cost to meet target)
+p1 %<>% add_min_set_objective() %>% 
+  # add a target of 20% risk reduction
+  add_relative_targets(0.5) %>% 
+  # add binary decisions (a planning unit is selected or not)
+  add_binary_decisions()
+
+print(p1)
+```
+
+Ignoring constraints for now, we can optimize the above problem
+
+### Solve the Problem
+
+```{r}
+s1 <- solve(p1)
+plot(s1,col=c('gray80','darkgreen'),main='Solution, minimum lost revenue for 50% reduction in risk')
+```
+
+Here is a first solution, and we can extract some useful information
+
+```{r}
+# total revenue lost, using the solution and the cost layer
+s1_cost <- sum(grd_cost[s1==1]) %>% round(0)
+tot_revenue <- sum(getValues(grd_cost),na.rm=T) %>% round(0)
+paste('The solution costs',s1_cost,'dollars, out of a total monthly revenue of',tot_revenue,'dollars, or',s1_cost/tot_revenue*100 %>% round(digits = 0),'percent')
+```
+
+### Set up Maximum Feature Objective Problem
+
+Maximum Feature Objective: reach maximum whale risk reduction subject to a budget of 10% of fishing revenue
+
+```{r}
+p2 <- problem(grd_cost,grd_risk)
+print(p2)
+
+# calculate budget (10% of overall fishing revenue)
+p2_budget <- 0.1*tot_revenue
+
+# add minimum set objective (minimize cost to meet target)
+p2 %<>% add_max_features_objective(budget = p2_budget) %>%
+  # add binary decisions (a planning unit is selected or not)
+  add_relative_targets(0.2) %>% 
+  add_binary_decisions()
+
+print(p2)
+```
+
+Ignoring constraints for now, we can optimize the above problem
+
+### Solve the Problem
+
+```{r}
+s2 <- solve(p2)
+plot(s2,col=c('gray80','darkgreen'),main='Solution, maximum risk reduction with 10% reduction in revenue')
+```
+
+Check the cost of the solution.
+
+```{r}
+# total revenue lost, using the solution and the cost layer
+s2_cost <- sum(grd_cost[s2==1]) %>% round(0)
+paste('The solution costs',s2_cost,'dollars, out of a total monthly revenue of',tot_revenue,'dollars, or',s2_cost/tot_revenue*100 %>% round(digits = 0),'percent')
+```
+
+This doesn't really seem to work optimally, because we only have 1 feature.
+
+### Swap Cost and Feature Layer
+
+Another way to conceptualize the problem is to "protect" a certain amount of Dungeness crab revenue while minimizing risk to whales. In this problem, we make the revenue raster into the feature (i.e. 'species') layer, while humpback risk becomes the cost layer. Then we run the minimum set problem in the same way as the first problem above, with a target of 65% revenue protection.
+
+```{r}
+revenue_feature <- grd_cost
+risk_cost <- grd_risk
+
+p3 <- problem(risk_cost,revenue_feature)
+print(p3)
+
+# add minimum set objective (minimize cost to meet target)
+p3 %<>% 
+  add_min_set_objective() %>%
+  # protect 65% of revenue
+  add_relative_targets(0.65) %>% 
+  add_binary_decisions()
+
+print(p3)
+```
+
+Ignoring other constraints for now, we can optimize the above problem.
+
+### Solve the Problem
+
+```{r}
+s3 <- solve(p3)
+plot(s3,col=c('gray80','darkgreen'),main='Solution, minimum area protecting 65% of revenue')
+
+s3_cost <- cellStats(s3*risk_cost,sum)
+tot_risk <- cellStats(risk_cost,sum)
+1-s3_cost/tot_risk
+```
+
+Another example of this approach
+
+```{r}
+
+p4 <- problem(risk_cost,revenue_feature)%>% 
+  add_min_set_objective() %>%
+  # protect 65% of revenue
+  add_relative_targets(0.9) %>% 
+  add_binary_decisions()
+s4 <- solve(p4)
+plot(s4,col=c('gray80','darkgreen'),main='Solution, minimum area protecting 90% of revenue')
+
+
+s4_cost <- cellStats(s4*risk_cost,sum)
+1-s4_cost/tot_risk
+
+```
+
+
+Unlike the above solutions, this map shows the areas that would remain OPEN, not closed. We can look at the risk reduction associated with this closure. This risk reduction will be equal to the risk reduction in the gray portions of the above map (not the green, which in this case is where fishing is still occurring).
+
+```{r}
+# total risk lost, using the solution and the cost layer
+tot_risk <- sum(getValues(risk_cost),na.rm=T)
+s3_risk_reduction <- tot_risk - sum(risk_cost[s3==1]) %>% round(0)
+s3_risk_reduction <- s3_risk_reduction/tot_risk*100
+
+```
+
+The solution suggests we can reduce risk by `r s3_risk_reduction` percent for a 35 percent reduction in Dungeness revenue.
+
+## "Tradeoff" Curve
+
+Using these same data, let's run a number of optimizations, then plot revenue loss against risk reduction.
+
+```{r}
+opt_risk <- function(revenue_target){
+  p <- problem(risk_cost,revenue_feature)%>% 
+    add_min_set_objective() %>%
+    add_relative_targets(revenue_target) %>% 
+    add_binary_decisions()
+  s <- solve(p)
+  
+  tot_risk <- sum(getValues(risk_cost),na.rm=T)  #  risk reduction
+  s_cost <- cellStats(s*risk_cost,sum)
+  out <- 1-s_cost/tot_risk
+  return(out)
+}
+
+risk_reduction=purrr::map(seq(0.1,0.9,by=0.5),opt_risk)
+tradeoff_df <- tibble(revenue_protected=seq(0.1,0.9,by=0.05)) %>% 
+  mutate(risk_reduction=purrr::map_dbl(seq(0.1,0.9,by=0.05),opt_risk))
+
+tradeoff_df %>% 
+  ggplot(aes(revenue_protected,risk_reduction))+
+  geom_point()+
+  scale_x_continuous(limits=c(0,1))+
+  labs(x="Revenue Protected",y="Risk Reduction")
+```
+

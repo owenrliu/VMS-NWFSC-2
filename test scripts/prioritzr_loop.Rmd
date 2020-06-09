@@ -1,0 +1,205 @@
+---
+title: "Optimize Risk Reduction"
+author: "Owen Liu"
+date: "6/9/2020"
+output: html_document
+---
+## Purpose
+
+Here we use the `prioritzr` package to produce "optimal" tradeoff curves for historical VMS and whale entanglement risk data.
+
+Steps:
+
+*  Loop through the list of year-month data, creating risk and revenue rasters for each
+*  Run prioritizr on each year-month of data
+*  Organize output into useable dataframe
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(raster)
+library(tidyverse)
+library(magrittr)
+library(here)
+library(prioritizr)
+
+rm(list=ls())
+
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=10,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+## Import Data
+
+```{r}
+# raster version of the 5km grid
+grd_r <- raster(here::here('data','raw','grid','fivekm_grid.tif'))
+grd_r
+
+# risk and revenue data for all years
+dat <- read_rds(here::here('test scripts','status_quo_risk_2009_2019_list_by_yr_mth_2020-06-04.rds'))
+glimpse(dat[[1]])
+```
+
+## Loop for Raster Creation
+
+This creates rasters for risk and cost. The option `raster_out` should be one of `humpback`, `blue`, `combined`, or `revenue`. These create rasters for humpback normalized risk, blue normalized risk, combined risk, or DCRB revenue.
+
+```{r}
+create_risk_cost_rasters <- function(df,raster_out="humpback"){
+  
+  df %<>% ungroup()
+  
+  # year month
+  yr_mth <- unique(df$year_month)
+  
+  # base grid
+  grd_base <- grd_r
+  # subset the raster to only areas with positive fishing
+  cells_domain <- unique(df$GRID5KM_ID)
+  grd_base[!(grd_base %in% cells_domain)] <- NA
+  
+  # fix extent
+  r1NaM <- is.na(as.matrix(grd_base))
+  colNotNA <- which(colSums(r1NaM) != nrow(grd_base))
+  rowNotNA <- which(rowSums(r1NaM) != ncol(grd_base))
+  grd_base_extent <- extent(grd_base, rowNotNA[1], rowNotNA[length(rowNotNA)],
+     colNotNA[1], colNotNA[length(colNotNA)])
+  grd_base_crop <- crop(grd_base, grd_base_extent)
+  
+  # split conservation features from cost df
+  # cost is entanglement risk
+  # we do this for each species separately, and then combine them and normalize to a max of 1
+  if(raster_out=="humpback"){
+    cost <- df %>% 
+      select(GRID5KM_ID,n_risk_humpback) 
+    grd_out <- subs(grd_base_crop,cost,by="GRID5KM_ID",which="n_risk_humpback")
+  }
+  if(raster_out=="blue"){
+    cost <- df %>% 
+      select(GRID5KM_ID,n_risk_blue) 
+    grd_out <- subs(grd_base_crop,cost,by="GRID5KM_ID",which="n_risk_blue")
+  }
+  if(raster_out=="combined"){
+    # combined risk is the sum of the 2 species risk, then normalized to the max risk value (divide by max risk across cells)
+    # we add zeroes
+    cost <- df %>% 
+      select(GRID5KM_ID,n_risk_humpback,n_risk_blue) %>% 
+      mutate(n_risk_humpback=replace_na(n_risk_humpback,0),n_risk_blue=replace_na(n_risk_blue,0)) %>% 
+      mutate(risk_both=n_risk_humpback+n_risk_blue) %>%
+      mutate(n_risk_both=risk_both/max(risk_both,na.rm=T))
+
+    grd_out <- subs(grd_base_crop,cost,by="GRID5KM_ID",which="n_risk_both")
+  }
+  if(raster_out=="revenue"){
+    risk <- df %>% 
+      select(GRID5KM_ID,DCRB_rev) 
+    grd_out <- subs(grd_base_crop,risk,by="GRID5KM_ID",which="DCRB_rev")
+  }
+  
+  names(grd_out) <- yr_mth
+  return(grd_out)
+}
+```
+
+## Create Rasters
+
+Now we can apply the above function to create the raster layers we need
+
+```{r}
+blwh_r <- purrr::map(dat,function(x) create_risk_cost_rasters(x,raster_out = "blue"))
+hump_r <- purrr::map(dat,function(x) create_risk_cost_rasters(x,raster_out = "humpback"))
+combined_r <- purrr::map(dat,function(x) create_risk_cost_rasters(x,raster_out = "combined"))
+revenue_r <- purrr::map(dat,function(x) create_risk_cost_rasters(x,raster_out = "revenue"))
+```
+
+Save rasters for later use
+
+```{r}
+write_rds(blwh_r,here::here('test scripts','blwh_rasters.rds'))
+write_rds(hump_r,here::here('test scripts','humpback_rasters.rds'))
+write_rds(combined_r,here::here('test scripts','combined_risk.rds'))
+write_rds(revenue_r,here::here('test scripts','revenue_rasters.rds'))
+```
+
+## Run Prioritzr
+
+This function runs prioritzr with whale risk as the cost layer and DCRB revenue as the protected feature layer. The option the user must supply is the target revenue protected (default 0.5, or 50% of revenue).
+
+```{r}
+run_prioritzr <- function(whale_risk,dcrb_revenue,target_revenue=0.5,plot_output=FALSE,return_raster=FALSE){
+    
+  #year month
+  yr_mth <- names(whale_risk)
+
+  # conservation problem
+  p <- problem(whale_risk,dcrb_revenue)
+  print(p)
+  
+  # add minimum set objective (minimize cost to meet target)
+  p %<>% 
+    add_min_set_objective() %>%
+    # protect 65% of revenue
+    add_relative_targets(target_revenue) %>% 
+    add_binary_decisions()
+  
+  # solve the problem
+  s <- solve(p)
+  
+  if(plot_output){
+   plot(s,col=c('gray80','darkgreen'),main='Solution') 
+  }
+  
+  # organize the outputs
+  # "cost" (risk) associated with the solution is formulated by multiplying the solution (ones and zeroes) by the whale risk layer, and then summing across cells
+  s_cost <- cellStats(s*whale_risk,sum)
+  tot_risk <- cellStats(whale_risk,sum)
+  risk_reduction = 1-s_cost/tot_risk
+  
+  # tibble to organize the results
+  if(return_raster){
+    names(s) <- paste(yr_mth,target_revenue)
+    return(s)
+  } else{
+    out <- tibble(year_month=yr_mth,target_rev=target_revenue,combined_risk=tot_risk,risk_reduction=risk_reduction)
+    return(out)    
+  }
+}
+
+```
+
+Test the output
+
+```{r,echo=F}
+
+# Run for all year/months and a range of target revenue
+prioritzr_outputs <- purrr::map_df(seq(0.1,0.95,by=0.05),function(target){
+  purrr::map2_df(combined_r,revenue_r,run_prioritzr,target_revenue=target)
+})
+prioritzr_outputs %<>%
+  mutate(year=str_sub(year_month,2,5) %>% as.numeric(),month=str_sub(year_month,7,8) %>% as.numeric()) %>%
+  select(-year_month) %>%
+  select(year,month,everything())
+
+write_rds(prioritzr_outputs,here::here('test scripts','prioritzr_outputs_all.rds'))
+```
+
+## Visualize Outputs
+
+```{r}
+plot_priotizr_output <- function(yr,mth){
+  prioritzr_outputs %>% 
+    filter(year==yr,month==mth) %>% 
+    ggplot(aes(target_rev,risk_reduction))+
+    geom_point()+
+    scale_x_continuous(limits=c(0,1))+
+    labs(x="Revenue Protected",y="Risk Reduction")
+}
+
+# plot_priotizr_output(2009,11)
+```
+
