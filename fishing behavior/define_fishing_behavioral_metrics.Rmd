@@ -46,6 +46,20 @@ vms <- purrr::map_df(2009:2019, function(yr){
   # join crab season indicator
   left_join(recid_crabseason,by='Rec_ID')
 
+# key of drvid vs. states
+vessel_state_key <- vms %>% 
+  group_by(drvid,agency_code) %>% 
+  summarise(totland=sum(DCRB_revenue)) %>% 
+  ungroup() %>% 
+  group_by(drvid) %>% 
+  mutate(nstates=n_distinct(agency_code)) %>% 
+  # for states with >1 state associated, pick the one with highest landings
+  mutate(perc_land=totland/sum(totland)) %>% 
+  arrange(desc(perc_land)) %>% 
+  slice(1) %>% 
+  select(drvid,agency_code)
+# save
+write_rds(vessel_state_key,here::here('fishing behavior','vessel_state_key.rds'))
 ```
 
 ## Metrics to Calculate

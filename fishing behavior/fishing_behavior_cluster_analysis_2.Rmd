@@ -15,6 +15,7 @@ library(magrittr)
 library(here)
 library(NbClust)
 library(viridis)
+library(lubridate)
 
 # ggplot theme
 plot_theme <-   theme_minimal()+
@@ -311,6 +312,13 @@ The two variables that, when permuted, had the greatest effect on classification
 We have described the behavior of some broad groups of Dungeness crab fishers, and explored the importance of individual behavioral variables in distinguishing between groups. Lastly, we want to investigate how the total number of vessels in each class may have shifted over the course of years on our data, as well as explore interannual movements of individual vessels between the three classes.
 
 ```{r}
+dat_clustered <- dat_clustered %>% 
+  mutate(partition=case_when(
+    partition==1 ~ "Local",
+    partition==2 ~ "Rover",
+    partition==3 ~ "Derby"
+  )) %>% 
+  mutate(partition=factor(partition,levels=c("Local","Rover","Derby")))
 class_by_yr <- dat_clustered %>% 
   group_by(crab_season,partition) %>% 
   summarise(n_vessels=n_distinct(drvid)) %>% 
@@ -329,44 +337,67 @@ class_by_yr %>%
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
+class_by_yr %>% 
+  group_by(crab_season) %>%
+  mutate(prop_group=n_vessels/sum(n_vessels)) %>% 
+  ggplot(aes(crab_season,prop_group,group=factor(partition),color=factor(partition)))+
+  geom_line(size=2)+
+  labs(x="Crab Season",y="Proportion of Vessels",title="Proportion of Vessels in each Group by Year",color="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        legend.position = 'bottom')
 ```
 
-The number of vessels in Group 1 declined in 2014-15, but has recovered since then.
 
 We can also look at the flows of vessels between classes and years.
 
 ```{r,warning=F,message=F}
 library(ggalluvial)
 
+# for vessels that are not fishing, indicate whether it is a lack of VMS data (but the vessel recorded tickets), or whether there is no record of the vessel at all, which we indicate as 'not fishing'
+novms_key <- dat %>% group_by(drvid,crab_season) %>% summarise(no_vms=is.na(n_ports_trip),no_dcrb_tix=is.na(landings_mean))
+
 dat_alluvium <- dat_clustered %>% 
   select(drvid,crab_season,partition) %>% 
   distinct() %>% 
-  mutate(class=case_when(
-    partition==1 ~ "Group 1",
-    partition==2 ~ "Group 2",
-    partition==3 ~ "Group 3",
-    partition==4 ~ "Group 4"
-  )) %>% 
-  complete(drvid,crab_season,fill=list('class'="Not Fishing"))
+  mutate(partition=as.character(partition)) %>% 
+  complete(drvid,crab_season,fill=list('partition'="Not Fishing"))%>%
+  mutate(partition=factor(partition,levels=c("Local","Rover","Derby","Not Fishing"))) %>% 
+  left_join(novms_key) %>% 
+  #filter out seasons with no VMS data (but tickets recorded)
+  filter(!no_vms) %>% 
+  select(-no_vms,-no_dcrb_tix)
 
 # with boats not fishing in a given season
-# dat_alluvium %>%
-#   ggplot(aes(crab_season,stratum=class,alluvium=drvid,fill=class,label=class))+
-#   scale_fill_manual(values=viridis_pal()(4),name="Class")+
-#   geom_flow()+
-#   geom_stratum()+
-#   theme(axis.text.x = element_text(angle=90,vjust=0.5))
-
-# non-fishing vessels removed
 dat_alluvium %>%
-  filter(class!="Not Fishing") %>% 
-  ggplot(aes(crab_season,stratum=class,alluvium=drvid,fill=class,label=class))+
-  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4),name="")+
+  ggplot(aes(crab_season,stratum=partition,alluvium=drvid,fill=partition,label=partition))+
+  scale_fill_manual(values=viridis_pal()(4),name="Group")+
   geom_flow()+
   geom_stratum()+
-  labs(x="Crab Season",y="Number of Vessels")+
-  theme(axis.text.x = element_text(angle=90,vjust=0.5),
-        legend.position = 'bottom')
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4),name="")+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5))+
+  labs(x="Crab Season",y="Number of Vessels")
+
+#consistency of each group
+group_consistency <- dat_alluvium %>% count(drvid,partition) %>%
+  group_by(drvid) %>% 
+  mutate(prop_of_yrs=n/sum(n)) %>% 
+  ungroup()
+
+# boxplot of the average percentage of years partitionified in one group
+group_consistency_boxplot <- group_consistency %>% 
+  group_by(drvid) %>% 
+  arrange(desc(prop_of_yrs)) %>% 
+  slice(1) %>% 
+  ungroup() %>%
+  ggplot(aes(partition,prop_of_yrs,fill=partition))+
+  geom_boxplot()+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(3),name="")+
+  labs(x="Group",y="Proportion of Seasons Classified in Group",title="Consistency of Group Membership")
+
+group_consistency_boxplot
+
+# most common 2nd 
 ```
 
 This is the same plot as above but with the flows from each class included between years.
@@ -406,13 +437,13 @@ annual_var_means %>%
 
 Fleetwide means have remained relatively consistent across years.
 
-## Vessel Size Distribution by Class
+## Vessel Size Distribution by Group
 
 This is how vessel length maps on to behavioral groups in the fishery
 
 ```{r}
-vessel_sizes <- read_rds(here::here('fishing behavior','vessel_sizes.rds'))
-dat_clustered %>% left_join(vessel_sizes) %>% 
+vessel_sizes <- read_rds(here::here('fishing behavior','vessel_sizes.rds')) %>% group_by(drvid,crab_season) %>% slice(1)
+dat_clustered %>% select(-vessel_size) %>% left_join(vessel_sizes) %>% 
   ggplot(aes(vessel_size,fill=factor(partition)))+
   geom_density(alpha=0.5)+
   labs(x="Vessel Length",y='density',fill='Group',title="Vessel Length Distribution by Behavioral Group")+
@@ -440,87 +471,548 @@ vars.corrs %>%
   theme(axis.text.x = element_text(angle=90,vjust=0.5,hjust=1))
 ```
 
-## Behavioral Class and Revenue
+## Behavioral Class and Performance
 
-Our last research question is, "*How do fishing behavioral strategies relate to revenue and landings from fishing?*". Now that we have the three groups of vessels, we can use these groups to explore how these behavioral strategies link to revenues gained.
+Our last research question is, "*How do fishing behavioral strategies relate to revenue and landings from fishing?*". Now that we have the three groups of vessels, we can use these groups to explore how these behavioral strategies "perform" in terms of revenue and profits over the course of the season, and relative to the efficiency of crab capture (i.e., catch per unit effort).
 
-Here is how revenue and revenue variance have changed over time for each behavioral group
+### Additional Cost and Abundance Information
+
+In order to compare the performance of the FBTs, we need to estimate the cost of fishing for each trip or vessel. We also have a record of estimated preseason abundance of crabs, which we can use to explore fisher performance as a function of available Dungeness biomass.
+
+```{r}
+# Important data needed
+# key of vessel-seasons vs. classified group
+drvid_group_key <- dat_clustered %>% select(drvid,crab_season,partition) %>% 
+  distinct()
+# import Richerson et al.'s preseason abundance estimates
+abun <- read_csv(here::here('fishing behavior','crab_model_results_2020422.csv'))
+
+# all fish tickets
+fishtix <- read_rds(here::here('data','processed','fish tickets','fish_tickets_w_dayofseason.rds'))
+
+# vms_rep <- read_rds(here('fishing behavior','vms_proportional_landings_key.rds'))
+vms_tickets <- read_rds(here('fishing behavior','fish_tickets_with_vms.rds'))
+recid_crabseason <- fishtix %>% select(Rec_ID,crab_season) %>% distinct()
+
+# import vms data as well, to pull out trip duration in days
+vms <- purrr::map_df(2009:2019, function(yr){
+  read_rds(paste0(here::here('data','processed','matched','filtering',yr),"matched_filtered.rds"))
+}) %>% 
+  filter(TARGET_rev=='DCRB') %>% 
+  # join crab season indicator
+  left_join(recid_crabseason,by='Rec_ID')
+trip_duration_key <- vms %>% 
+  distinct(Rec_ID,trip_dur)
+
+```
+
+### Cost of Fishing
+
+To measure cost of fishing, we adopt data from a survey done by Dewees et al. (2004). A survey was conducted of small, medium, and large size-class vessels. We use their mean estimates of annual and daily fishing costs to associate a cost with each trip. Dollar values are adjusted for inflation
+
+There are daily and annual costs associated with vessel ownership. We look at both.
+
+```{r}
+# daily costs function
+# to make a smooth function, take means and SD from Dewees et al and sample, then fit a line
+# in the sample, use min and max values from our dataset on vessel lengths
+daily_cost_sim <- function(x){
+  if(x<30) cost<-(rnorm(1,57,63)+rnorm(1,41,44)+rnorm(1,40,54))
+  if(x>=30&x<=50) cost<-rnorm(1,155,233)+rnorm(1,68,137)+rnorm(1,41,52)
+  if(x>50) cost<-rnorm(1,226,163)+rnorm(1,150,83)+rnorm(1,62,29)
+  # bait, fuel, and other
+  max(cost,0)
+}
+
+# also include debit for crew share (so these are costs to captain)
+crew_share_sim <- function(x){
+  if(x<30) share<-(rnorm(1,0.15,0.1))
+  if(x>=30&x<=50) share<-rnorm(1,0.24,0.11)
+  if(x>50) share<-rnorm(1,0.31,0.10)
+  max(0,share)
+}
+cost_sim <- tibble(vessel_length=runif(10000,21,103)) %>% 
+  mutate(daily_cost= purrr::map_dbl(vessel_length,daily_cost_sim),
+         crew_share=purrr::map_dbl(vessel_length,crew_share_sim))
+
+library(ggpubr)
+cost_sim %>% ggplot(aes(vessel_length,daily_cost))+
+  geom_point(size=0.5)+geom_smooth(method='lm')+
+  stat_regline_equation()+
+  labs(x="Vessel Length",y="Daily Cost",title="Daily Cost Simulation")
+cost_sim %>% ggplot(aes(vessel_length,crew_share))+
+  geom_point(size=0.5)+geom_smooth(method='lm')+
+  stat_regline_equation()+
+  labs(x="Vessel Length",y="Crew Share",title="Daily Cost Simulation, Crew Share")
+
+# pull out the equation of the line
+# assume 2% inflation/year
+daily_cost_fx <- function(vessel_size,num_days,trip_rev,trip_yr){
+  cost_daily<-(154.33+3.45*vessel_size)*num_days*1.02^(trip_yr-2004)
+  crew_share <- (0.16+0.0019*vessel_size)*trip_rev
+  cost_daily+crew_share
+}
+```
+
+### Preseason Abundance Captured by Week
+
+```{r}
+# group all of CA
+abun %<>% mutate(agency_code=case_when(
+  area %in% c('Central CA','North CA') ~ "C",
+  area == "OR" ~ "O",
+  area == "WA" ~ "W"
+)) %>% 
+  mutate(lagseason=season-1) %>% 
+  mutate(crab_season=paste(lagseason,season,sep="-")) %>% 
+  group_by(agency_code,crab_season) %>% 
+  summarise(mean_preseason_abun=sum(mean_est_thousands_mt)) %>% 
+  ungroup()
+
+```
+
+### Calculate Performance Metrics
+
+```{r}
+# organize fish tickets by group and calculate metrics like cpue, trip length
+fishtix_plus <- fishtix %>%
+  # add information about how long each trip is
+  left_join(trip_duration_key) %>% 
+  ungroup() %>% 
+  # dplyr::select only fish tickets that have associated vms information
+  left_join(vms_tickets) %>% filter(has_vms==1) %>% dplyr::select(-has_vms) %>% 
+  distinct(date,drvid,crab_season,agency_code,Rec_ID,DCRB_revenue,DCRB_lbs,trip_dur) %>%
+  # join cluster group/partition information
+  left_join(drvid_group_key) %>% 
+  filter(!is.na(partition)) %>%
+  
+  # calculate weeks of the season
+  group_by(agency_code,crab_season) %>%
+  mutate(firstdate=min(date)) %>% 
+  mutate(timediff=firstdate%--%date) %>% 
+  mutate(week=time_length(timediff,'weeks')) %>% 
+  mutate(week=floor(week)) %>% 
+  dplyr::select(-timediff) %>%
+  ungroup() %>%
+  
+  # calculate total landings in each state and week
+  group_by(agency_code,crab_season,week) %>% 
+  mutate(landings_state_week=sum(DCRB_lbs,na.rm=T)) %>% 
+  ungroup() %>% 
+  
+  # calculate cumulative landings by state
+  group_by(agency_code,crab_season) %>% 
+  arrange(date) %>% 
+  mutate(cumulative_landings=cumsum(DCRB_lbs),cumulative_landings_thousand_mt=cumulative_landings/1000/2204.63) %>% 
+  #join Richersen's abundance data
+  left_join(abun) %>% 
+  # calculate the remaining biomass in each state by subtracting landings from preseason abundance
+  mutate(thousand_mt_remaining=mean_preseason_abun-cumulative_landings_thousand_mt) %>% 
+  # calculate the proportion remaining of the original biomass
+  mutate(prop_remaining=thousand_mt_remaining/mean_preseason_abun) %>% 
+  mutate(prop_remaining=pmax(0,prop_remaining)) %>% 
+  filter(!is.na(prop_remaining)) %>% 
+  ungroup() %>% 
+  
+  # cpue is lbs caught divided by days fished
+  mutate(cpue=DCRB_lbs/trip_dur) %>% 
+
+  # using the cost simulation above, calculate the cost and profit estimated for each trip
+  # add trip duration and cost to each ticket
+  left_join(vessel_sizes) %>% 
+  mutate(trip_year=year(date)) %>% 
+  mutate(trip_cost=daily_cost_fx(vessel_size,trip_dur,DCRB_revenue,trip_year)) %>% 
+  mutate(trip_profit=DCRB_revenue-trip_cost)
+```
+
+```{r}
+# Graph of the distribution of trip-level profit by behavioral group
+fishtix_plus %>% 
+  ggplot(aes(trip_profit,fill=partition))+
+  geom_density(alpha=0.5)+
+  labs(x="Profit",y='density',fill='Group',title="Per Trip Profit Distribution by Behavioral Group")+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+
+# number of vessels in each group in each year
+nvessels_group<-fishtix_plus %>% group_by(agency_code,crab_season,partition) %>%
+  summarise(n_vessels=n_distinct(drvid))
+
+# calculate percent capture by group and week
+# show weeks of season coastwide
+capture_by_group_week <- fishtix_plus %>%
+  #calculate weekly capture
+  ungroup() %>% 
+  group_by(crab_season,agency_code,partition,week) %>%
+  # average pounds and profits captured by vessels in each group in each week
+  summarise(capture_group_week=mean(DCRB_lbs,na.rm=T),
+            cpue=mean(cpue,na.rm=T),
+            mean_revenue_group=mean(DCRB_revenue),
+            mean_cost_group=mean(trip_cost),
+            mean_profit_group=mean(trip_profit,na.rm=T),
+            prop_remaining=first(prop_remaining,order_by = date),
+            thousand_mt_remaining=first(thousand_mt_remaining,order_by=date)) %>%
+  ungroup() %>% 
+  group_by(crab_season,agency_code,partition) %>% 
+  arrange(crab_season,agency_code,partition,week) %>% 
+  # cumulative (season-to-date) pounds captured by group
+  mutate(cumulative_capture_group=cumsum(capture_group_week)) %>% 
+  # cumulative capture relative to each group's eventual, season-long capture
+  mutate(cumulative_prop_capture_withingroup=cumulative_capture_group/last(cumulative_capture_group)) %>% 
+  # cumulative profit by group across the course of the season
+  mutate(cumulative_mean_profit=cumsum(mean_profit_group),
+         marginal_profit=cumulative_mean_profit-lag(cumulative_mean_profit,1)) %>%
+  # ratio of trip revenue to trip cost across group
+  mutate(cost_ratio=mean_revenue_group/mean_cost_group) %>% 
+  ungroup() %>% 
+  # proportional capture by each group in that week, relative to remaining total for that state
+  mutate(proportional_capture_group_week=capture_group_week/(thousand_mt_remaining*1000*2204.64)) %>% 
+  ungroup() %>% 
+  distinct()
+```
+
+### Landings and Profits by Group
+
+```{r}
+# Plot weekly landings by group and state
+landings_group_week <- capture_by_group_week %>%
+  ggplot(aes(week,capture_group_week,color=partition))+
+  # geom_point(size=0.5,alpha=0.5)+
+  # geom_smooth(se=F)+
+  geom_line(size=0.5)+
+  facet_grid(agency_code~crab_season,scales="free_y")+
+  labs(x="Week of Season",y="Weekly Landings per Vessel",col="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+ggsave(here('fishing behavior','landings_by_season_group.png'),landings_group_week,h=8,w=12)
+
+# Plot weekly cpue by group and state
+cpue_group_week <- capture_by_group_week %>%
+  ggplot(aes(week,cpue,color=partition))+
+  # geom_point(size=0.5,alpha=0.5)+
+  # geom_smooth(se=F)+
+  geom_line(size=0.5)+
+  facet_grid(agency_code~crab_season,scales="free_y")+
+  labs(x="Week of Season",y="CPUE (lbs per day)",col="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+cpue_group_week
+ggsave(here('fishing behavior','cpue_by_season_group.png'),cpue_group_week,h=8,w=12)
+
+# Plot weekly cumulative capture for a sample season
+prop_capture_group_week <- capture_by_group_week %>%
+  ggplot(aes(week,cumulative_prop_capture_withingroup,color=partition))+
+  geom_line(size=0.5)+
+  facet_grid(agency_code~crab_season,scales="free_y")+
+  labs(x="Week of Season",y="Cumulative Proportion Captured\nper Vessel",title="Cumulative Capture by Group, 2013-2014)",col="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+ggsave(here('fishing behavior','cumulative_prop_capture_season_group.png'),prop_capture_group_week,h=8,w=12)
+
+# cumulative profit per vessel
+cumulative_profit_week <- capture_by_group_week %>% 
+  ggplot(aes(week,cumulative_mean_profit,col=partition))+
+  geom_line(size=0.5)+
+  facet_grid(agency_code~crab_season,scales="free_y")+
+  labs(x="Week of Season",y="Cumulative Profit\nper Vessel",col="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+cumulative_profit_week
+ggsave(here('fishing behavior','cumulative_profit_by_season_group.png'),cumulative_profit_week,h=8,w=12)
+
+# marginal profit per vessel
+marginal_profit_week <- capture_by_group_week %>% 
+  ggplot(aes(week,marginal_profit,col=partition))+
+  geom_line(size=0.5)+
+  facet_grid(agency_code~crab_season,scales="free_y")+
+  labs(x="Week of Season",y="Marginal Profit\nper Vessel",col="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+marginal_profit_week
+ggsave(here('fishing behavior','marginal_profit_by_season_group.png'),marginal_profit_week,h=8,w=12)
+
+```
+```{r}
+# # time series of profit by week
+# profit_by_week %>%
+#   ggplot(aes(week,mean_profit_group,color=partition))+
+#   geom_point(size=0.5,alpha=0.5)+
+#   geom_smooth(se=F)+
+#   facet_wrap(~agency_code)+
+#   labs(x="Week of Season",y="Mean Weekly Profit",col="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+# 
+# # profit versus proportion resource remaining
+# profit_by_week %>% 
+#   ggplot(aes(prop_remaining,mean_profit_group,col=partition))+
+#   geom_point(size=0.5)+
+#   geom_smooth(se=F)+
+#   facet_wrap(~agency_code)+
+#   labs(x="Relative Abundance",y="Mean Weekly Profit",col="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+# 
+# # CPUE versus profit
+# profit_by_week %>% 
+#   ggplot(aes(cpue,mean_profit_group,col=partition))+
+#   geom_point(size=0.5)+
+#   geom_smooth(se=F)+
+#   facet_wrap(~agency_code)+
+#   labs(x="CPUE (lbs per day)",y="Mean Weekly Profit",col="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+# 
+# # cost ratio versus proportion resource remaining
+# profit_by_week %>% 
+#   ggplot(aes(prop_remaining,cost_ratio,col=partition))+
+#   geom_point(size=0.5)+
+#   geom_smooth(se=F)+
+#   facet_wrap(~agency_code)+
+#   labs(x="Relative Abundance",y="Mean Weekly Cost Ratio",col="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+
+# CPUE versus cost ratio
+# profit_by_week %>% 
+#   ggplot(aes(cpue,cost_ratio,col=partition))+
+#   geom_point(size=0.5)+
+#   geom_smooth(se=F)+
+#   facet_wrap(~agency_code)+
+#   labs(x="CPUE (Landings per Trip)",y="Mean Weekly Cost Ratio",col="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+
+# mean profit by week of season
+capture_by_week_allyrs <- capture_by_group_week %>% 
+  group_by(agency_code,partition,week) %>% 
+  summarise(mean_profit_week_allyrs=mean(mean_profit_group),
+            sd_profit_week_allyrs=sd(mean_profit_group),
+            marginal_profit_week_allyrs=mean(marginal_profit),
+            mean_costratio_week_allyrs=mean(cost_ratio))
+
+capture_by_week_allyrs %>% 
+  ggplot(aes(week,mean_profit_week_allyrs,col=partition))+
+  geom_point()+
+  # geom_pointrange(aes(ymin=lower,ymax=upper,),size=0.25)+
+  geom_line()+
+  facet_wrap(~agency_code)+
+  labs(x="Week of Season",y="Mean Weekly Profit",col="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+
+capture_by_week_allyrs %>% 
+  ggplot(aes(week,marginal_profit_week_allyrs,col=partition))+
+  geom_point()+
+  # geom_pointrange(aes(ymin=lower,ymax=upper,),size=0.25)+
+  geom_line()+
+  geom_hline(yintercept=0)+
+  facet_wrap(~agency_code)+
+  labs(x="Week of Season",y="Mean Marginal Profit",col="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+
+# mean cost/revenue ratio
+capture_by_week_allyrs %>% 
+  ggplot(aes(week,mean_costratio_week_allyrs,col=partition))+
+  geom_point()+
+  # geom_pointrange(aes(ymin=lower,ymax=upper,),size=0.25)+
+  geom_line()+
+  facet_wrap(~agency_code)+
+  geom_hline(yintercept=1)+
+  labs(x="Week of Season",y="Revenue/Cost Ratio",col="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+```
+
+Group all states' data
+
+```{r}
+metrics_by_partition_week<-fishtix_plus %>%
+  #calculate weekly capture
+  ungroup() %>% 
+  group_by(crab_season,partition,week) %>% 
+  summarise(n_tix=n_distinct(Rec_ID),
+            n_vessels=n_distinct(drvid),
+            mean_prop_remaining=mean(prop_remaining,na.rm=T),
+            mean_catch=mean(DCRB_lbs,na.rm=T),
+            mean_cpue=mean(cpue,na.rm=T),
+            log_mean_cpue=log(mean(cpue,na.rm=T)),
+            mean_trip_dur=mean(trip_dur,na.rm=T),
+            mean_revenue_group=mean(DCRB_revenue),
+            mean_cost_group=mean(trip_cost),
+            mean_profit_group=mean(trip_profit,na.rm=T),
+            mean_costratio_group=mean(DCRB_revenue,na.rm=T)/mean(trip_cost,na.rm=T),
+            mean_relative_abun=mean(prop_remaining)) %>% 
+  ungroup() %>% 
+  group_by(crab_season,partition) %>% 
+  arrange(week) %>% 
+  # cumulative profit by group across the course of the season
+  mutate(cumulative_mean_profit=cumsum(mean_profit_group),
+         cumulative_revenue=cumsum(mean_revenue_group)) %>% 
+  mutate(marginal_profit=cumulative_mean_profit-lag(cumulative_mean_profit,1),
+         marginal_revenue=cumulative_revenue-lag(cumulative_revenue,1)) %>% 
+  ungroup()
+
+# Prop remaining vs. CPUE
+metrics_by_partition_week %>% 
+  ggplot(aes(mean_prop_remaining,mean_cpue,col=partition,fill=partition))+
+  geom_point(size=0.5)+
+  geom_smooth()+
+  # geom_pointrange(aes(ymin=lower,ymax=upper,),size=0.25)+
+  labs(x="Proportion Resource Remaining",y="CPUE (lbs per day)",col="Group",fill="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+
+# Mean Revenue
+metrics_by_partition_week %>% 
+  ggplot(aes(week,mean_revenue_group,col=partition,fill=partition))+
+  geom_point(size=0.5)+
+  geom_smooth()+
+  # geom_pointrange(aes(ymin=lower,ymax=upper,),size=0.25)+
+  labs(x="Week of Season",y="Revenue",col="Group",fill="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+# Mean Cost
+metrics_by_partition_week %>% 
+  ggplot(aes(week,mean_cost_group,col=partition,fill=partition))+
+  geom_point(size=0.5)+
+  geom_smooth()+
+  # geom_pointrange(aes(ymin=lower,ymax=upper,),size=0.25)+
+  labs(x="Week of Season",y="Cost",col="Group",fill="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+
+# Mean profit
+metrics_by_partition_week %>% 
+  ggplot(aes(week,mean_profit_group,col=partition,fill=partition))+
+  geom_point(size=0.5)+
+  geom_smooth()+
+  ylim(NA,40000)+
+  # geom_pointrange(aes(ymin=lower,ymax=upper,),size=0.25)+
+  labs(x="Week of Season",y="Profit",col="Group",fill="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+
+# Ratio of revenue to cost
+metrics_by_partition_week %>% 
+  ggplot(aes(week,mean_costratio_group,col=partition,fill=partition))+
+  geom_point(size=0.5)+
+  geom_smooth()+
+  # geom_pointrange(aes(ymin=lower,ymax=upper,),size=0.25)+
+  geom_hline(yintercept=1)+
+  labs(x="Week of Season",y="Revenue/Cost Ratio",col="Group",fill="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+
+# CPUE versus week
+metrics_by_partition_week %>%
+  ggplot(aes(week,mean_cpue,col=partition,fill=partition))+
+  geom_point(size=0.5)+
+  geom_smooth()+
+  # geom_pointrange(aes(ymin=lower,ymax=upper,),size=0.25)+
+  labs(x="Week",y="CPUE (lbs per day)",col="Group",fill="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+
+# Mean profit versus log cpue
+metrics_by_partition_week %>% 
+  filter(n_tix>5) %>% 
+  ggplot(aes(log_mean_cpue,mean_profit_group,col=partition,fill=partition))+
+  geom_point(size=0.5)+
+  geom_smooth()+
+  # geom_pointrange(aes(ymin=lower,ymax=upper,),size=0.25)+
+  labs(x="Log (CPUE)",y="Profit",col="Group",fill="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+
+# Cumulative profit
+metrics_by_partition_week %>%
+  ggplot(aes(week,cumulative_mean_profit,col=partition,fill=partition))+
+  geom_point(size=0.5)+
+  geom_smooth()+
+  # geom_pointrange(aes(ymin=lower,ymax=upper,),size=0.25)+
+  labs(x="Week of Season",y="Cumulative Profit",col="Group",fill="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+
+# Marginal profit
+metrics_by_partition_week %>%
+  ggplot(aes(week,marginal_profit,col=partition,fill=partition))+
+  geom_point(size=0.5)+
+  geom_smooth()+
+  # geom_pointrange(aes(ymin=lower,ymax=upper,),size=0.25)+
+  labs(x="Week of Season",y="Marginal Profit",col="Group",fill="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+
+```
 
 ### Per-trip Revenue and Landings
 
-```{r}
-dat_rev <- dat_clustered %>% select(drvid,crab_season,partition) %>%
-  left_join(select(dat,drvid,crab_season,contains('revenue_'),contains('landings_'))) %>% 
-  select(-landings_diversity) %>% 
-  ungroup()
-glimpse(dat_rev)
+Here is how average and variance in revenue, landings, and estimated profits have changed over time for each behavioral group
 
+```{r}
+dat_rev <- fishtix_plus %>% group_by(crab_season,partition) %>%
+  summarise(rev_per_trip=mean(DCRB_revenue,na.rm=T),
+            rev_sd=sd(DCRB_revenue,na.rm=T),
+            land_per_trip=mean(DCRB_lbs,na.rm=T),
+            land_sd=sd(DCRB_lbs,na.rm=T),
+            profit_per_trip=mean(trip_profit,na.rm=T),
+            profit_sd=sd(trip_profit,na.rm=T))
 dat_rev %>% 
-  group_by(crab_season,partition) %>% 
-  summarise(rev_per_trip=mean(revenue_mean,na.rm=T)) %>% 
-  ungroup() %>% 
   ggplot(aes(crab_season,rev_per_trip,group=factor(partition),color=factor(partition)))+
   geom_line(size=2)+
   labs(x="Crab Season",y="Revenue per Trip",title="Per-trip Revenue by Behavior Class and Year",color="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
-```
 
-What about variance in per-trip revenue?
-
-```{r}
+# revenue variance
 dat_rev %>% 
-  group_by(crab_season,partition) %>% 
-  summarise(rev_sd=mean(revenue_sd,na.rm=T)) %>% 
-  ungroup() %>% 
   ggplot(aes(crab_season,rev_sd,group=factor(partition),color=factor(partition)))+
   geom_line(size=2)+
-  labs(x="Crab Season",y="Mean SD of Revenue per Trip",title="Per-trip Standard Deviation of Revenue by Behavior Class and Year",color="Group")+
+  labs(x="Crab Season",y="SD of Revenue per Trip",title="Per-trip Standard Deviation of Revenue by Behavior Class and Year",color="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
-```
 
-And the above two plots, but for landings instead of revenue
-
-```{r}
+# Mean landings
 dat_rev %>% 
-  group_by(crab_season,partition) %>% 
-  summarise(land_per_trip=mean(landings_mean,na.rm=T)) %>% 
-  ungroup() %>% 
   ggplot(aes(crab_season,land_per_trip,group=factor(partition),color=factor(partition)))+
   geom_line(size=2)+
   labs(x="Crab Season",y="Landings (lbs) per Trip",title="Per-trip Landings by Behavior Class and Year",color="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
+
+# SD landings
 dat_rev %>% 
-  group_by(crab_season,partition) %>% 
-  summarise(rev_sd=mean(revenue_sd,na.rm=T)) %>% 
-  ungroup() %>% 
-  ggplot(aes(crab_season,rev_sd,group=factor(partition),color=factor(partition)))+
+  ggplot(aes(crab_season,land_sd,group=factor(partition),color=factor(partition)))+
   geom_line(size=2)+
-  labs(x="Crab Season",y="Mean SD of Landings (lbs) per Trip",title="Per-trip Standard Deviation of Landings by Behavior Class and Year",color="Group")+
+  labs(x="Crab Season",y="SD of Landings (lbs) per Trip",title="Per-trip Standard Deviation of Landings by Behavior Class and Year",color="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        legend.position = 'bottom')
+
+# Mean profits per trip
+dat_rev %>% 
+  ggplot(aes(crab_season,profit_per_trip,group=factor(partition),color=factor(partition)))+
+  geom_line(size=2)+
+  labs(x="Crab Season",y="Estimated Profit per Trip",title="Per-trip Profit by Behavior Class and Year",color="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        legend.position = 'bottom')
+
+# SD profits per trip
+dat_rev %>% 
+  ggplot(aes(crab_season,profit_sd,group=factor(partition),color=factor(partition)))+
+  geom_line(size=2)+
+  labs(x="Crab Season",y="SD Profit per Trip",title="Per-trip Standard Deviation of Profit by Behavior Class and Year",color="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
 ```
+
+For these plots, the standard deviation is greater than the means, partly because of the exponential-like decline in landings and profits as each season progresses.
 
 ### Season-long Revenue and Landings
   
 Finally, what about total revenue gained from the Dungeness fishery over the course of the entire season? Remember that especially Group 3 vessels have short, derby seasons.
 
 ```{r}
-fishtix <- read_rds(here::here('data','processed','fish tickets','fish_tickets_w_dayofseason.rds'))
-
-total_rev_landings_season <- fishtix %>%
-  filter(drvid %in% dat_clustered$drvid) %>% 
-  distinct(drvid,crab_season,Rec_ID,DCRB_revenue,DCRB_lbs) %>% 
-  group_by(drvid,crab_season) %>% 
-  summarise(total_rev=sum(DCRB_revenue,na.rm=T),total_land=sum(DCRB_lbs,na.rm=T)) %>% 
-  ungroup() %>% 
-  right_join(dat_rev)
+total_rev_landings_season <- fishtix_plus %>%
+  distinct(drvid,crab_season,Rec_ID,DCRB_revenue,DCRB_lbs,trip_profit,partition) %>% 
+  group_by(drvid,crab_season,partition) %>% 
+  summarise(total_rev=sum(DCRB_revenue,na.rm=T),total_land=sum(DCRB_lbs,na.rm=T),
+            total_profit=sum(trip_profit,na.rm=T)) %>% 
+  ungroup()
 
 total_rev_landings_season %>%
   group_by(crab_season,partition) %>% 
@@ -537,12 +1029,392 @@ total_rev_landings_season %>%
   group_by(crab_season,partition) %>% 
   summarise(land_tot=mean(total_land,na.rm=T)) %>% 
   ungroup() %>% 
-  ggplot(aes(crab_season,land_tot,group=factor(partition),color=factor(partition)))+
+  ggplot(aes(crab_season,land_tot/2204.64,group=factor(partition),color=factor(partition)))+
   geom_line(size=2)+
-  labs(x="Crab Season",y="Mean Total Season Landings (lbs)",title="Total Landings by Behavior Class and Year",color="Group")+
+  labs(x="Crab Season",y="Mean Total Season Landings (MT)",title="Total Landings by Behavior Class and Year",color="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        legend.position = 'bottom')
+
+total_rev_landings_season %>%
+  group_by(crab_season,partition) %>% 
+  summarise(profit_tot=mean(total_profit,na.rm=T)) %>% 
+  ungroup() %>% 
+  ggplot(aes(crab_season,profit_tot,group=factor(partition),color=factor(partition)))+
+  geom_line(size=2)+
+  labs(x="Crab Season",y="Mean Total Season Profit",title="Total Profit by Behavior Class and Year",color="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
 ```
 
 
+```{r}
+# miport Richerson et al.'s preseason abundance estimates
+# abun <- read_csv(here::here('fishing behavior','crab_model_results_2020422.csv'))
+# 
+# # need to adjust abundance by proportional VMS representation
+# # vms_rep <- read_rds(here('fishing behavior','vms_proportional_landings_key.rds'))
+# vms_tickets <- read_rds(here('fishing behavior','fish_tickets_with_vms.rds'))
+# recid_crabseason <- fishtix %>% select(Rec_ID,crab_season) %>% distinct()
+# 
+# # import vms data as well, to pull out trip duration in days
+# vms <- purrr::map_df(2009:2019, function(yr){
+#   read_rds(paste0(here::here('data','processed','matched','filtering',yr),"matched_filtered.rds"))
+# }) %>% 
+#   filter(TARGET_rev=='DCRB') %>% 
+#   # join crab season indicator
+#   left_join(recid_crabseason,by='Rec_ID')
+# trip_duration_key <- vms %>% 
+#   distinct(Rec_ID,trip_dur)
+# 
+# 
+# # group all of CA
+# abun %<>% mutate(agency_code=case_when(
+#   area %in% c('Central CA','North CA') ~ "C",
+#   area == "OR" ~ "O",
+#   area == "WA" ~ "W"
+# )) %>% 
+#   mutate(lagseason=season-1) %>% 
+#   mutate(crab_season=paste(lagseason,season,sep="-")) %>% 
+#   group_by(agency_code,crab_season) %>% 
+#   summarise(mean_preseason_abun=sum(mean_est_thousands_mt)) %>% 
+#   ungroup()
+# 
+# # from the fish tickets, find weekly cumulative landings of D. crab by state
+# # then estimate remaining crabs by including preseason abundance information
+# weekly_landings <- fishtix %>% 
+#   filter(ticket_day_of_season>=0) %>% 
+#   group_by(agency_code,crab_season) %>% 
+#   mutate(firstdate=min(date)) %>% 
+#   mutate(timediff=firstdate%--%date) %>% 
+#   mutate(week=time_length(timediff,'weeks')) %>% 
+#   mutate(week=floor(week)) %>% 
+#   select(-timediff) %>%
+#   ungroup() %>% 
+#   group_by(agency_code,crab_season,week) %>% 
+#   summarise(landings_state_week=sum(DCRB_lbs,na.rm=T)) %>% 
+#   ungroup() %>% 
+#   group_by(agency_code,crab_season) %>% 
+#   mutate(cumulative_landings=cumsum(landings_state_week),cumulative_landings_thousand_mt=cumulative_landings/1000/2204.63) %>% 
+#   #join abundance data
+#   left_join(abun) %>% 
+#   mutate(thousand_mt_remaining=mean_preseason_abun-cumulative_landings_thousand_mt) %>% 
+#   mutate(prop_remaining=thousand_mt_remaining/mean_preseason_abun) %>% 
+#   filter(!is.na(prop_remaining))
+# 
+# # organize landings by group
+# # vessel IDs and crab years in the data
+# # drvid_crabseason_key <- dat_clustered %>% distinct(drvid,crab_season) %>% mutate(in_data=TRUE)
+# fishtix_plus <- fishtix %>%
+#   left_join(trip_duration_key) %>% 
+#   ungroup() %>% 
+#   left_join(vms_tickets) %>% filter(has_vms==1) %>% dplyr::select(-has_vms) %>% 
+#   distinct(date,drvid,crab_season,agency_code,Rec_ID,DCRB_revenue,DCRB_lbs,trip_dur) %>%
+#   # join cluster group/partition information
+#   left_join(dat_rev %>% select(drvid,crab_season,partition)) %>% 
+#   filter(!is.na(partition)) %>% 
+#   group_by(agency_code,crab_season) %>% 
+#   mutate(firstdate=min(date)) %>% 
+#   mutate(timediff=firstdate%--%date) %>% 
+#   mutate(week=time_length(timediff,'weeks')) %>% 
+#   mutate(week=floor(week)) %>% 
+#   select(-timediff) %>%
+#   ungroup() %>% 
+#   left_join(weekly_landings) %>% 
+#   # cpue is lbs caught divided by days fished
+#   mutate(cpue=DCRB_lbs/trip_dur)
+# 
+# # number of vessels in each group in each year
+# nvessels_group<-fishtix_plus %>% group_by(agency_code,crab_season,partition) %>% summarise(n_vessels=n_distinct(drvid))
+# 
+# # calculate percent capture by group and week
+# # show weeks of season coastwide
+# capture_by_group_week <- fishtix_plus %>%
+#   #calculate weekly capture
+#   ungroup() %>% 
+#   group_by(crab_season,agency_code,partition,week,prop_remaining,thousand_mt_remaining) %>% 
+#   # total pounds captured by each group in each week
+#   summarise(capture_group_week=sum(DCRB_lbs),cpue=mean(cpue,na.rm=T)) %>%
+#   ungroup() %>% 
+#   group_by(crab_season,agency_code,partition) %>% 
+#   # cumulative (season-to-date) pounds captured by group
+#   mutate(cumulative_capture_group=cumsum(capture_group_week)) %>% 
+#   # cumulative capture relative to each group's eventual, season-long capture
+#   mutate(cumulative_prop_capture_withingroup=cumulative_capture_group/last(cumulative_capture_group)) %>% 
+#   ungroup() %>% 
+#   # proportional capture by each group in that week, relative to remaining total
+#   mutate(proportional_capture_group_week=capture_group_week/(thousand_mt_remaining*1000*2204.64)) %>% 
+#   ungroup()
+```
+
+```{r}
+# Plot weekly cumulative capture for a sample season
+# capture_by_group_week %>%
+#   filter(crab_season=="2013-2014") %>%
+#   ggplot(aes(week,cumulative_prop_capture_withingroup,color=partition))+
+#   geom_line(size=2)+
+#   facet_wrap(~agency_code)+
+#   labs(x="Week of Season",y="Cumulative Proportion Captured",title="Cumulative Capture by Group, 2013-2014)",col="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+# # Plot weekly cpue by group
+# capture_by_group_week %>%
+#   ggplot(aes(week,capture_group_week,color=partition))+
+#   geom_point(size=0.5,alpha=0.5)+
+#   geom_smooth(se=F)+
+#   facet_wrap(~agency_code)+
+#   labs(x="Week of Season",y="Weekly Landings",col="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+# # Plot weekly cpue by group
+# capture_by_group_week %>%
+#   ggplot(aes(week,cpue,color=partition))+
+#   geom_point(size=0.5,alpha=0.5)+
+#   geom_smooth(se=F)+
+#   facet_wrap(~agency_code)+
+#   labs(x="Week of Season",y="CPUE (lbs per day)",col="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+```
+
+```{r}
+#Relationship between relative proportion of crabs remaining and total catch, as well as CPUE.
+
+# capture_by_group_week %>% 
+#   ggplot(aes(prop_remaining,capture_group_week/2204.64,col=partition))+
+#   geom_point(size=0.5)+
+#   geom_smooth(se=F)+
+#   facet_wrap(~agency_code)+
+#   labs(x="Relative Abundance",y="Weekly Landings (MT)",col="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+# 
+# capture_by_group_week %>% 
+#   ggplot(aes(prop_remaining,cpue,col=partition))+
+#   geom_point(size=0.5)+
+#   geom_smooth(se=F)+
+#   facet_wrap(~agency_code)+
+#   labs(x="Relative Abundance",y="CPUE (Landings per ticket)",col="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+# 
+# # relationship between relative abundance and proportional take by each group
+# capture_by_group_week %>%
+#   ggplot(aes(prop_remaining,proportional_capture_group_week,col=partition))+
+#   geom_point(size=0.5)+
+#   geom_smooth(se=F)+
+#   facet_wrap(~agency_code)+
+#   ylim(NA,0.15)+
+#   labs(x="Relative Abundance",y="Weekly Proportion Taken",col="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+
+# prop_captured_by_partition <- fishtix_plus %>% 
+#   ungroup() %>% 
+#   left_join(weekly_proportion_captured) %>% 
+#   group_by(crab_season,agency_code,partition,week,tot_week_landings,cpue) %>% 
+#   summarise(prop_captured=sum(DCRB_lbs)/tot_week_landings) %>%  
+#   # add NAs for weeks when some partitions didn't fish
+#   ungroup() %>% 
+#   complete(crab_season,agency_code,week,partition) %>% 
+#   mutate(partition=as.factor(partition)) %>% 
+#   ungroup() %>% 
+#   distinct()
+# 
+# prop_captured_by_partition %>% 
+#   pivot_wider(names_from=partition,values_from=prop_captured) %>% 
+#   na.exclude() %>% 
+#   pivot_longer(any_of(c("1","2","3")),names_to = "partition",values_to = "prop_captured") %>% 
+#   ggplot(aes(tot_week_landings,prop_captured,color=partition))+
+#   geom_point(alpha=0.3,size=0.5)+
+#   geom_smooth(se=F)+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+#   labs(x="Total Weekly Landings",y="Proportion Captured by Group",color="Group")
+# prop_captured_by_partition %>% 
+#   pivot_wider(names_from=partition,values_from=prop_captured) %>% 
+#   na.exclude() %>% 
+#   pivot_longer(any_of(c("1","2","3")),names_to = "partition",values_to = "prop_captured") %>% 
+#   ggplot(aes(cpue,prop_captured,color=partition))+
+#   geom_point(alpha=0.3,size=1)+
+#   geom_smooth(se=F)+
+#   # scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+#   labs(x="Relative Abundance (CPUE)",y="Proportion Captured by Group",color="Group")
+```
+
+
+
+
+## Simple Logistic Regressions
+
+We want to know the chance that a vessel in each group is still fishing, given a certain week of the season and given CPUE
+
+```{r}
+# prepare data for regression
+logit_dat <- fishtix_plus %>% 
+  select(drvid,date,crab_season,partition,week,cpue,DCRB_revenue,DCRB_lbs,thousand_mt_remaining,trip_profit) %>% 
+  # fill in zeroes for weeks not fished by a given vessel
+  complete(nesting(drvid,crab_season,partition),week,fill=list(DCRB_revenue=0,DCRB_lbs=0,trip_profit=0)) %>% 
+  # calculate marginal revenue per vessel
+  group_by(drvid,crab_season) %>% 
+  arrange(date) %>% 
+  mutate(cumulative_revenue_vessel=cumsum(DCRB_revenue)) %>% 
+  mutate(marginal_revenue_vessel=cumulative_revenue_vessel-lag(cumulative_revenue_vessel,1)) %>% 
+  ungroup()
+
+# fill in cpue with group's average cpue for that season and week
+cpue_partition_week <- fishtix_plus %>% 
+  group_by(crab_season,partition,week) %>% 
+  summarise(cpue_group=mean(cpue,na.rm=T)) %>% ungroup()
+
+logit_dat <- logit_dat %>% 
+  left_join(cpue_partition_week) %>% 
+  mutate(cpue=coalesce(cpue,cpue_group)) %>% 
+  select(-cpue_group)%>% 
+  drop_na() %>% 
+  mutate(log_cpue=log(cpue)) %>% 
+  mutate(positive_catch=ifelse(DCRB_lbs>0,1,0),positive_profit=ifelse(trip_profit>0,1,0),
+         negative_profit=ifelse(trip_profit>0,0,1))
+
+# logit_dat <- profit_by_week %>% 
+#   select(partition,week,cpue,capture_group_week,mean_profit_group) %>% 
+#   mutate(positive_catch=ifelse(capture_group_week>0,1,0),positive_profit=ifelse(mean_profit_group>0,1,0))
+
+# cpue versus profit
+# logit_dat %>% 
+#   ggplot(aes(cpue,positive_profit,col=partition))+
+#   geom_point()+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+#   labs(x="CPUE (lbs per day)",y="Profit Greater than Zero")
+# 
+# # week versus profit
+# logit_dat %>% 
+#   ggplot(aes(week,positive_profit,col=partition))+
+#   geom_point()+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+#   labs(x="CPUE (lbs per day)",y="Profit Greater than Zero")
+
+# Do the logit regressions separately for each group of fishers
+# vector of weeks for prediction
+testdat <- tibble(week=seq(1,50,by=1),cpue=seq(1,500,length.out = 50),
+                  log_cpue=seq(4,6,length.out = 50))
+
+graph_logit <- function(dep,ind,group){
+  fitdat <- logit_dat %>% filter(partition==group)
+  fit <- glm(as.formula(paste(dep,ind,sep="~")),family=binomial(link="logit"),data=fitdat)
+  print(summary(fit))
+  print(paste("50% chance at",dep,"=",(log(1)-coef(fit)[1])/coef(fit)[2]))
+  p <- predict(fit,testdat,type="response",se.fit=TRUE)
+  response_title <- gsub("_"," ",dep) %>% tools::toTitleCase()
+  df <- testdat %>% select(ind)%>% 
+    mutate(predicted=p$fit,se=p$se.fit,partition=group) %>% 
+    mutate(upper=predicted+2*se,lower=predicted-2*se)
+  # p <- df %>% mutate(predicted=p) %>% 
+  #   ggplot(aes_string(ind,"predicted"))+
+  #   geom_point()+geom_line()+
+  #   ylim(0,1)+
+  #   geom_hline(yintercept=0.10,linetype=2)+
+  #   labs(x=tools::toTitleCase(ind),y="Probability of Positive Profit",title=paste0("Probability of\n",response_title,", ",group))
+  # print(p)
+  df
+}
+# weeks vs. risk
+p1 <- graph_logit("negative_profit","week","Local") 
+p2 <- graph_logit("negative_profit","week","Rover") 
+p3 <- graph_logit("negative_profit","week","Derby") 
+
+# log cpue vs. risk
+p1cpue <- graph_logit("negative_profit","cpue","Local") 
+p2cpue <- graph_logit("negative_profit","cpue","Rover") 
+p3cpue <- graph_logit("negative_profit","cpue","Derby") 
+
+# cpue vs. risk
+p1logcpue <- graph_logit("negative_profit","log_cpue","Local") 
+p2logcpue <- graph_logit("negative_profit","log_cpue","Rover") 
+p3logcpue <- graph_logit("negative_profit","log_cpue","Derby") 
+
+
+bind_rows(p1,p2,p3) %>% 
+  mutate(partition=factor(partition,levels=c("Local","Rover","Derby"))) %>% 
+  ggplot(aes(week,predicted,ymin=lower,ymax=upper,col=partition))+
+  geom_pointrange(size=0.25)+geom_line()+
+  ylim(0,1)+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  labs(x="Week",y="Risk of Negative Profit",title="Risk by Group",col="Group")
+
+bind_rows(p1cpue,p2cpue,p3cpue) %>% 
+  mutate(partition=factor(partition,levels=c("Local","Rover","Derby"))) %>% 
+  ggplot(aes(cpue,predicted,ymin=lower,ymax=upper,col=partition))+
+  geom_pointrange(size=0.25)+geom_line()+
+  ylim(0,1)+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  labs(x="CPUE (lbs per day)",y="Risk of Negative Profit",title="Risk by Group",col="Group")
+
+bind_rows(p1logcpue,p2logcpue,p3logcpue) %>% 
+  mutate(partition=factor(partition,levels=c("Local","Rover","Derby"))) %>%
+  ggplot(aes(log_cpue,predicted,ymin=lower,ymax=upper,col=partition))+
+  geom_pointrange(size=0.25)+geom_line()+
+  ylim(0,1)+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  labs(x="Log (CPUE)",y="Risk of Negative Profit",title="Risk by Group",col="Group")
+
+# graph_logit("positive_profit","cpue","Local")
+# graph_logit("positive_profit","cpue","Rover")
+# graph_logit("positive_profit","cpue","Derby")
+```
+
+```{r}
+
+## Tilman competition
+
+# What if we take the Tilman-style R* view of these strategies? Under our adaptation of the theory, we would expect the best fishing "strategy" to be that which can efficiently exploit the resource to the lowest level, while maintaining a positive growth rate. In our analogy, growth rate will be marginal revenue, loss rate will be average trip cost, and resource level will be relative crab abundance.
+
+# # overall mean trip cost by group
+# mean_trip_cost <- fishtix_plus %>% 
+#   group_by(partition) %>% 
+#   summarise(mean_cost=mean(trip_cost,na.rm=T)) %>% 
+#   ungroup()
+# 
+# rstar_dat <- logit_dat %>% mutate(cpue_norm=(cpue/max(cpue,na.rm=T)))
+# 
+# rstar_pl <- rstar_dat %>% 
+#   ggplot(aes(cpue_norm,marginal_revenue_vessel,col=partition,fill=partition))+
+#   geom_point(size=0.5)+
+#   geom_smooth()+
+#   labs(x="Normalized CPUE",y="Marginal Revenue",col="Group",fill="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+#   scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+# rstar_pl
+# 
+#   
+# # fit an asymptotic-type curve for each partition relating revenue
+# fit_asymp <- function(group){
+#   fitdat <- rstar_dat %>% filter(partition==group)
+#   fit <- drc::drm(marginal_revenue_vessel ~ cpue_norm, fct = drc::AR.3(),data=fitdat)
+#   print(summary(fit))
+#   
+#   testdat <- tibble(cpue_norm=seq(0,max(rstar_dat$cpue_norm),length.out = 100))
+#   p <- predict(fit,newdat=as.data.frame(testdat),se.fit=TRUE)
+#   
+#   df <- testdat %>% mutate(predicted=p[,1],se=p[,2],upper=predicted+2*se,lower=predicted-2*se,partition=group)
+#   # p <- df %>% mutate(predicted=p) %>% 
+#   #   ggplot(aes_string(ind,"predicted"))+
+#   #   geom_point()+geom_line()+
+#   #   ylim(0,1)+
+#   #   geom_hline(yintercept=0.10,linetype=2)+
+#   #   labs(x=tools::toTitleCase(ind),y="Probability of Positive Profit",title=paste0("Probability of\n",response_title,", ",group))
+#   # print(p)
+#   df
+# }
+# curve1 <- fit_asymp("Local")
+# curve2 <- fit_asymp("Rover")
+# curve3 <- fit_asymp("Derby")
+# 
+# rstar_curves <- bind_rows(curve1,curve2,curve3)%>% 
+#   mutate(partition=factor(partition,levels=c("Local","Rover","Derby")))
+# 
+# rstar_pl <- ggplot()+
+#   geom_line(data=rstar_curves,aes(cpue_norm,predicted,col=partition),size=1)+
+#   geom_linerange(data=rstar_curves,aes(cpue_norm,predicted,ymax=upper,ymin=lower,col=partition),size=0.25)+
+#   geom_hline(data=mean_trip_cost,aes(yintercept=mean_cost,col=partition),linetype=2,size=1)+
+#   labs(x="Relative Crab Abundance",y="Revenue",col="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+# rstar_pl
+# 
+# rstar_pl+
+#   coord_cartesian(xlim=c(0,0.1))
+```

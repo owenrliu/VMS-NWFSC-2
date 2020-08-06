@@ -50,9 +50,11 @@ glimpse(dat[[1]])
 This creates rasters for risk and cost. The option `raster_out` should be one of `humpback`, `blue`, `combined`, or `revenue`. These create rasters for humpback normalized risk, blue normalized risk, combined risk, or DCRB revenue.
 
 ```{r}
-create_risk_cost_rasters <- function(df,raster_out="humpback"){
+create_risk_cost_rasters <- function(df,raster_out="humpback",weight_humpback=0.5){
   
   df %<>% ungroup()
+  
+  weight_blue=1-weight_humpback
   
   # year month
   yr_mth <- unique(df$year_month)
@@ -90,10 +92,9 @@ create_risk_cost_rasters <- function(df,raster_out="humpback"){
     cost <- df %>% 
       select(GRID5KM_ID,n_risk_humpback,n_risk_blue) %>% 
       mutate(n_risk_humpback=replace_na(n_risk_humpback,0),n_risk_blue=replace_na(n_risk_blue,0)) %>% 
-      mutate(risk_both=n_risk_humpback+n_risk_blue) %>%
-      mutate(n_risk_both=risk_both/max(risk_both,na.rm=T))
+      mutate(risk_both=weight_humpback*n_risk_humpback+weight_blue*n_risk_blue)
 
-    grd_out <- subs(grd_base_crop,cost,by="GRID5KM_ID",which="n_risk_both")
+    grd_out <- subs(grd_base_crop,cost,by="GRID5KM_ID",which="risk_both")
   }
   if(raster_out=="revenue"){
     risk <- df %>% 
@@ -131,13 +132,13 @@ write_rds(revenue_r,here::here('test scripts','revenue_rasters.rds'))
 This function runs prioritzr with whale risk as the cost layer and DCRB revenue as the protected feature layer. The option the user must supply is the target revenue protected (default 0.5, or 50% of revenue).
 
 ```{r}
-run_prioritzr <- function(whale_risk,dcrb_revenue,target_revenue=0.5,plot_output=FALSE,return_raster=FALSE){
+run_prioritzr <- function(combined_risk,dcrb_revenue,blue_risk,humpback_risk,target_revenue=0.5,plot_output=FALSE,return_raster=FALSE){
     
   #year month
-  yr_mth <- names(whale_risk)
+  yr_mth <- names(combined_risk)
 
   # conservation problem
-  p <- problem(whale_risk,dcrb_revenue)
+  p <- problem(combined_risk,dcrb_revenue)
   print(p)
   
   # add minimum set objective (minimize cost to meet target)
@@ -156,16 +157,27 @@ run_prioritzr <- function(whale_risk,dcrb_revenue,target_revenue=0.5,plot_output
   
   # organize the outputs
   # "cost" (risk) associated with the solution is formulated by multiplying the solution (ones and zeroes) by the whale risk layer, and then summing across cells
-  s_cost <- cellStats(s*whale_risk,sum)
-  tot_risk <- cellStats(whale_risk,sum)
+  s_cost <- cellStats(s*combined_risk,sum)
+  tot_risk <- cellStats(combined_risk,sum)
   risk_reduction = 1-s_cost/tot_risk
+  
+  # species-specific risk
+  cost_blue <- cellStats(s*blue_risk,sum)
+  tot_risk_blue <- cellStats(blue_risk,sum)
+  blue_risk_reduction <- 1-cost_blue/tot_risk_blue
+  cost_humpback <- cellStats(s*humpback_risk,sum)
+  tot_risk_humpback <- cellStats(humpback_risk,sum)
+  humpback_risk_reduction <- 1-cost_humpback/tot_risk_humpback
   
   # tibble to organize the results
   if(return_raster){
     names(s) <- paste(yr_mth,target_revenue)
     return(s)
   } else{
-    out <- tibble(year_month=yr_mth,target_rev=target_revenue,combined_risk=tot_risk,risk_reduction=risk_reduction)
+    out <- tibble(year_month=yr_mth,target_rev=target_revenue,
+                  combined_risk=tot_risk,combined_risk_reduction=risk_reduction,
+                  tot_risk_blue=tot_risk_blue,blue_risk_reduction=blue_risk_reduction,
+                  tot_risk_humpback=tot_risk_humpback,humpback_risk_reduction=humpback_risk_reduction)
     return(out)    
   }
 }
@@ -175,10 +187,11 @@ run_prioritzr <- function(whale_risk,dcrb_revenue,target_revenue=0.5,plot_output
 Test the output
 
 ```{r,echo=F}
+# test <- run_prioritzr(combined_r[[43]],revenue_r[[43]],blwh_r[[43]],hump_r[[43]])
 
 # Run for all year/months and a range of target revenue
 prioritzr_outputs <- purrr::map_df(seq(0.1,0.95,by=0.05),function(target){
-  purrr::map2_df(combined_r,revenue_r,run_prioritzr,target_revenue=target)
+  purrr::pmap_df(list(combined_r,revenue_r,blwh_r,hump_r),run_prioritzr,target_revenue=target)
 })
 prioritzr_outputs %<>%
   mutate(year=str_sub(year_month,2,5) %>% as.numeric(),month=str_sub(year_month,7,8) %>% as.numeric()) %>%
@@ -193,8 +206,8 @@ write_rds(prioritzr_outputs,here::here('test scripts','prioritzr_outputs_all.rds
 ```{r}
 plot_priotizr_output <- function(yr,mth){
   prioritzr_outputs %>% 
-    filter(year==yr,month==mth) %>% 
-    ggplot(aes(target_rev,risk_reduction))+
+    # filter(year==yr,month==mth) %>% 
+    ggplot(aes(target_rev,risk_reduction,color=month))+
     geom_point()+
     scale_x_continuous(limits=c(0,1))+
     labs(x="Revenue Protected",y="Risk Reduction")

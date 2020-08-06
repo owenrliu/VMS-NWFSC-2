@@ -1,0 +1,35 @@
+---
+title: "GetAIS trial"
+author: "Owen Liu"
+date: "6/22/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Exploring GetAIS package from Eric Ward
+
+```{r}
+library(getais)
+library(tidyverse)
+```
+
+### Set up Query
+
+```{r}
+#find some combos of zone, year, and month that we want
+ais_query <- crossing("zone"=10,year="2013","month"=10:12)
+status_codes_to_keep = c(0, 7, 8, 9, 10, 11, 12, 13, 14, 15)
+```
+
+### Run Query
+
+```{r}
+downsample_ais(df = ais_query, every_minutes = 30,raw=TRUE)
+
+```
+
+
+

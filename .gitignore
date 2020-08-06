@@ -16,6 +16,7 @@
 *.txt
 *.xlsx
 *.zip
+*.gdb
 
 ## spatial data
 *.dbf
