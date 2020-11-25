@@ -1,0 +1,281 @@
+---
+title: "Fish Tickets All Species"
+author: "Owen Liu"
+date: "8/11/2020"
+output: html_document
+---
+
+
+## Purpose
+
+This copies the fish tickets from the main pipeline, but includes all other fisheries (not just trap and pot)
+It also includes running the script for all years, and adding season dates.
+
+## Set Up Workspace
+
+Required packages
+```{r,warning=FALSE,message=FALSE}
+library(tidyverse)
+library(foreign)
+library(qdapTools)
+library(lubridate)
+library(reshape2)
+library(janitor)
+library(here)
+library(magrittr)
+
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+
+# rm(list=setdiff(ls(),c('process_year','alltime')))
+
+```
+
+Choose directories and set objects
+```{r objects}
+## which years of fish tickets are you interested in?
+# process_year = 2017
+
+## which species-specific revenue and lbs columns would you like? (static)
+species_cols <- c("DCRB", "SABL", "LOBS", "SPRW") 
+
+## calculate an "other" category according to a certain gear type? If so, which gear?
+# gear_types <- c("FISH POT","FISH TRAP", "BOTTOMFISH POT", "TRAPS, 
+#                 SEATTLE TYPE (SABLEFISH)", "PRAWN TRAP", "SHELLFISH POT (NON-CRAB)")
+
+## would you like target based on exvessel revenue or landed lbs?
+target_metric <- "revenue"
+
+## how much "more important" does your target need to be than the species with the second greatest catch? Expressed as a ratio. (default: target species catch / landings must be 10% greater than second greatest species catch / landings = 1.1)
+target_cutoff <- 1.1
+
+## do you want to report revenue and lbs for the given target species? (dynamic)
+include_target <- TRUE
+```
+
+Set filtering-related objects[NOT CURRENTLY USED]
+
+*part of the fish ticket processing adds columns to the output which specify the total amount and proportion of lbs / revenue attributed to certain species. all other species will be collapsed into an "other" column. use the following filtering options to select which species to retain. to leave in all species data, select `filter_type` = c("none"). Note that this will not affect which species are used to determine TARGET for each trip.*
+
+```{r filter_params, eval=FALSE}
+# filter_type <- "none"    # choose any combination of "species", "pounds", "revenue" OR just "none"
+# species_filter <- c()     # list species. if none, leave vector empty
+# lbs_cutoff <- NA     # choose cutoff for landed lbs. if none, set as NA
+# revenue_cutoff <- NA     # choose cutoff for exvessel revenue. if none, set as NA
+```
+
+## Read in Data
+
+This should be a .csv file containing raw PacFIN data. We only read in columns that we need.
+
+```{r rawdata}
+
+tixfiles <- list.files(here::here('data','raw','fish tickets'),full.names = T)
+
+rawdat <- purrr::map_df(tixfiles,function(fl){
+  read_csv(fl,col_types= cols_only(
+    FISH_TICKET_ID = col_double(), 
+    PACFIN_PORT_CODE= col_character(), 
+    PACFIN_GROUP_PORT_CODE= col_character(), 
+    VESSEL_NUM= col_character(), 
+    AGENCY_CODE= col_character(), 
+    GEAR_CODE= col_double(),
+    GEAR_NAME= col_character(), 
+    PACFIN_GROUP_GEAR_CODE= col_character(), 
+    REMOVAL_TYPE_CODE= col_character(), 
+    REMOVAL_TYPE_NAME= col_character(), 
+    LANDING_DATE= col_character(),
+    LANDING_MONTH= col_double(), 
+    LANDING_YEAR= col_double(), 
+    PACFIN_SPECIES_CODE= col_character(), 
+    LANDED_WEIGHT_LBS= col_double(), 
+    EXVESSEL_REVENUE= col_double()))
+})
+
+rawdat <- rawdat %>%
+  filter(LANDING_YEAR %in%  2008:2019)
+```
+
+Check to make sure columns were in the correct format for reading. This will return the names of columns with parsing errors.
+```{r}
+problems(rawdat) %>% select(col) %>% distinct()
+# The columns with parsing errors are usually from columns that we do not need anyway
+```
+
+
+## Edit existing columns
+
+First, subset the raw data to include only the columns that are needed. Rename the columns that will be retained in the final processed data. The last three columns are used to calculate per-species / total revenue and landed weight, but will not ultimately be retained.
+
+```{r}
+rawdat.sub <- rawdat %>% select(FISH_TICKET_ID, PACFIN_PORT_CODE, PACFIN_GROUP_PORT_CODE, VESSEL_NUM, AGENCY_CODE, GEAR_CODE, GEAR_NAME, PACFIN_GROUP_GEAR_CODE, REMOVAL_TYPE_CODE, REMOVAL_TYPE_NAME, LANDING_DATE, LANDING_MONTH, LANDING_YEAR, PACFIN_SPECIES_CODE, LANDED_WEIGHT_LBS, EXVESSEL_REVENUE) %>% 
+# change some column names
+  set_colnames(c("Rec_ID","pacfin_port_code", "port_group_code","drvid", "agency_code","gear_code", "gear_name", "gear_group", "removal_type_code", "removal_type_name", "date", "month", "year", 
+                          "PACFIN_SPECIES_CODE", "LANDED_WEIGHT_LBS", "EXVESSEL_REVENUE"))
+```
+
+Remove the columns where the vessel identifier (drvid) is either "UNKNOWN" or blank ("")
+```{r}
+rawdat.sub %<>%
+  filter(drvid != "UNKNOWN") %>%
+  filter(drvid != "")
+```
+
+Adjust gear group codes for some uncategorized gears
+```{r}
+rawdat.sub %<>%
+  mutate(gear_group=case_when(
+    gear_group=='MSC' & gear_name %in% c('SPEAR','DIVING - ABALONE IRON','DIVING - RAKE/HOOKS SEA URCHINS','DIVING', 'SHELLFISH DIVER') ~ 'DVG',
+    gear_group=='MSC' & gear_name %in% c('UNKNOWN','UNKNOWN OR UNSPECIFIED GEAR') ~ 'USP',
+    gear_group=='MSC' & gear_name %in% c('AQUACULTURE FARM','OYSTER FARM','CLAM FARM') ~ 'FRM',
+    TRUE ~ gear_group
+  ))
+```
+
+***
+
+## Concatenate gear / catch information
+
+Concatenate all species information for the fish ticket. 
+```{r}
+all.species <- rawdat.sub %>%
+  group_by(Rec_ID, removal_type_name) %>%
+  summarise(species_code_all = ifelse(length(unique(PACFIN_SPECIES_CODE)) > 1, paste(unique(PACFIN_SPECIES_CODE), collapse="/"), as.character(unique(PACFIN_SPECIES_CODE))))
+```
+
+Concatenate the gear information for the fish ticket
+
+```{r}
+gear.info <- rawdat.sub %>%
+  group_by(Rec_ID, removal_type_name) %>%
+  summarise(gear_name_all = ifelse(length(unique(gear_name)) > 1, paste(unique(gear_name), collapse="/"), as.character(unique(gear_name))),
+            gear_code_all = ifelse(length(unique(gear_name)) > 1, paste(unique(gear_code), collapse="/"), as.character(unique(gear_code))))
+```
+
+***
+
+## Find Target Species
+
+We need to define the target species for each landed ticket. We will do this by finding the species with the greatest landed revenue for each trip.
+Right now, each row of the data is a landing amount for a particular gear/ticket/species combo. We want to collapse these tickets in order to just have one row for each ticket, with an associated amount of landings for the TARGET species.
+
+```{r}
+rawdat.sub %>% count(Rec_ID) %>% 
+  ggplot(aes(n,..count..))+
+  geom_histogram(fill="seagreen",bins=30)+
+  labs(x="Number of records per ticket","kernel density")
+```
+
+Calculate landed pounds and revenue by species for each fish ticket. Then use these data to define proportions of pounds and revenue by species/ticket, in order to designate a "target" species for each fishing trip. We denote the target species for both revenue and pounds landed. If a ticket does not have a definitive target (classified as a proportion of landed pounds or revenue that is >10 percent more than the second-place species), denote "NONE" for the target.
+
+```{r}
+rawdat.w.targets <- rawdat.sub %>% 
+  distinct() %>% 
+  # Group by ticket, removal type, and species
+  group_by(Rec_ID,removal_type_code,removal_type_name,PACFIN_SPECIES_CODE) %>% 
+  
+  # calculate landed pounds and revenue by species
+  summarise(spp_lbs=sum(LANDED_WEIGHT_LBS),
+            spp_revenue=sum(EXVESSEL_REVENUE)) %>% 
+  ungroup() %>% 
+  
+  # now, calculate total pounds per species across the entire ticket
+  group_by(Rec_ID,PACFIN_SPECIES_CODE) %>% 
+  mutate(tot_lbs_spp=sum(spp_lbs),
+         tot_revenue_spp=sum(spp_revenue)) %>% 
+  ungroup() %>% 
+  
+  # using these species totals, calculate proportions of total catch belonging to each species
+  # by lbs landed and revenue
+  group_by(Rec_ID) %>% 
+  mutate(prop_lbs_spp=tot_lbs_spp/sum(tot_lbs_spp),
+         prop_revenue_spp=tot_revenue_spp/sum(tot_revenue_spp)) %>% 
+  
+  # finally, assign a TARGET to the trip, defined as the species with the
+  # LARGEST proportion of revenue for that trip
+  # If a species landed is not >10% more than the second species, target is NONE
+  mutate(first_rev=dplyr::first(prop_revenue_spp,order_by = desc(prop_revenue_spp)),
+         second_rev=dplyr::nth(prop_revenue_spp,n=2,order_by = desc(prop_revenue_spp)),
+         first_rev_spp=dplyr::first(PACFIN_SPECIES_CODE,order_by= desc(prop_revenue_spp)),
+         second_rev_spp=dplyr::nth(PACFIN_SPECIES_CODE,n=2,order_by= desc(prop_revenue_spp)),
+         first_lbs=dplyr::first(prop_lbs_spp,order_by = desc(prop_lbs_spp)),
+         second_lbs=dplyr::nth(prop_lbs_spp,2,order_by = desc(prop_lbs_spp)),
+         first_lbs_spp=dplyr::first(PACFIN_SPECIES_CODE,order_by=desc(prop_lbs_spp)),
+         second_lbs_spp=dplyr::nth(PACFIN_SPECIES_CODE,n=2,order_by= desc(prop_lbs_spp))) %>% 
+  
+  # check if first is >10% more than second, for revenue and landed lbs
+  # or, if first and second species are the same (i.e. for a ticket with both commercial and personal use catch)
+  # if so, assign that species as TARGET
+  
+  mutate(TARGET_rev=ifelse(is.na(first_rev/second_rev)|(first_rev/second_rev)>=target_cutoff|first_rev_spp==second_rev_spp,first_rev_spp,"NONE"),
+         TARGET_lbs=ifelse(is.na(first_lbs/second_lbs)|(first_lbs/second_lbs)>=target_cutoff|first_lbs_spp==second_lbs_spp,first_lbs_spp,"NONE")) %>% 
+  ungroup() %>% 
+  select(-(first_rev:second_lbs_spp))
+
+# Add back in dates, vessel IDs, etc.
+recID_attributes <- rawdat.sub %>% 
+  select(Rec_ID,PACFIN_SPECIES_CODE,pacfin_port_code,port_group_code,gear_code,gear_name,gear_group,drvid,agency_code,date,month,year)
+  
+rawdat.w.targets %<>%
+  left_join(recID_attributes,by=c("Rec_ID","PACFIN_SPECIES_CODE"))
+
+# add all species and gear types for each ticket
+rawdat.w.targets %<>%
+  left_join(all.species) %>% 
+  left_join(gear.info)
+```
+
+NOTE: IN THIS VERSION OF THE FISH TICKETS, WE KEEP IT IN THIS RAW FISH TICKET BY SPECIES FORMAT. THIS MEANS THAT EACH FISH TICKET (`Rec_ID`) CAN HAVE MULTIPLE ENTRIES FOR DIFFERENT SPECIES.
+
+## Format Dates
+
+Change existing date columns to date objects and format.
+
+```{r dates}
+rawdat.w.targets %<>%
+  mutate(date=as.Date(date,"%d-%b-%y")) %>% 
+  mutate(month=lubridate::month(date),
+         month=month.name[month],
+         year_mo=paste(year,lubridate::month(date),sep="_"),
+         jdate=yday(date),
+         year_jdate=paste(year,jdate,sep="_"),
+         Week=week(date),
+         year_Wk=ifelse(Week < 10, paste0(year,"_0",Week), paste0(year,"_",Week))) %>% 
+  distinct()
+```
+
+## Add Day of Season
+
+Using a key compiled in `process steps/post-process`, we add a day-of-crab-season indicator to these tickets.
+
+```{r}
+dos <- read_rds(here::here('data','processed','fish tickets','start_dates_by_port_group.rds'))
+
+fishtix_long <- rawdat.w.targets %>% 
+  # filter for commeri
+  filter(removal_type_code %in% c("C","D")) %>%
+  # add general indicator of crab season
+  mutate(crab_season=case_when(
+    month(date)>10 ~ paste0(year,"-",year+1),
+    month(date)<=10 ~ paste0(year-1,"-",year))) %>% 
+  
+  # Join the one percent landings key
+  left_join(dos) %>%  
+  ungroup() %>% 
+  mutate(ticket_day_of_season=difftime(date,start_of_season_oneperc,units='days')) %>% 
+  mutate(ticket_day_of_season=as.numeric(ticket_day_of_season))
+```
+
+## Save
+
+Save the data! We will call it "long form" tickets, because it includes multiple entries for each ticket, depending on how many species were caught.
+
+```{r save}
+write_rds(fishtix_long,here::here('data','processed','fish tickets','fish_tickets_long_allspecies.rds'))
+```

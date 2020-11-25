@@ -192,3 +192,35 @@ Save a version of the fish tickets with day of season included.
 write_rds(fishtix_dos,here::here('data','processed','fish tickets','fish_tickets_w_dayofseason.rds'))
 ```
 
+## Visualize over years
+
+For California. Compare to "normal" fishing season, which is Nov 15-Jun 30 for the Central region, and Dec1-Jul 15 for the Northern region.
+
+```{r,fig.height=8,fig.width=6}
+d <- read_rds(here::here('data','processed','fish tickets','start_dates_by_CA_region.rds'))
+
+library(ggalt)
+
+d %<>%
+  mutate(yr=str_sub(crab_season,1,4),
+         normal_start=ifelse(CA_region=="cenCA",paste0(yr,"-11-15"),paste0(yr,"-12-01")),
+         normal_start=as_date(normal_start)) %>% 
+  # find difference in days
+  mutate(delay=difftime(start_of_season_oneperc,normal_start,units='days'))
+
+d %<>%
+  mutate(rgn_name=ifelse(CA_region=="cenCA","Central","Northern"),
+         rgn_name=factor(rgn_name,levels=c("Northern","Central")),
+         crab_season=factor(crab_season))
+
+days_delayed <- d %>% 
+  ggplot(aes(x=0,xend=delay,y=crab_season))+
+  scale_y_discrete(limits = rev(levels(d$crab_season)))+
+  geom_dumbbell(size=2,color="#e3e2e1",colour_x = "#5b8124", colour_xend = "#bad744")+
+  labs(x="Days Delayed",y="Crab Season")+
+  facet_wrap(~rgn_name,ncol=1)
+
+ggsave(here::here('data','processed','fish tickets','start_dates_CA_regions.png'),days_delayed,h=8,w=6)
+```
+
+

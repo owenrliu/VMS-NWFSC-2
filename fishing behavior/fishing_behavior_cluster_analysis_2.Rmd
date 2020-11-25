@@ -70,7 +70,7 @@ More specifically, the metrics are as follows for each vessel (`drvid`) in each 
 6.  Participation in other fisheries:
   *  `prop_other_revenue` Proportion of revenue from non-DCRB fisheries
   *  `prop_other_tix` Proportion of all fish tickets form non-DCRB fisheries
-  *  `landings_diversity` Inverse Simpson diversity index of landings by fishery
+  *  `revenue_diversity` Inverse Simpson diversity index of revenue by fishery (species)
 7.  Risk-taking:
   *  `prop_highwinds` Propensity to fish in high winds. Proportion of trips pursued where the 95% quantile of wind speed was greater than 7.5 m/s
 8.  Exploration: 
@@ -153,46 +153,46 @@ We can visualize the results of clustering through a clustering dendrogram. Belo
 library(ggdendro)
 dat_nolabs <- dat_scaled %>% na.omit() %>% select(-(1:2))
 
-# calc distances
-dat.d <- dat_scaled %>% na.omit() %>% select(-(1:2)) %>% get_dist()
-
-# calc clustering
-dat.ward <- dat.d %>% hclust(method="ward.D2")
-
-# ggdendro::ggdendrogram(dat.ward,leaf_labels = F,labels = FALSE)
-
-# Rectangular lines dendrogram
-dend <- as.dendrogram(dat.ward) %>% dendro_data(type = "rectangle")
-
-# figure out colors for segments
-# partitions <- tibble(obs=1:3261,partition=dat_clust$Best.partition)
-# head(dend$segments)
-# test <- dend$segment %>% as_tibble() %>%
-#   mutate(obs=paste(label) %>% as.numeric()) %>% 
-#   left_join(partitions,by=c('obs'))
-test <- dat_clustered %>% group_by(partition) %>% summarise(num_obs=n()) %>% ungroup() %>% mutate(cumobs=cumsum(num_obs))
-
+# # calc distances
+# dat.d <- dat_scaled %>% na.omit() %>% select(-(1:2)) %>% get_dist()
+# 
+# # calc clustering
+# dat.ward <- dat.d %>% hclust(method="ward.D2")
+# 
+# # ggdendro::ggdendrogram(dat.ward,leaf_labels = F,labels = FALSE)
+# 
+# # Rectangular lines dendrogram
+# dend <- as.dendrogram(dat.ward) %>% dendro_data(type = "rectangle")
+# 
+# # figure out colors for segments
+# # partitions <- tibble(obs=1:3261,partition=dat_clust$Best.partition)
+# # head(dend$segments)
+# # test <- dend$segment %>% as_tibble() %>%
+# #   mutate(obs=paste(label) %>% as.numeric()) %>% 
+# #   left_join(partitions,by=c('obs'))
+# test <- dat_clustered %>% group_by(partition) %>% summarise(num_obs=n()) %>% ungroup() %>% mutate(cumobs=cumsum(num_obs))
+# 
+# # segs <- dend$segments %>% as_tibble() %>% 
+# #   mutate(partition=case_when(
+# #     round(xend)<= 272 ~ 1,
+# #     round(xend)>272 & round(xend)<=1877 ~ 2,
+# #     round(xend)>1877 & round(xend)<=2565 ~ 3,
+# #     round(xend)>2565 ~ 4
+# #   ))
 # segs <- dend$segments %>% as_tibble() %>% 
 #   mutate(partition=case_when(
-#     round(xend)<= 272 ~ 1,
-#     round(xend)>272 & round(xend)<=1877 ~ 2,
-#     round(xend)>1877 & round(xend)<=2565 ~ 3,
-#     round(xend)>2565 ~ 4
+#     round(xend)<= 2211 ~ 1,
+#     round(xend)>2211 & round(xend)<=2670 ~ 2,
+#     round(xend)>2670 ~ 3
 #   ))
-segs <- dend$segments %>% as_tibble() %>% 
-  mutate(partition=case_when(
-    round(xend)<= 2211 ~ 1,
-    round(xend)>2211 & round(xend)<=2670 ~ 2,
-    round(xend)>2670 ~ 3
-  ))
-p <- ggplot(segs) + 
-  geom_segment(aes(x = x, y = y, xend = xend, yend = yend,col=factor(partition)))+
-  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4),name="Behavioral Group")+
-  labs(x="",y="",title="Dendrogram of all Data with 3 Behavioral Classes")+
-  theme(axis.text=element_blank(),
-        panel.grid.major = element_blank(),
-        panel.grid.minor=element_blank())
-p
+# p <- ggplot(segs) + 
+#   geom_segment(aes(x = x, y = y, xend = xend, yend = yend,col=factor(partition)))+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4),name="Behavioral Group")+
+#   labs(x="",y="",title="Dendrogram of all Data with 3 Behavioral Classes")+
+#   theme(axis.text=element_blank(),
+#         panel.grid.major = element_blank(),
+#         panel.grid.minor=element_blank())
+# p
 ```
 
 We can also use the same data to perform a principal component analysis to help visualize our clusters.
@@ -581,7 +581,7 @@ fishtix_plus <- fishtix %>%
   ungroup() %>% 
   # dplyr::select only fish tickets that have associated vms information
   left_join(vms_tickets) %>% filter(has_vms==1) %>% dplyr::select(-has_vms) %>% 
-  distinct(date,drvid,crab_season,agency_code,Rec_ID,DCRB_revenue,DCRB_lbs,trip_dur) %>%
+  distinct(date,drvid,crab_season,agency_code,Rec_ID,DCRB_revenue,DCRB_lbs,SABL_revenue,LOBS_revenue,SPRW_revenue,trip_dur) %>%
   # join cluster group/partition information
   left_join(drvid_group_key) %>% 
   filter(!is.na(partition)) %>%
@@ -611,7 +611,7 @@ fishtix_plus <- fishtix %>%
   # calculate the proportion remaining of the original biomass
   mutate(prop_remaining=thousand_mt_remaining/mean_preseason_abun) %>% 
   mutate(prop_remaining=pmax(0,prop_remaining)) %>% 
-  filter(!is.na(prop_remaining)) %>% 
+  # filter(!is.na(prop_remaining)) %>% 
   ungroup() %>% 
   
   # cpue is lbs caught divided by days fished
@@ -940,112 +940,148 @@ Here is how average and variance in revenue, landings, and estimated profits hav
 
 ```{r}
 dat_rev <- fishtix_plus %>% group_by(crab_season,partition) %>%
-  summarise(rev_per_trip=mean(DCRB_revenue,na.rm=T),
+  summarise(n = n(),
+            rev_per_trip=mean(DCRB_revenue,na.rm=T),
             rev_sd=sd(DCRB_revenue,na.rm=T),
+            rev_se=rev_sd/n^0.5,
             land_per_trip=mean(DCRB_lbs,na.rm=T),
             land_sd=sd(DCRB_lbs,na.rm=T),
+            land_se=land_sd/n^0.5,
             profit_per_trip=mean(trip_profit,na.rm=T),
-            profit_sd=sd(trip_profit,na.rm=T))
+            profit_sd=sd(trip_profit,na.rm=T),
+            profit_se=profit_sd/n^0.5,
+            profit_cv=profit_sd/profit_per_trip)
+
+# Per trip revenue +/- 2SE
 dat_rev %>% 
-  ggplot(aes(crab_season,rev_per_trip,group=factor(partition),color=factor(partition)))+
-  geom_line(size=2)+
+  ggplot(aes(crab_season,rev_per_trip,ymin=rev_per_trip-2*rev_se,ymax=rev_per_trip+2*rev_se,group=factor(partition),color=factor(partition)))+
+  geom_line(size=1.5)+geom_linerange(size=1.5)+
   labs(x="Crab Season",y="Revenue per Trip",title="Per-trip Revenue by Behavior Class and Year",color="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
 
 # revenue variance
-dat_rev %>% 
-  ggplot(aes(crab_season,rev_sd,group=factor(partition),color=factor(partition)))+
-  geom_line(size=2)+
-  labs(x="Crab Season",y="SD of Revenue per Trip",title="Per-trip Standard Deviation of Revenue by Behavior Class and Year",color="Group")+
-  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
-  theme(axis.text.x = element_text(angle=90,vjust=0.5),
-        legend.position = 'bottom')
+# dat_rev %>% 
+#   ggplot(aes(crab_season,rev_sd,group=factor(partition),color=factor(partition)))+
+#   geom_line(size=2)+
+#   labs(x="Crab Season",y="SD of Revenue per Trip",title="Per-trip Standard Deviation of Revenue by Behavior Class and Year",color="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+#   theme(axis.text.x = element_text(angle=90,vjust=0.5),
+#         legend.position = 'bottom')
 
-# Mean landings
+# Mean landings +/- 2SE
 dat_rev %>% 
-  ggplot(aes(crab_season,land_per_trip,group=factor(partition),color=factor(partition)))+
-  geom_line(size=2)+
+  ggplot(aes(crab_season,land_per_trip,ymin=land_per_trip-2*land_se,ymax=land_per_trip+2*land_se,group=factor(partition),color=factor(partition)))+
+  geom_line(size=1.5)+geom_linerange(size=1.5)+
   labs(x="Crab Season",y="Landings (lbs) per Trip",title="Per-trip Landings by Behavior Class and Year",color="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
 
 # SD landings
-dat_rev %>% 
-  ggplot(aes(crab_season,land_sd,group=factor(partition),color=factor(partition)))+
-  geom_line(size=2)+
-  labs(x="Crab Season",y="SD of Landings (lbs) per Trip",title="Per-trip Standard Deviation of Landings by Behavior Class and Year",color="Group")+
-  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
-  theme(axis.text.x = element_text(angle=90,vjust=0.5),
-        legend.position = 'bottom')
+# dat_rev %>% 
+#   ggplot(aes(crab_season,land_sd,group=factor(partition),color=factor(partition)))+
+#   geom_line(size=2)+
+#   labs(x="Crab Season",y="SD of Landings (lbs) per Trip",title="Per-trip Standard Deviation of Landings by Behavior Class and Year",color="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+#   theme(axis.text.x = element_text(angle=90,vjust=0.5),
+#         legend.position = 'bottom')
 
 # Mean profits per trip
 dat_rev %>% 
-  ggplot(aes(crab_season,profit_per_trip,group=factor(partition),color=factor(partition)))+
-  geom_line(size=2)+
+  ggplot(aes(crab_season,profit_per_trip,ymin=profit_per_trip-2*profit_se,ymax=profit_per_trip+2*profit_se,group=factor(partition),color=factor(partition)))+
+  geom_line(size=1.5)+geom_linerange(size=1.5)+
   labs(x="Crab Season",y="Estimated Profit per Trip",title="Per-trip Profit by Behavior Class and Year",color="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
 
 # SD profits per trip
-dat_rev %>% 
-  ggplot(aes(crab_season,profit_sd,group=factor(partition),color=factor(partition)))+
-  geom_line(size=2)+
-  labs(x="Crab Season",y="SD Profit per Trip",title="Per-trip Standard Deviation of Profit by Behavior Class and Year",color="Group")+
-  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
-  theme(axis.text.x = element_text(angle=90,vjust=0.5),
-        legend.position = 'bottom')
+# dat_rev %>% 
+#   ggplot(aes(crab_season,profit_sd,group=factor(partition),color=factor(partition)))+
+#   geom_line(size=2)+
+#   labs(x="Crab Season",y="SD Profit per Trip",title="Per-trip Standard Deviation of Profit by Behavior Class and Year",color="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+#   theme(axis.text.x = element_text(angle=90,vjust=0.5),
+#         legend.position = 'bottom')
+
+# CV profit per trip
+# dat_rev %>% 
+#   filter(profit_cv<5) %>% 
+#   ggplot(aes(crab_season,profit_cv,group=factor(partition),color=factor(partition)))+
+#   geom_line(size=1.5)+
+#   labs(x="Crab Season",y="CV Profit per Trip",title="CV of Per-trip Profit by Behavior Class and Year",color="Group")+
+#   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+#   theme(axis.text.x = element_text(angle=90,vjust=0.5),
+#         legend.position = 'bottom')
+
 ```
 
 For these plots, the standard deviation is greater than the means, partly because of the exponential-like decline in landings and profits as each season progresses.
 
 ### Season-long Revenue and Landings
   
-Finally, what about total revenue gained from the Dungeness fishery over the course of the entire season? Remember that especially Group 3 vessels have short, derby seasons.
+What about total revenue gained from the Dungeness fishery over the course of the entire season? Remember that especially Group 3 vessels have short, derby seasons.
 
 ```{r}
 total_rev_landings_season <- fishtix_plus %>%
   distinct(drvid,crab_season,Rec_ID,DCRB_revenue,DCRB_lbs,trip_profit,partition) %>% 
   group_by(drvid,crab_season,partition) %>% 
-  summarise(total_rev=sum(DCRB_revenue,na.rm=T),total_land=sum(DCRB_lbs,na.rm=T),
-            total_profit=sum(trip_profit,na.rm=T)) %>% 
+  summarise(
+    total_rev=sum(DCRB_revenue,na.rm=T),
+    total_land=sum(DCRB_lbs,na.rm=T),
+    total_profit=sum(trip_profit,na.rm=T)) %>% 
+  ungroup() %>% 
+  group_by(crab_season,partition) %>% 
+  summarise(n=n(),
+            rev_tot=mean(total_rev,na.rm=T),
+            rev_sd=sd(total_rev,na.rm=T),
+            rev_se=rev_sd/n^0.5,
+            # landings in MT
+            land_tot=mean(total_land,na.rm=T)/2204.64,
+            land_sd=sd(total_land,na.rm=T)/2204.64,
+            land_se=land_sd/n^0.5,
+            profit_tot=mean(total_profit,na.rm=T),
+            profit_sd=sd(total_profit,na.rm=T),
+            profit_se=profit_sd/n^0.5) %>% 
   ungroup()
 
 total_rev_landings_season %>%
-  group_by(crab_season,partition) %>% 
-  summarise(rev_tot=mean(total_rev,na.rm=T)) %>% 
-  ungroup() %>% 
-  ggplot(aes(crab_season,rev_tot,group=factor(partition),color=factor(partition)))+
-  geom_line(size=2)+
+  ggplot(aes(crab_season,rev_tot,ymin=rev_tot-2*rev_se,ymax=rev_tot+2*rev_se,
+             group=factor(partition),color=factor(partition)))+
+  geom_line(size=1.5,position=position_dodge(width=0.2))+geom_linerange(size=1,position=position_dodge(width=0.2))+
   labs(x="Crab Season",y="Mean Total Season Revenue",title="Total Revenue by Behavior Class and Year",color="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
 
 total_rev_landings_season %>%
-  group_by(crab_season,partition) %>% 
-  summarise(land_tot=mean(total_land,na.rm=T)) %>% 
-  ungroup() %>% 
-  ggplot(aes(crab_season,land_tot/2204.64,group=factor(partition),color=factor(partition)))+
-  geom_line(size=2)+
+  ggplot(aes(crab_season,land_tot,ymin=land_tot-2*land_se,ymax=land_tot+2*land_se,
+             group=factor(partition),color=factor(partition)))+
+  geom_line(size=1.5,position=position_dodge(width=0.2))+geom_linerange(size=1,position=position_dodge(width=0.2))+
   labs(x="Crab Season",y="Mean Total Season Landings (MT)",title="Total Landings by Behavior Class and Year",color="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
 
 total_rev_landings_season %>%
-  group_by(crab_season,partition) %>% 
-  summarise(profit_tot=mean(total_profit,na.rm=T)) %>% 
-  ungroup() %>% 
-  ggplot(aes(crab_season,profit_tot,group=factor(partition),color=factor(partition)))+
-  geom_line(size=2)+
+  ggplot(aes(crab_season,profit_tot,ymin=profit_tot-2*profit_se,ymax=profit_tot+2*profit_se,
+             group=factor(partition),color=factor(partition)))+
+  geom_line(size=1.5,position=position_dodge(width=0.2))+geom_linerange(size=1,position=position_dodge(width=0.2))+
   labs(x="Crab Season",y="Mean Total Season Profit",title="Total Profit by Behavior Class and Year",color="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
+```
+
+### Non-Dungeness Revenue
+
+We want to look at patterns in revenue gained outside of the Dungeness fishery by these same vessels.
+
+```{r}
+# calculate non-DCRB revenue by week
+
 ```
 
 

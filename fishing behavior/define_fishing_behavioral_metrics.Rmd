@@ -30,10 +30,12 @@ theme_set(plot_theme)
 # DCRB fish tickets only, with day of season included
 fishtix <- read_rds(here::here('data','processed','fish tickets','fish_tickets_w_dayofseason.rds'))
 
-# All fish tickets, including non-DCRB trips
-fishtix_all <- purrr::map_df(2009:2019, function(yr){
-  read_rds(paste0(here::here('data','processed','fish tickets'),"/",yr,"fishtix_vlengths.rds"))
-}) %>% left_join(select(fishtix,Rec_ID,crab_season))
+# Long form fish tickets, including entries for all species (used in participation metric calculations)
+fishtix_long <- read_rds(here::here('data','processed','fish tickets','fish_tickets_long_allspecies.rds'))
+
+# for both sets of fish tickets, we do not make calculations on pre-season tickets
+fishtix %<>% filter(ticket_day_of_season>=0)
+fishtix_long %<>% filter(ticket_day_of_season>=0)
 
 # crab season indicator
 recid_crabseason <- fishtix %>% select(Rec_ID,crab_season) %>% distinct()
@@ -45,21 +47,29 @@ vms <- purrr::map_df(2009:2019, function(yr){
   filter(TARGET_rev=='DCRB') %>% 
   # join crab season indicator
   left_join(recid_crabseason,by='Rec_ID')
+# filter vms to only within-season tickets
+vms %<>% filter(!is.na(crab_season))
 
+# vessels in both VMS and fish ticket data
+vms_fishtix_vessels <- intersect(unique(fishtix$drvid),unique(vms$drvid))
+```
+
+
+```{r}
 # key of drvid vs. states
-vessel_state_key <- vms %>% 
-  group_by(drvid,agency_code) %>% 
-  summarise(totland=sum(DCRB_revenue)) %>% 
-  ungroup() %>% 
-  group_by(drvid) %>% 
-  mutate(nstates=n_distinct(agency_code)) %>% 
-  # for states with >1 state associated, pick the one with highest landings
-  mutate(perc_land=totland/sum(totland)) %>% 
-  arrange(desc(perc_land)) %>% 
-  slice(1) %>% 
-  select(drvid,agency_code)
-# save
-write_rds(vessel_state_key,here::here('fishing behavior','vessel_state_key.rds'))
+# vessel_state_key <- vms %>% 
+#   group_by(drvid,agency_code) %>% 
+#   summarise(totland=sum(DCRB_revenue)) %>% 
+#   ungroup() %>% 
+#   group_by(drvid) %>% 
+#   mutate(nstates=n_distinct(agency_code)) %>% 
+#   # for states with >1 state associated, pick the one with highest landings
+#   mutate(perc_land=totland/sum(totland)) %>% 
+#   arrange(desc(perc_land)) %>% 
+#   slice(1) %>% 
+#   select(drvid,agency_code)
+# # save
+# write_rds(vessel_state_key,here::here('fishing behavior','vessel_state_key.rds'))
 ```
 
 ## Metrics to Calculate
@@ -87,14 +97,13 @@ We only want to investigate boats that participate in the Dungeness crab fishery
 
 ```{r}
 dcrb_revenue <- vms %>% 
-  filter(drvid!="MISSING") %>% 
-  mutate(year=year(UTCDATETIM)) %>% 
-  mutate(nov1_season=case_when(
-    month(date)>10 ~ paste0(year,"-",year+1),
-    month(date)<=10 ~ paste0(year-1,"-",year),
-    TRUE ~ NA_character_)) %>% 
-  group_by(drvid,nov1_season) %>% 
-  summarise(dcrb_revenue=sum(DCRB_revenue[which(TARGET_rev=="DCRB")]))
+  filter(drvid!="MISSING",drvid %in% vms_fishtix_vessels) %>%
+  mutate(year=year(UTCDATETIM)) %>%
+  left_join(recid_crabseason) %>% 
+  filter(!is.na(crab_season)) %>% 
+  distinct(drvid,Rec_ID,crab_season,DCRB_revenue) %>% 
+  group_by(drvid,crab_season) %>% 
+  summarise(dcrb_revenue=sum(DCRB_revenue,na.rm=T))
 
 # what is the distribution of annual revenue, removing vessels with zero DCRB revenue
 dcrb_revenue %>% 
@@ -108,12 +117,12 @@ dcrb_revenue %>% filter(dcrb_revenue != 0) %>% pluck("dcrb_revenue") %>% quantil
 
 ```
 
-Five percent of the vessels made less than $101813 in at least one year of the data. We retain only those vessels that made more than this
+Five percent of the vessels made less than $5828 in at least one year of the data. We retain only those vessels that made more than this
 
 ```{r}
 dcrb_vessels <- dcrb_revenue %>%
-  filter(dcrb_revenue != 0) %>% 
-  group_by(nov1_season) %>% 
+  # filter(dcrb_revenue != 0) %>% 
+  group_by(crab_season) %>% 
   filter(dcrb_revenue>quantile(dcrb_revenue,0.05)) %>% 
   ungroup() %>% 
   distinct()
@@ -148,6 +157,7 @@ Calculate number of ports visited per month, average ports visited per trip, and
 ```{r}
 # Average number of ports per fishing trip
 ports_by_trip <- vms %>% 
+  filter(drvid %in% vessel_list) %>% 
   group_by(Rec_ID,drvid,crab_season) %>% 
   summarise(n_ports=n_distinct(in_port,na.rm = T)) %>% 
   mutate(n_ports=max(n_ports,1)) %>% 
@@ -158,6 +168,7 @@ ports_by_trip <- vms %>%
 
 # Average number of ports per month
 ports_by_month <- vms %>% 
+  filter(drvid %in% vessel_list) %>% 
   mutate(mth=month(date)) %>% 
   group_by(drvid,mth,crab_season) %>% 
   summarise(n_ports_mth=n_distinct(in_port,na.rm = T)) %>% 
@@ -172,6 +183,7 @@ ports_by_month <- vms %>%
 # total diversity of port use in a given crab season
 ports_diversity <- vms %>% 
   filter(!is.na(in_port)) %>% 
+  filter(drvid %in% vessel_list) %>% 
   select(drvid,crab_season,in_port) %>% 
   group_by(drvid,crab_season,in_port) %>% 
   tally(name="n_visits") %>% 
@@ -184,6 +196,7 @@ ports_diversity <- vms %>%
 
 total_ports <- vms %>% 
   filter(!is.na(in_port)) %>% 
+  filter(drvid %in% vessel_list) %>% 
   select(drvid,crab_season,in_port) %>% 
   group_by(drvid,crab_season) %>% 
   summarise(total_ports=n_distinct(in_port)) %>% 
@@ -307,50 +320,46 @@ ggsave(here::here('fishing behavior','plots','derby_metric.png'),derby_plot,w=6,
 
 ### Participation Metrics
 
-Calculate what percent of a vessel's revenue comes from non-DCRB fisheries. We do this with the unfiltered fish ticket data, counting the non-DCRB revenue across all trips.
+Calculate what percent of a vessel's revenue comes from non-DCRB commercial fisheries. We do this with the unfiltered fish ticket data, counting the non-DCRB revenue across all trips.
 
-Choice made here: Because other fisheries do not have seasons in the same way that crab do, we define November to the end of June as our window to look for other revenue. For example, for a crab season 2008-2009, we search for other revenue from Nov 1, 2008 to June 30, 2009.
+Additionally, calculate revenue diversity of landings (inverse Simpson diversity on revenue by species).
+
+Seasons over which to calculate other revenue are defined in the same manner as other metrics- that is, revenue is measured over the course of the crab seasons (as opposed to, e.g., calendar years).
 
 ```{r}
-participation_metric <- fishtix_all %>% 
+# organize long-form fish tickets by Rec_ID, and DCRB vs. all other revenue
+fishtix_dcrb_other <- fishtix_long %>%
+  filter(drvid %in% vessel_list) %>%
+  mutate(is_DCRB=PACFIN_SPECIES_CODE=="DCRB") %>% 
+  group_by(Rec_ID,TARGET_rev,drvid,crab_season) %>% 
+  summarise(DCRB_revenue=sum(spp_revenue[is_DCRB]),other_revenue=sum(spp_revenue[!is_DCRB])) %>% 
+  ungroup() %>% 
+  mutate(DCRB_revenue=coalesce(DCRB_revenue,0),other_revenue=coalesce(other_revenue,0))
+  
+participation_metric <- fishtix_dcrb_other %>% 
   filter(drvid %in% vessel_list) %>% 
-  # add general indicator of revenue season
-  mutate(revenue_season=case_when(
-    month(date)>10 ~ paste0(year,"-",year+1),
-    month(date)<=6 ~ paste0(year-1,"-",year),
-    TRUE ~ NA_character_)) %>% 
-  filter(!is.na(revenue_season)) %>% 
-  group_by(drvid,revenue_season) %>% 
+  group_by(drvid,crab_season) %>% 
   summarise(total_dcrb_revenue=sum(DCRB_revenue,na.rm=T),
-            total_other_revenue=sum(other_rev+SABL_revenue+LOBS_revenue+SPRW_revenue),
+            total_other_revenue=sum(other_revenue),
             total_other_tix=n_distinct(Rec_ID[which(TARGET_rev != "DCRB")]),
             total_dcrb_tix=n_distinct(Rec_ID[which(TARGET_rev == "DCRB")])) %>% 
   mutate(total_other_revenue=coalesce(total_other_revenue,0)) %>% 
   mutate(prop_other_revenue=total_other_revenue/(total_other_revenue+total_dcrb_revenue),
          prop_other_tix=total_other_tix/(total_other_tix+total_dcrb_tix)) %>% 
   ungroup() %>% 
-  rename(crab_season=revenue_season) %>% 
-  select(drvid,crab_season,prop_other_revenue,prop_other_tix)
+  rename(crab_season=crab_season) %>% 
+  distinct(drvid,crab_season,prop_other_revenue,prop_other_tix)
 
-participation_diversity <- fishtix_all %>% 
-  filter(drvid %in% vessel_list) %>% 
-  # add general indicator of revenue season
-  mutate(revenue_season=case_when(
-    month(date)>10 ~ paste0(year,"-",year+1),
-    month(date)<=6 ~ paste0(year-1,"-",year),
-    TRUE ~ NA_character_)) %>% 
-  filter(!is.na(revenue_season)) %>% 
-  select(-TARGET_lbs) %>% 
-  select(drvid,revenue_season,contains('_lbs')) %>% 
-  pivot_longer(contains('_lbs'),names_to='fishery',values_to='lbs') %>% 
-  group_by(drvid,revenue_season,fishery) %>%  
-  summarise(tot_lbs=sum(lbs,na.rm=T)) %>% 
+participation_diversity <- fishtix_long %>%
+  filter(drvid %in% vessel_list) %>%
+  distinct(Rec_ID,drvid,crab_season,PACFIN_SPECIES_CODE,tot_revenue_spp) %>%
+  group_by(drvid,crab_season,PACFIN_SPECIES_CODE) %>%  
+  summarise(tot_rev=sum(tot_revenue_spp,na.rm=T)) %>% 
   ungroup() %>% 
-  group_by(drvid,revenue_season) %>% 
-  mutate(prop_lbs=tot_lbs/sum(tot_lbs)) %>% 
-  summarise(landings_diversity=1/sum(prop_lbs^2)) %>% 
-  ungroup() %>% 
-  rename(crab_season=revenue_season)
+  group_by(drvid,crab_season) %>% 
+  mutate(prop_rev=tot_rev/sum(tot_rev)) %>% 
+  summarise(revenue_diversity=1/sum(prop_rev^2)) %>% 
+  ungroup()
 
 participation_rev_plot <- participation_metric %>% 
   ggplot(aes(prop_other_revenue))+
@@ -361,7 +370,7 @@ participation_tix_plot <- participation_metric %>%
   geom_density(fill='#33638DFF')+
   labs(x='Proportion of Tickets Targeting Other Fisheries')
 participation_div_plot <- participation_diversity %>% 
-  ggplot(aes(landings_diversity))+
+  ggplot(aes(revenue_diversity))+
   geom_density(fill='#33638DFF')+
   labs(x='Inverse Simpson Diversity Index of Landings by Fishery')
 
@@ -376,13 +385,13 @@ participation_metrics <- participation_metric %>%
   full_join(participation_diversity)
 
 # comparing participation metrics
-participation_metrics %>% 
-  ggplot(aes(prop_other_tix,landings_diversity))+
-  geom_point()+
-  geom_smooth(method='lm')+
-  labs(x='Proportion of Tickets Targeting Other Fisheries',y='Inverse Simpson Diversity Index of Landings')
+# participation_metrics %>% 
+#   ggplot(aes(prop_other_tix,revenue_diversity))+
+#   geom_point()+
+#   geom_smooth(method='lm')+
+#   labs(x='Proportion of Tickets Targeting Other Fisheries',y='Inverse Simpson Diversity Index of Landings')
 # not correlated really
-cor(participation_metrics$prop_other_tix,participation_metrics$landings_diversity,use='complete.obs')
+cor(participation_metrics$prop_other_tix,participation_metrics$revenue_diversity,use='complete.obs')
 ```
 
 ### Risk Metric
@@ -396,7 +405,7 @@ DEFAULT: not run because downloading takes a long time
 https://rdrr.io/github/bocinsky/thredds/f/README.md
 
 
-```{r, eval=FALSE}
+```{r, eval=T}
 library(rerddap)
 # Range of Lat/Lon for entire dataset
 range(vms$LATITUDE)
@@ -405,7 +414,7 @@ windslat <- c(34,49)
 windslon <- c(233,245)-360
 
 # sample day of winds data, to obtain lat/lons
-wind_sample <- griddap("nceiPH53sstn1day", # daily Pathfinder winds dataset
+wind_sample <- griddap("nceiPH53sstd1day", # daily Pathfinder winds dataset
                       time=c("2009-01-01","2009-01-02"),
                       latitude=windslat,
                       longitude=windslon,
@@ -426,8 +435,10 @@ vms_latlons %<>% mutate(matchlat=wind_sample$lat[erddap_vms_match],matchlon=wind
 # only pull the winds data for the lat/lons that we need
 needed_latlons <- vms_latlons %>% select(matchlat,matchlon) %>% distinct()
 # another to try
-# nceiPH53sstn1day
+# nceiPH53sstd1day
+```
 
+```{r,eval=T}
 # Have to use some if statements here because of weird breaks in the two datasets
 winds_all <- purrr::map_df(2009:2019, function(yr) {
   times <- c(paste0(yr,"-01-01"),paste0(yr,"-12-31"))
@@ -521,10 +532,10 @@ Match winds to VMS pings
 # 
 
 # Finally, join winds data to VMS data
-vms_winds <- vms %>% 
+vms_winds <- vms %>%
+  select(drvid,crab_season,Rec_ID,UTCDATETIM) %>% 
   # join the lat/lon matching key
   bind_cols(select(vms_latlons,matchlat,matchlon)) %>% 
-  select(drvid,crab_season,Rec_ID,UTCDATETIM,LATITUDE,LONGITUDE,matchlat,matchlon) %>% 
   #convert UTC times to dates
   mutate(utcdate=as_date(UTCDATETIM)) %>% 
   # join winds data by date and matching latitude/longitude
@@ -575,14 +586,17 @@ vms_all_grd %<>%
   left_join(recid_crabseason,by='Rec_ID')
 vms_grd_only <- vms_all_grd %>% 
   as_tibble() %>% 
-  select(VMS_RECNO,Rec_ID,UTCDATETIM,port_group_code,drvid,crab_season,GRID5KM_ID)
+  select(VMS_RECNO,Rec_ID,UTCDATETIM,port_group_code,drvid,crab_season,GRID5KM_ID) %>% 
+  filter(!is.na(GRID5KM_ID),!is.na(crab_season))
 
 # To calculate entropy, we need a cumulative record of location choices in time, that is, a record of the grid cells visited by the vessel that accumulates over time
 
 vms_cum_locs <- vms_grd_only %>% 
   group_by(drvid,crab_season) %>% 
-  arrange(UTCDATETIM) %>% 
-  mutate(locations=accumulate(GRID5KM_ID,c))
+  mutate(mult_locs = n_distinct(GRID5KM_ID)>1) %>% 
+  filter(mult_locs) %>% 
+  arrange(UTCDATETIM) %>%
+  mutate(locations=purrr::accumulate(GRID5KM_ID,c))
 
 # test vessel/season to see if it worked
 test <- vms_cum_locs %>% filter(crab_season=="2008-2009",drvid=="264147")
@@ -716,7 +730,9 @@ all_metrics <- port_use_metrics %>%
   full_join(entropy_metric) %>% 
   full_join(homerange_metric) %>% 
   full_join(vessel_size_metric) %>% 
-  filter(drvid %in% vessel_list)
+  filter(drvid %in% vessel_list) %>% 
+  filter(!is.na(crab_season)) %>% 
+  distinct()
 ```
 ### Look for Missing Data
 
@@ -724,6 +740,3 @@ all_metrics <- port_use_metrics %>%
 ```{r}
 write_rds(all_metrics,here::here('fishing behavior','fishing_behavior_metrics_vessel_season.rds'))
 ```
-
-
-

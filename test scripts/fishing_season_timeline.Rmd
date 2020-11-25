@@ -1,0 +1,104 @@
+---
+title: "Fishing Season Timeline Example"
+author: "Owen Liu"
+date: "10/7/2020"
+output: html_document
+---
+
+
+## Purpose
+
+Create a mock-up timeline of an average crab fishing season, showing the potential impacts of temporal season delays on fishery effort
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(magrittr)
+library(here)
+library(lubridate)
+
+rm(list=ls())
+
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=10,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+Import data
+
+```{r}
+tix <- read_rds(here::here('data','processed','fish tickets','fish_tickets_w_dayofseason.rds'))
+
+glimpse(tix)
+```
+
+Calculate average landings by day of season, for use in constructing a generalized time series.
+
+```{r}
+landings_dos <- tix %>% 
+  filter(agency_code=="C",ticket_day_of_season>=0) %>% 
+  group_by(crab_season,ticket_day_of_season) %>% 
+  summarise(tot_landings=sum(DCRB_lbs)) %>% 
+  group_by(ticket_day_of_season) %>% 
+  summarise(mean_landings=mean(tot_landings,na.rm=T)) %>% 
+  ungroup()
+```
+
+Plot the "average" year
+
+```{r}
+landings_dos %>% 
+  ggplot(aes(ticket_day_of_season,mean_landings))+
+  geom_line()+
+  labs(x="Day of Season",y="Landings (lbs)")
+```
+
+Add in hypothetical scenarios. Early closures will be symbolized with a vertical line
+
+```{r}
+temporal_shifts <- landings_dos %>% 
+  rename(baseline=mean_landings) %>% 
+  # a late opening with lag method = 30 day delay
+  mutate(late_opening_lag=lag(baseline,30)) %>% 
+  # a late opening with pile method = add the effort for the first 30 days, no change thereafter
+  rowwise() %>% 
+  mutate(late_opening_pile=ifelse(ticket_day_of_season<=60,baseline+late_opening_lag,baseline)) %>% 
+  # a depth restriction = some percentage difference from baseline?
+  mutate(depth_restriction=baseline*0.5) %>% 
+  # stylized date
+  mutate(date=as_date("2015/11/15")+days(ticket_day_of_season))
+
+```
+
+Convert to long form and plot
+
+```{r}
+temporal_shifts_long <- temporal_shifts %>% 
+  select(-ticket_day_of_season) %>% 
+  pivot_longer(-date,names_to="type",values_to="value") %>% 
+  mutate(type_label=case_when(
+    type=="baseline" ~ "Status Quo",
+    type=="depth_restriction" ~ "Depth Restriction",
+    type=="late_opening_lag" ~ "Late Opening (Lag)",
+    type=="late_opening_pile" ~ "Late Opening (Pile)"
+  ))
+
+scenarios_plot <- temporal_shifts_long %>% 
+  ggplot(aes(date,value,col=type_label))+
+  geom_line(size=1)+
+  # vertical line for early closure
+  geom_vline(xintercept=as_date("2016/07/15"))+
+  annotate("text",x=as_date("2016/07/15"),y=5e5,label="Early Closure",angle=90,vjust=1.5)+
+  labs(x="Date",y="Fishing Effort, Landings, or Revenue",col="")+
+  scale_x_date(date_labels = "%b %d",date_breaks="2 months")+
+  theme(axis.text.y=element_blank(),
+        legend.position = c(0.85,0.8),
+        legend.text = element_text(size=8))
+
+scenarios_plot
+ggsave(here::here('test scripts','tradeoff_effort_shift_scenarios_plot.png'),scenarios_plot,w=6,h=4)
+```
+

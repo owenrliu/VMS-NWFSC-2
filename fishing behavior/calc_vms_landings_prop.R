@@ -22,10 +22,14 @@ fishtix_vmsflag <- fishtix %>%
 vms_prop_landings <- fishtix_vmsflag %>% 
   mutate(has_vms=!is.na(has_vms)) %>% 
   group_by(crab_season,agency_code,has_vms) %>% 
-  summarise(totland=sum(DCRB_lbs,na.rm=T)) %>% 
+  summarise(totland=sum(DCRB_lbs,na.rm=T),tottix=n()) %>% 
   ungroup() %>% 
   group_by(crab_season,agency_code) %>% 
-  mutate(sumland=sum(totland),sumland_thousand_mt=sumland/1000/2204.64,propland=totland/sumland)
+  mutate(sumland=sum(totland),
+         sumland_thousand_mt=sumland/1000/2204.64,
+         propland=totland/sumland,
+         sumtix=sum(tottix),
+         proptix=tottix/sumtix)
 
 # total landings timeseries
 total_landings <- vms_prop_landings %>% 
@@ -45,6 +49,16 @@ vms_prop_landings_plot <- vms_prop_landings %>%
   labs(x="Crab Season",y="Proportion of Recorded Landings",fill="State",col="State")+
   theme(axis.text.x = element_text(angle=90,vjust = 0.5))
 ggsave(here::here('fishing behavior','vms_prop_landings_all_fishtickets.png'),vms_prop_landings_plot,w=8,h=6)
+
+# prop landings
+vms_prop_tix_plot <- vms_prop_landings %>% 
+  ggplot(aes(crab_season,proptix,fill=has_vms,col=has_vms))+
+  geom_bar(stat='identity')+
+  facet_wrap(~agency_code)+
+  labs(x="Crab Season",y="Proportion of Recorded Tickets",fill="State",col="State")+
+  theme(axis.text.x = element_text(angle=90,vjust = 0.5))
+vms_prop_tix_plot
+ggsave(here::here('fishing behavior','vms_prop_tickets_all_fishtickets.png'),vms_prop_tix_plot,w=8,h=6)
 
 #save just the VMS proportion
 vms_prop_landings %>% 
