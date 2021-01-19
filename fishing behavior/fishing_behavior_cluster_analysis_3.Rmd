@@ -17,6 +17,9 @@ library(NbClust)
 library(viridis)
 library(lubridate)
 library(ggsci)
+library(forcats)
+library(rnaturalearth)
+library(sf)
 
 # ggplot theme
 plot_theme <-   theme_minimal()+
@@ -45,7 +48,7 @@ Our guiding questions are:
 
 ```{r}
 dat <- read_rds(here::here('fishing behavior','fishing_behavior_metrics_vessel_season.rds')) %>% 
-  filter(crab_season!="2008-2009") %>% 
+  # filter(crab_season!="2008-2009") %>% 
   distinct()
 glimpse(dat)
 ```
@@ -92,6 +95,14 @@ vms <- purrr::map_df(2009:2019, function(yr){
 trip_duration_key <- vms %>% 
   distinct(Rec_ID,trip_dur)
 ```
+
+```{r}
+## Coastline
+coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington','Nevada')) %>% 
+  st_transform(st_crs(vms_all_grd))
+```
+
 
 More specifically, the metrics are as follows for each vessel (`drvid`) in each `crab_season`:
 
@@ -246,7 +257,22 @@ dat_nolabs <- dat_scaled %>% na.omit() %>% select(-(1:2))
 We can also use the same data to perform a principal component analysis to help visualize our groups.
 
 ```{r}
-dat.pca <- FactoMineR::PCA(dat_nolabs,graph=FALSE)
+dat_for_pca <- dat_scaled %>% 
+  na.omit() %>% 
+  select(-(1:2)) %>% 
+  rename(`Ports per Trip`=n_ports_trip,
+         `Ports per Month`= ports_mean_mth,
+         `Port Diversity`= port_shannon,
+         `Mean Trip Duration` = trip_dur_mean,
+         `SD Trip Duration` = trip_dur_sd,
+         `Season Length` = quant90_day,
+         `Non-Dungeness Revenue` = prop_other_revenue,
+         `Revenue Diversity` = revenue_diversity,
+         `Risk Taking` = prop_highwinds,
+         `Location Entropy` = entropy_quant90,
+         `Home Range Size` = homerange
+         )
+dat.pca <- FactoMineR::PCA(dat_for_pca,graph=FALSE)
 
 # factoextra::fviz_dend(dat.hclust,k=4,palette=viridis_pal()(4),show_labels=FALSE,rect=T,rect_lty=2)
 # summary(dat.pca)
@@ -269,13 +295,16 @@ clustnames <- tibble(partition=dat_clust$Best.partition) %>%
   mutate(partition=factor(partition,levels=c("Local Specialists","Local Generalists","Roving Specialists","Roving Generalists")))
 
 p <- viridis_pal(begin=0.2,end=0.8)(4) # color palette
-fviz_pca(dat.pca,geom.ind="point",
+cluster3_pca <- fviz_pca(dat.pca,geom.ind="point",
          col.ind=clustnames$partition,
          addEllipses=TRUE,col.var="black",
          palette=p,alpha.ind=0.4)+
   labs(color="",shape="",fill="",shape="",title="")+
-  scale_x_continuous(expand = c(.1,0))
+  scale_x_continuous(expand = c(.1,0))+
+  theme(panel.grid.major = element_blank(),panel.grid.minor=element_blank())
 
+cluster3_pca
+ggsave(here::here('fishing behavior','plots','PCA_clusters.png'),cluster3_pca,w=8,h=6)
 # scree plot
 fviz_eig(dat.pca,choice = 'variance')
 ```
@@ -321,7 +350,9 @@ group_means <- dat %>%
 
 library(cowplot)
 
-plot_grid(plotlist=group_means$plotvars,labels=LETTERS[1:nrow(group_means)])
+group_boxes <- plot_grid(plotlist=group_means$plotvars,labels=LETTERS[1:nrow(group_means)])
+ggsave(here::here('fishing behavior','plots','groups_boxplots.png'),group_boxes,w=8,h=10)
+
 
 # If only 2 groups
 # group_means <- dat %>% 
@@ -359,6 +390,50 @@ Together, these groups can be conceptualized along two axes---spatial behavior a
 Consequently, for the rest of the results, we refer to these groups as Roving (i.e., exploratory, high port use, etc.) versus Local, and Specialist (Dungeness-specific) versus Generalist (participates in many fisheries). Group 2 is the Local Specialists, Group 1 is the Local Generalists, Group 3 is the Roving Specialists, and Group 4 is the Roving Generalists.
 
 ```{r}
+# Table of group definitions based on mean value of metrics
+groups_table <- tibble(
+  `Local Generalists`= c(3,3,3,3,2,3,1,1,3,3,3),
+  `Local Specialists` = c(3,4,3,4,1,2,4,4,4,4,4),
+  `Roving Specialists` = c(2,2,1,2,3,1,3,3,2,2,2),
+  `Roving Generalists` = c(1,1,1,1,4,4,1,1,1,1,1)) %>% 
+  mutate(metric=c("Ports per Trip",
+         "Ports per Month",
+         "Port Diversity",
+         "Mean Trip Duration",
+         "SD Trip Duration",
+         "Season Length",
+         "Non-Dungeness Revenue",
+         "Revenue Diversity",
+         "Risk Taking",
+         "Location Entropy",
+         "Home Range Size")) %>% 
+  pivot_longer(cols=1:4,names_to="Group") %>% 
+  mutate(metric=factor(metric,levels=c("Ports per Trip",
+         "Ports per Month",
+         "Port Diversity",
+         "Mean Trip Duration",
+         "SD Trip Duration",
+         "Season Length",
+         "Home Range Size",
+         "Non-Dungeness Revenue",
+         "Revenue Diversity",
+         "Risk Taking",
+         "Location Entropy")))
+
+groups_table_plot <- groups_table %>% 
+  ggplot(aes(metric,Group,fill=factor(value)))+
+  geom_tile()+
+  geom_text(aes(label=value))+
+  labs(x="Metric",y="")+
+  coord_fixed()+
+  scale_fill_manual(values=rev(RColorBrewer::brewer.pal(4,"Blues")),guide='none')+
+  theme(axis.text.x = element_text(angle=45,vjust=1,hjust=1),
+        panel.grid.major=element_line(linetype=1))
+groups_table_plot
+ggsave(here::here('fishing behavior','plots','groups_rankings_plot.png'),groups_table_plot,w=6,h=4)
+```
+
+```{r}
 ## Add factor levels/names to clustered data
 dat_clustered <- dat_clustered %>%
   mutate(partition=case_when(
@@ -384,6 +459,20 @@ We can investigate the contribution of individual variables to the eventual clas
 Random forests are built from a number of individual classification trees (we use 1000). Each tree is built by recursive binary partitioning of the data, using a predictor variable (e.g., `trip_dur_mean`) to make a split in the data to create the most homogenous subgroups, where homogeneity is measured by the Gini coefficient on the relative proportions of group (Group 1, 2, 3, or 4) membership. The tree keeps dividing until the Gini index no longer declines with further splitting, at which point the tree is "fully grown".
 
 Random forests build many of these trees, with two differences from single classification trees. First, for each tree, only a bootstrapped subsample of the original data is chosen for classification. Second, only a subset of the predictor variables are "available" to the tree for binary partitioning, chosen randomly. Therefore, each tree is twice randomized---first through bootstrapping, and then through the random selection of partitioning variables; hence creating the "random forest". Once many trees are grown from the bootstrapped sample, the classes for the observations from the original data set that were not chosen for fitting (known as out-of-bag observations) are predicted by each tree in the forest. We compile the rate at which the forest mis-classifies observations into the incorrect class. The measure of variable importance is the *change* in this mis-classification rate when a variable is randomly permuted in the out-of-bag sample. In other words, we measure how much worse our classification performs without the correctly-ordered variable.
+```{r}
+variable_name_matches <- tibble(v=c("n_ports_trip","ports_mean_mth","port_shannon","trip_dur_mean","trip_dur_sd","quant90_day","prop_other_revenue","revenue_diversity","prop_highwinds","entropy_quant90","homerange","vessel_size"),metric=c("Ports per Trip",
+         "Ports per Month",
+         "Port Diversity",
+         "Mean Trip Duration",
+         "SD Trip Duration",
+         "Season Length",
+         "Non-Dungeness Revenue",
+         "Revenue Diversity",
+         "Risk Taking",
+         "Location Entropy",
+         "Home Range Size",
+         "Vessel Size"))
+```
 
 We apply this procedure to our data, using our four groups and growing 1000 trees.
 
@@ -406,9 +495,98 @@ var_imp %>%
   # scale_y_continuous(breaks=seq(0,10,by=2))+
   labs(x="Variable",y="Relative Importance")+
   theme(axis.text.x = element_text(angle=90))
+
+# With vessel size
+vessel_sizes <- read_rds(here::here('fishing behavior','vessel_sizes.rds')) %>% group_by(drvid,crab_season) %>% slice(1)
+dat_nolabs_vesselsize <- dat_clustered %>% 
+  na.omit() %>%
+  left_join(vessel_sizes)%>% 
+  na.omit() %>% 
+  select(-(1:2)) %>% 
+  mutate(partition=as.factor(partition))
+rf2 <- randomForest(partition~.,data=dat_nolabs_vesselsize,importance = TRUE,ntree=1000)
+var_imp2 <- rf2$importance %>% as_tibble(rownames="variable") %>% 
+  select(variable,MeanDecreaseAccuracy) %>% 
+  mutate(rel_imp=MeanDecreaseAccuracy*100) %>%
+  left_join(variable_name_matches,by = c("variable"="v"))
+rel_imp_plot <- var_imp2 %>% 
+  arrange(desc(rel_imp)) %>% 
+  ggplot(aes(x=fct_reorder(metric,-rel_imp),y=rel_imp))+
+  geom_col()+
+  # scale_y_continuous(breaks=seq(0,10,by=2))+
+  labs(x="",y="Relative Importance")+
+  theme(axis.text.x = element_text(angle=45,vjust=1,hjust=0.8,size=8),
+        panel.grid.major = element_blank(),
+        panel.grid.minor=element_blank(),
+        axis.title.x = element_text(size=8),
+        axis.title.y=element_text(size=8))
+        # plot.background = element_rect(color="black"))
+rel_imp_plot
 ```
 
+```{r}
+#combine with PCA
+library(cowplot)
+
+fig_pca_rf <- plot_grid(cluster3_pca,rel_imp_plot,nrow=2,labels='auto',rel_heights = c(1,0.8))
+
+# fig_pca_rf <- ggdraw(cluster3_pca) +
+#   draw_plot(rel_imp_plot, .6, .5, .4, .4) +
+#   draw_plot_label(
+#     c("a", "b"),
+#     c(0.1, 0.6),
+#     c(0.95, 0.95),
+#     size = 12
+#   )
+ggsave(here::here('fishing behavior','plots','fig_pca_rf.png'),fig_pca_rf,w=7.5,h=9)
+```
+
+
 The two variables that, when permuted, had the greatest effect on classification errors were proportion of non-Dungeness revenue and port use diversity, confirming our observation that the groups seem to partition in relation to their diversity of fishery participation and their port use. Next in variable importance were mean trip duration, revenue diversity, and propensity to fish in high-wind conditions.
+
+```{r}
+## Mobility and Flexibility Across Years
+# 
+# As a demonstration of the major differences between groups, we show the distributions of non-Dungeness revenue and port use diversity between groups, and over time (in MHW and non-MHW years). For this we use the non-scaled data.
+
+# mobility_flexibility <- dat %>% 
+#   select(-revenue_mean,-revenue_sd,-landings_mean,-landings_sd,-vessel_size,-trip_dist_sd,-total_ports,-prop_other_tix,-trip_dist_mean) %>% 
+#   # remove any observations with missing variables
+#   drop_na() %>%
+#   mutate_at(-(1:2),~./max(.,na.rm=T)) %>% 
+#   mutate(partition=dat_clust$Best.partition) %>% 
+#   as_tibble() %>% 
+#   mutate(partition=case_when(
+#     partition==3 ~ "Roving Specialists",
+#     partition==1 ~ "Local Generalists",
+#     partition==4 ~ "Roving Generalists",
+#     partition==2 ~ "Local Specialists"
+#   )) %>% 
+#   # Add MHW indicator
+#   mutate(is_heatwave=ifelse(crab_season %in% c('2015-2016','2016-2017','2017-2018'),"MHW","Non-MHW")) %>%
+#   mutate(group_type=ifelse(partition %in% c("Local Specialists","Local Generalists"),"Local Groups","Roving Groups")) %>% 
+#   # select vars of interest
+#   select(drvid,crab_season,partition,group_type,is_heatwave,port_shannon,prop_other_revenue)
+# 
+# flexibility_plot <-mobility_flexibility %>% 
+#   ggplot(aes(partition, prop_other_revenue,fill=is_heatwave))+
+#   geom_boxplot()+
+#   scale_fill_aaas()+
+#   labs(fill="Period",x="Proportion Non-Dungeness Revenue")
+# 
+# mobility_plot <- mobility_flexibility %>%  
+#   ggplot(aes(partition, port_shannon,fill=is_heatwave))+
+#   geom_boxplot()+
+#   scale_fill_aaas()+
+#   labs(fill="Period",x="Port Diversity")
+# 
+# library(cowplot)
+# 
+# mobility_flexibility_plot<-plot_grid(flexibility_plot,mobility_plot,ncol=2,labels='auto')
+#   
+# mobility_flexibility_plot
+```
+
 
 ## Vessel Size Distribution by Behavioral Group
 
@@ -417,7 +595,6 @@ Dialogue around the Dungeness crab fishery often focuses around vessel size (i.e
 This is how vessel length maps on to behavioral groups in the fishery.
 
 ```{r}
-vessel_sizes <- read_rds(here::here('fishing behavior','vessel_sizes.rds')) %>% group_by(drvid,crab_season) %>% slice(1)
 # dat_clustered %>% select(-vessel_size) %>% left_join(vessel_sizes) %>% 
 #   ggplot(aes(vessel_size,fill=factor(partition)))+
 #   geom_density(alpha=0.5)+
@@ -467,20 +644,28 @@ class_by_yr <- dat_clustered %>%
   group_by(crab_season,partition) %>% 
   summarise(n_vessels=n_distinct(drvid)) %>% 
   ungroup()
-class_by_yr %>% 
+class_by_yr %>%
   ggplot(aes(crab_season,n_vessels,fill=factor(partition)))+
   geom_col()+
   labs(x="Crab Season",y="Number of Vessels",title="Number of Vessels by Behavior Class and Year",fill="Group")+
   scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
-class_by_yr %>% 
+num_vessels_timeseries <- class_by_yr %>% 
   ggplot(aes(crab_season,n_vessels,group=factor(partition),color=factor(partition)))+
   geom_line(size=2)+
-  labs(x="Crab Season",y="Number of Vessels",title="Number of Vessels by Behavior Class and Year",color="Group")+
+  geom_vline(xintercept=7.5,linetype=2,col="darkred")+
+  geom_vline(xintercept=10.5,linetype=2,col="darkred")+
+  labs(x="Crab Season",y="Number of Vessels",title="",color="")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size=8),
         legend.position = 'bottom')
+num_vessels_timeseries
+ggsave(here::here('fishing behavior','plots','nvessels_groups.png'),num_vessels_timeseries,w=8,h=6)
+
 class_by_yr %>% 
   group_by(crab_season) %>%
   mutate(prop_group=n_vessels/sum(n_vessels)) %>% 
@@ -490,6 +675,29 @@ class_by_yr %>%
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
+
+# bar plots of heatwave vs. non-heatwave years
+heatwave_barplot <- class_by_yr %>% 
+  mutate(is_heatwave=ifelse(crab_season %in% c('2015-2016','2016-2017','2017-2018'),"MHW","Non-MHW")) %>% 
+  group_by(partition,is_heatwave) %>% 
+  summarise(mean_vessels=mean(n_vessels),sd_vessels=sd(n_vessels)) %>% 
+  ungroup() %>% 
+  ggplot(aes(partition,mean_vessels,fill=is_heatwave))+
+  scale_color_aaas()+
+  geom_col(position=position_dodge(),col='black')+
+  geom_errorbar(aes(partition,mean_vessels,group=is_heatwave,ymin=mean_vessels-sd_vessels,ymax=mean_vessels+sd_vessels),
+                position=position_dodge(0.9),width=0.2)+
+  theme(panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        legend.position = c(0.8,0.8))+
+  labs(x="Behavioral Group",y="Number of Vessels",fill="Period")
+heatwave_barplot
+ggsave(here::here('fishing behavior','plots','heatwave_groups.png'),heatwave_barplot,w=6,h=6)
+
+library(cowplot)
+ts_heatwave_groups_plot <- plot_grid(num_vessels_timeseries,heatwave_barplot,labels = "auto",nrow = 2)
+
+ggsave(here::here('fishing behavior','plots','timeseries_and_heatwave_groups.png'),ts_heatwave_groups_plot,w=6,h=8)
 ```
 
 We can also look at the flows of vessels between classes and years.
@@ -579,38 +787,38 @@ drvid_other_fisheries <- fishtix_long %>%
 
 # most common transition for each group
 # including not fishing!
-second_choice_group <- drvid_other_fisheries %>%
-  group_by(drvid) %>%
-  arrange(crab_season) %>% 
-  mutate(next_partition=dplyr::lead(status,1)) %>% 
-  filter(!is.na(next_partition)) %>% 
-  ungroup() %>% 
-  count(status,next_partition) %>% 
-  group_by(status) %>%
-  ungroup() %>% 
-  arrange(status,desc(n)) %>% 
-  filter(status != "No VMS Data",next_partition !="No VMS Data")
+# second_choice_group <- drvid_other_fisheries %>%
+#   group_by(drvid) %>%
+#   arrange(crab_season) %>% 
+#   mutate(next_partition=dplyr::lead(status,1)) %>% 
+#   filter(!is.na(next_partition)) %>% 
+#   ungroup() %>% 
+#   count(status,next_partition) %>% 
+#   group_by(status) %>%
+#   ungroup() %>% 
+#   arrange(status,desc(n)) %>% 
+#   filter(status != "No VMS Data",next_partition !="No VMS Data")
 
-# with "no fishing" option
-second_choice_plot <- second_choice_group %>% 
-  group_by(status) %>% 
-  arrange(desc(n)) %>% 
-  slice(1:2) %>% 
-  mutate(next_partition=factor(next_partition,levels=c("Different Fishery","Not Fishing","Local Specialists","Local Generalists","Roving Specialists","Roving Generalists"))) %>% 
-  mutate(status=factor(status,levels=c("Different Fishery","Not Fishing","Local Specialists","Local Generalists","Roving Specialists","Roving Generalists"))) %>% 
-  mutate(pos=as.numeric(next_partition)) %>% 
-  group_by(status) %>% 
-  mutate(time=c(1,2)) %>% 
-  ungroup() %>% 
-  ggplot(aes(time,pos,col=status))+geom_line(size=3,alpha=0.7)+geom_point(col='black',size=5)+
-  scale_color_manual(values=c("black","gray50",p),guide="none")+
-  scale_y_continuous(labels=c("Different Fishery","Not Fishing","Local Specialists","Local Generalists","Roving Specialists","Roving Generalists"),breaks=seq(1,6,by=1),sec.axis = dup_axis())+
-  labs(y='',x='',title="")+
-  theme(panel.grid.major = element_blank(),
-        panel.grid.minor=element_blank(),
-        axis.text.y=element_text(family="sans",size=10),
-        axis.text.x=element_blank())
-second_choice_plot
+# # with "no fishing" option
+# second_choice_plot <- second_choice_group %>% 
+#   group_by(status) %>% 
+#   arrange(desc(n)) %>% 
+#   slice(1:2) %>% 
+#   mutate(next_partition=factor(next_partition,levels=c("Different Fishery","Not Fishing","Local Specialists","Local Generalists","Roving Specialists","Roving Generalists"))) %>% 
+#   mutate(status=factor(status,levels=c("Different Fishery","Not Fishing","Local Specialists","Local Generalists","Roving Specialists","Roving Generalists"))) %>% 
+#   mutate(pos=as.numeric(next_partition)) %>% 
+#   group_by(status) %>% 
+#   mutate(time=c(1,2)) %>% 
+#   ungroup() %>% 
+#   ggplot(aes(time,pos,col=status))+geom_line(size=3,alpha=0.7)+geom_point(col='black',size=5)+
+#   scale_color_manual(values=c("black","gray50",p),guide="none")+
+#   scale_y_continuous(labels=c("Different Fishery","Not Fishing","Local Specialists","Local Generalists","Roving Specialists","Roving Generalists"),breaks=seq(1,6,by=1),sec.axis = dup_axis())+
+#   labs(y='',x='',title="")+
+#   theme(panel.grid.major = element_blank(),
+#         panel.grid.minor=element_blank(),
+#         axis.text.y=element_text(family="sans",size=10),
+#         axis.text.x=element_blank())
+# second_choice_plot
 # without "no fishing"
 # second_choice_group %>% 
 #   group_by(partition) %>% 
@@ -632,8 +840,21 @@ second_choice_plot
 #         axis.text.y=element_text(family="sans",size=12),
 #         axis.text.x=element_blank())
 
-# Most common transitions by crab season
+# transitions between all groups by season
 trans_by_season <- drvid_other_fisheries %>%
+  group_by(drvid,agency_code) %>%
+  arrange(crab_season) %>% 
+  mutate(last_status=dplyr::lag(status,1)) %>% 
+  filter(!is.na(last_status)) %>% 
+  filter(status != "No VMS Data", last_status != "No VMS Data") %>% 
+  ungroup() %>% 
+  count(crab_season,status,last_status) %>% 
+  group_by(crab_season) %>% 
+  mutate(tot_n=sum(n)) %>% 
+  mutate(prop=n/tot_n)
+
+# Most common transition types by crab season
+trans_types_by_season <- drvid_other_fisheries %>%
   group_by(drvid) %>%
   arrange(crab_season) %>% 
   mutate(last_status=dplyr::lag(status,1)) %>% 
@@ -656,10 +877,11 @@ trans_by_season <- drvid_other_fisheries %>%
   ungroup() %>% 
   group_by(crab_season,transition_type) %>% 
   summarise(n=sum(n),prop=n/tot_n) %>% 
+  filter(crab_season != "2008-2009") %>% 
   distinct() %>% 
   mutate(transition_type=factor(transition_type,levels=c("Not Fishing","Different Fishery","Fish Other Species","Enter","Exit","Same Group","Switch Groups")))
 
-transitions_by_season <- trans_by_season %>% 
+transition_types_by_season_plot <- trans_types_by_season %>% 
   ggplot(aes(crab_season,prop,group=transition_type,col=transition_type,fill=transition_type))+
   geom_line()+geom_point()+
   scale_fill_jco()+
@@ -668,7 +890,7 @@ transitions_by_season <- trans_by_season %>%
   theme(axis.text.x=element_text(angle=90,vjust=0.5),
         panel.grid.major=element_blank(),
         panel.grid.minor=element_blank())
-transitions_by_season
+transition_types_by_season_plot
 
 # num_seasons <- dat_alluvium %>% group_by(drvid) %>% summarise(n_seasons=n_distinct(crab_season)) %>% 
 #   count(n_seasons) 
@@ -682,53 +904,72 @@ transitions_by_season
 ```
 From this figure we can see substantial flows between groups in certain years. For example, many vessels classified as Local Generalists joined the other groups between the 2008 and 2009 crab seasons. Similarly, after the 2014-15 crab season, many Local Generalists became Local Specialists or Roving Generalists.
 
-### Changepoint Analysis
-
-Use a simple change point analysis to look at change in group membership over time.
 
 ```{r}
-library(changepoint)
-# look for threshold changepoints in number of vessels in each group over time
-changepoints_dat <- class_by_yr %>% mutate(lab=str_replace_all(partition," ","_")) %>% 
-  select(-partition) %>% 
-  pivot_wider(names_from='lab',values_from = 'n_vessels')
+## Odds of switching groups
+# start_roving <- trans_by_season %>% 
+#   filter(status != last_status) %>% 
+#   filter(status %in% c("Roving Specialists","Roving Generalists"), 
+#          last_status %in% c("Local Specialists","Local Generalists")) %>% 
+#   group_by(crab_season) %>% 
+#   summarise(tot_swapped=sum(n))
+# switch_to_roving_plot <- start_roving %>% 
+#   ggplot(aes(crab_season, tot_swapped,group=1))+
+#   geom_point()+geom_line()+
+#   labs(x="Crab Season",y="Number of Vessels that Switched to Roving")
+# switch_to_roving_plot
+# 
+# start_or_stay_roving <- trans_by_season %>% 
+#   filter(status != last_status) %>% 
+#   filter(status %in% c("Roving Specialists","Roving Generalists"), 
+#          last_status %in% c("Local Specialists","Local Generalists","Roving Specialists","Roving Generalists")) %>% 
+#   group_by(crab_season) %>% 
+#   summarise(tot_swapped=sum(n))
+# switch_to_or_stay_roving_plot <- start_or_stay_roving %>% 
+#   ggplot(aes(crab_season, tot_swapped,group=1))+
+#   geom_point()+geom_line()+
+#   labs(x="Crab Season",y="Number of Vessels Roving")
+# switch_to_or_stay_roving_plot
 
-# for Local Generalists group
-cp <- cpt.mean(changepoints_dat[,-1] %>% as.matrix() %>% t(),penalty="SIC",class=F)
-cp1<-cpt.mean(changepoints_dat$Local_Generalists,penalty="SIC")
-cp2<-cpt.mean(changepoints_dat$Local_Specialists,penalty="SIC")
-cp3<-cpt.mean(changepoints_dat$Roving_Generalists,penalty="SIC")
-cp4<-cpt.mean(changepoints_dat$Roving_Specialists,penalty="SIC")
+# tot_roving <- trans_by_season %>% 
+#   filter(status %in% c("Roving Specialists","Roving Generalists")) %>%
+#   # filter(!(status=="Roving Specialists"&last_status=="Roving Generalists"),
+#   #        !(status=="Roving Generalists"&last_status=="Roving Specialists")) %>% 
+#   group_by(crab_season) %>% summarise(tot_rove=sum(n))
+# 
+# total_roving_plot <- tot_roving %>% 
+#   ggplot(aes(crab_season, tot_rove,group=1))+
+#   geom_point()+geom_line()+
+#   labs(x="Crab Season",y="Number of Vessels Roving")
+# total_roving_plot
 ```
-
-### Odds of Switching Groups
 
 One analysis we can do with the group-membership data is to statistically check whether there are particular years with greater switching between groups. We want to see whether there was a greater propensity to switch to a Roving strategy during the period of the marine heatwave (2014-15 to 2017-18). To be precise, we want to statistically test whether the odds of switching into Roving Specialists or Roving Generalists was signifcantly greater during the MHW period than the non-MHW period. We do this with a logit regression.
 
 ```{r}
-switching_logit_dat <- drvid_other_fisheries %>%
-  group_by(drvid) %>%
-  arrange(crab_season) %>% 
-  mutate(last_status=dplyr::lag(status,1)) %>% 
-  filter(!is.na(last_status),crab_season!="2009-2010",crab_season!="2008-2009") %>% 
-  filter(status != "No VMS Data", last_status != "No VMS Data") %>% 
-  # indicate whether a vessel switching into a Roving group
-  mutate(switch_type=case_when(
-    last_status=="Local Generalists" & status != "Local Generalists" ~ 1,
-    # status=="Roving Generalists" & last_status != "Roving Generalists" ~ 1,
-    # status=="Roving Specialists" & last_status != "Roving Specialists" ~ 1,
-    # !(status %in% c("Roving Generalists","Roving Specialists")) ~ 0,
-    status == last_status ~ 0,
-    TRUE ~ 0
-  )) %>% 
-  mutate(mhw=ifelse(crab_season %in% c("2014-2015","2015-2016","2016-2017","2017-2018"),"MHW","Baseline"))
-
-switching_logit_dat %>% group_by(crab_season) %>% summarise(switchers=sum(switch_type,na.rm=T))
-
-switch_fit <- glm(switch_type~mhw+agency_code,family=binomial(link="logit"),data=switching_logit_dat)
-summary(switch_fit)
-
-# what if we add state-by-state controls?
+# switching_logit_dat <- drvid_other_fisheries %>%
+#   group_by(drvid) %>%
+#   arrange(crab_season) %>% 
+#   mutate(last_status=dplyr::lag(status,1)) %>% 
+#   filter(!is.na(last_status),crab_season!="2009-2010",crab_season!="2008-2009") %>% 
+#   filter(status != "No VMS Data", last_status != "No VMS Data") %>% 
+#   # indicate whether a vessel switching into a Roving group
+#   mutate(switch_type=case_when(
+#     last_status=="Local Generalists" & status != "Local Generalists" ~ 1,
+#     # status=="Roving Generalists" & last_status != "Roving Generalists" ~ 1,
+#     # status=="Roving Specialists" & last_status != "Roving Specialists" ~ 1,
+#     # !(status %in% c("Roving Generalists","Roving Specialists")) ~ 0,
+#     status == last_status ~ 0,
+#     TRUE ~ 0
+#   )) %>% 
+#   mutate(mhw=ifelse(crab_season %in% c("2014-2015","2015-2016","2016-2017","2017-2018"),"MHW","Baseline"))
+# 
+# switching_logit_dat %>% group_by(crab_season) %>% summarise(switchers=sum(switch_type,na.rm=T))
+# 
+# switch_fit <- glm(switch_type~mhw+agency_code,family=binomial(link="logit"),data=switching_logit_dat)
+# summary(switch_fit)
+# 
+# # what if we add state-by-state controls?
 
 ```
 
@@ -912,15 +1153,31 @@ metrics_by_partition_week %>%
   scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
 
 # Mean profit per trip
-metrics_by_partition_week %>% 
-  ggplot(aes(week,mean_profit_per_trip,col=partition,fill=partition))+
+profit_per_trip <- metrics_by_partition_week %>% 
+  ggplot(aes(week,mean_profit_per_trip/1000,col=partition,fill=partition))+
   geom_point(size=0.5)+
   geom_smooth()+
-  ylim(NA,40000)+
+  ylim(NA,40)+
   # geom_pointrange(aes(ymin=lower,ymax=upper,),size=0.25)+
-  labs(x="Week of Season",y="Profit per Trip",col="Group",fill="Group")+
+  labs(x="Week of Season",y="Profit per Trip ($1000s)",col="",fill="")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
-  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  theme(legend.position=c(0.7,0.8))
+profit_per_trip
+ggsave(here::here('fishing behavior','plots','profit_per_trip.png'),profit_per_trip,w=6,h=4)
+
+profit_per_day <- metrics_by_partition_week %>% 
+  ggplot(aes(week,mean_profit_per_day/1000,col=partition,fill=partition))+
+  geom_point(size=0.5)+
+  geom_smooth()+
+  ylim(NA,10)+
+  # geom_pointrange(aes(ymin=lower,ymax=upper,),size=0.25)+
+  labs(x="Week of Season",y="Profit per Day ($1000s)",col="",fill="")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  theme(legend.position=c(0.7,0.8))
+profit_per_day
+ggsave(here::here('fishing behavior','plots','profit_per_day.png'),profit_per_day,w=6,h=4)
 
 # Mean profit per day
 metrics_by_partition_week %>% 
@@ -1123,14 +1380,95 @@ tot_profit_season_plot <- total_rev_landings_season %>%
   ggplot(aes(crab_season,profit_tot,ymin=profit_tot-2*profit_se,ymax=profit_tot+2*profit_se,
              group=factor(partition),color=factor(partition)))+
   geom_line(size=1.5,position=position_dodge(width=0.2))+geom_linerange(size=1,position=position_dodge(width=0.2))+
-  labs(x="Crab Season",y="Mean Total Season Profit ($1000s)",title="",color="Group")+
+  geom_vline(xintercept=6.5,linetype=2,col="darkred")+
+  geom_vline(xintercept=9.5,linetype=2,col="darkred")+
+  labs(x="Crab Season",y="Profit per Vessel ($1000s)",title="",color="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        axis.title=element_text(family="sans",size=12,color="black"),
+        panel.grid.major=element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = 'bottom')
+
+tot_profit_season_plot
+
+ggsave(here::here('fishing behavior','plots','total_profit_by_season.png'),tot_profit_season_plot,w=8,h=6)
+
+# heatwave vs. non heatwave years
+heatwave_profit_barplot <- fishtix_plus %>%
+  filter(crab_season != "2008-2009") %>%
+  distinct(drvid,crab_season,Rec_ID,DCRB_revenue,DCRB_lbs,trip_profit,partition) %>% 
+  group_by(drvid,crab_season,partition) %>% 
+  summarise(total_rev=sum(DCRB_revenue,na.rm=T),
+    total_land=sum(DCRB_lbs,na.rm=T),
+    total_profit=sum(trip_profit,na.rm=T)) %>% 
+  ungroup() %>%  
+  mutate(is_heatwave=ifelse(crab_season %in% c('2015-2016','2016-2017','2017-2018'),"MHW","Non-MHW")) %>% 
+  group_by(partition,is_heatwave,drvid) %>% 
+  summarise(period_profit=mean(total_profit)) %>% 
+  ungroup() %>% 
+  group_by(partition,is_heatwave) %>% 
+  summarise(mean_profit=mean(period_profit),sd_profit=sd(period_profit,na.rm=T),se_profit=sd_profit/sqrt(n())) %>% 
+  ungroup() %>% 
+  ggplot(aes(partition,mean_profit/1000,fill=is_heatwave))+
+  scale_color_aaas()+
+  geom_col(position=position_dodge(),col='black')+
+  geom_errorbar(aes(partition,mean_profit/1000,group=is_heatwave,ymin=(mean_profit-2*se_profit)/1000,ymax=(mean_profit+2*se_profit)/1000),position=position_dodge(0.9),width=0.2)+
+  theme(panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        legend.position = c(0.2,0.8),
+        axis.text.x = element_text(angle=45,vjust=0.75))+
+  labs(x="Behavioral Group",y="Profit per Vessel ($1000s)",fill="Period")
+heatwave_profit_barplot
+
+# grid with a few plots
+row2 <- plot_grid(heatwave_profit_barplot, profit_per_day, labels = c('b', 'c'), label_size = 12)
+
+ts_heatwave_profit_plot <- plot_grid(tot_profit_season_plot, row2, labels = c('a', ''), label_size = 12, ncol = 1,
+                                     rel_heights = c(1.5,1))
+
+ggsave(here::here('fishing behavior','plots','timeseries_and_heatwave_profits.png'),ts_heatwave_profit_plot,w=8,h=10)
+```
+
+### Number of Weeks with Postive Profit
+
+```{r}
+profit_by_season_week <- fishtix_plus %>%
+  distinct(drvid,crab_season,Rec_ID,DCRB_revenue,DCRB_lbs,trip_profit,partition,week) %>% 
+  group_by(drvid,crab_season,partition,week) %>% 
+  summarise(
+    total_rev=sum(DCRB_revenue,na.rm=T),
+    total_land=sum(DCRB_lbs,na.rm=T),
+    total_profit=sum(trip_profit,na.rm=T)) %>% 
+  ungroup() %>% 
+  group_by(crab_season,partition,week) %>% 
+  summarise(n=n(),
+            rev_tot=mean(total_rev,na.rm=T),
+            rev_sd=sd(total_rev,na.rm=T),
+            rev_se=rev_sd/n^0.5,
+            # landings in MT
+            land_tot=mean(total_land,na.rm=T)/2204.64,
+            land_sd=sd(total_land,na.rm=T)/2204.64,
+            land_se=land_sd/n^0.5,
+            profit_tot=mean(total_profit,na.rm=T),
+            profit_sd=sd(total_profit,na.rm=T),
+            profit_se=profit_sd/n^0.5) %>% 
+  ungroup()
+
+profit_by_season_week_plot <- profit_by_season_week %>% 
+  mutate(profit_tot=profit_tot/1e3,profit_se=profit_se/1e3) %>%
+  ggplot(aes(week,profit_tot,ymin=profit_tot-2*profit_se,ymax=profit_tot+2*profit_se,
+             group=factor(partition),color=factor(partition)))+
+  geom_line(size=1,position=position_dodge(width=0.2))+geom_linerange(size=0.5,position=position_dodge(width=0.2))+
+  labs(x="Crab Season",y="Mean Weekly Profit ($1000s)",title="",color="Group")+
+  facet_wrap(~crab_season,scales='free')+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
-
-ggsave(here::here('fishing behavior','total_revenue_by_season.png'),tot_profit_season_plot,w=8,h=6)
-
+profit_by_season_week_plot
 ```
+
 
 ### Non-Dungeness Revenue
 
@@ -1214,6 +1552,8 @@ ggplot()+
         panel.grid.minor=element_blank(),
         panel.border=element_rect(fill=NA))
 
+
+
 # percent outside revenue
 drvid_dcrb_other_summary_perc <- drvid_dcrb_other %>% 
   mutate(perc_dcrb=tot_dcrb_revenue/tot_revenue_allsources,perc_other=tot_other_revenue/tot_revenue_allsources) %>% 
@@ -1232,6 +1572,32 @@ ggplot()+
   theme(panel.grid.major=element_blank(),
         panel.grid.minor=element_blank(),
         panel.border=element_rect(fill=NA))
+
+# in heatwave vs. non-heatwave years
+perc_revenue_heatwave <- drvid_dcrb_other %>% 
+  mutate(is_heatwave=ifelse(crab_season %in% c('2015-2016','2016-2017','2017-2018'),"MHW","Non-MHW")) %>%
+  mutate(is_heatwave=factor(is_heatwave,levels=c("Non-MHW","MHW"))) %>% 
+  mutate(perc_dcrb=tot_dcrb_revenue/tot_revenue_allsources,perc_other=tot_other_revenue/tot_revenue_allsources) %>% 
+  group_by(partition,week,is_heatwave)%>% 
+  summarise(Dungeness=mean(perc_dcrb,na.rm=T),Other=mean(perc_other,na.rm=T)) %>% 
+  ungroup()
+
+perc_revenue_heatwave_plot <- perc_revenue_heatwave %>% 
+  ggplot(aes(week,Dungeness*100,col=partition,linetype=is_heatwave))+
+  geom_line(size=1.5)+
+  coord_cartesian(xlim=c(0,45),ylim=c(0,100),expand=F)+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  labs(x="Week of Season",y="Percent of Weekly Revenue",col="Group",linetype="Period")+
+  # facet_wrap(~is_heatwave,nrow=1)+
+  theme(panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.border=element_rect(fill=NA),
+        legend.text=element_text(size=10))
+
+perc_revenue_heatwave_plot
+perc_revenue_heatwave_plot+geom_hline(yintercept = 80)+geom_vline(xintercept=22)
+
+  ggsave(here::here('fishing behavior','plots','dcrb_perc_revenue_by_week_heatwave.png'),perc_revenue_heatwave_plot,w=8,h=6)
 ```
 
 Other revenue by season
@@ -1240,9 +1606,11 @@ Other revenue by season
 other_revenue_season <- drvid_dcrb_other %>% 
   group_by(crab_season,drvid,partition) %>% 
   summarise(tot_dcrb=sum(tot_dcrb_revenue),tot_other=sum(tot_other_revenue),tot_rev=sum(tot_revenue_allsources)) %>% 
-  ungroup() %>% 
+  ungroup() %>%
   group_by(crab_season,partition) %>% 
-  summarise(mean_dcrb=mean(tot_dcrb,na.rm=T),mean_other=mean(tot_other,na.rm=T),mean_tot=mean(tot_rev,na.rm=T)) %>% 
+  summarise(mean_dcrb=mean(tot_dcrb,na.rm=T),
+            mean_other=mean(tot_other,na.rm=T),
+            mean_tot=mean(tot_rev,na.rm=T)) %>% 
   ungroup() %>% 
   mutate(perc=mean_dcrb/mean_tot)
 
@@ -1255,14 +1623,77 @@ outside_revenue_by_year <- other_revenue_season %>%
   scale_y_continuous(breaks=seq(20,100,by=10),labels=seq(20,100,by=10),limits = c(10,100))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
-ggsave(here::here('fishing behavior','outside_revenue_by_season.png'),outside_revenue_by_year,w=8,h=6)
+outside_revenue_by_year
+ggsave(here::here('fishing behavior','plots','outside_perc_revenue_by_season.png'),outside_revenue_by_year,w=8,h=6)
+
+# Other revenue MHW vs. non-MHW years
+other_rev <- drvid_dcrb_other %>% 
+  mutate(is_heatwave=ifelse(crab_season %in% c('2015-2016','2016-2017','2017-2018'),"MHW","Non-MHW")) %>%
+  mutate(is_heatwave=factor(is_heatwave,levels=c("Non-MHW","MHW"))) %>%
+  group_by(drvid,crab_season,is_heatwave,partition) %>% 
+  summarise(r=sum(tot_other_revenue,na.rm=T)) %>% 
+  ungroup() %>% 
+  group_by(crab_season,is_heatwave,partition) %>%
+  # group_by(crab_season,partition) %>% 
+  summarise(n=n(),
+            rev_tot=mean(r,na.rm=T),
+            rev_sd=sd(r,na.rm=T),
+            rev_se=rev_sd/n^0.5)
+other_rev_season <- other_rev %>% 
+  ggplot(aes(crab_season,rev_tot/1e3,group=partition,col=partition))+
+  geom_line(size=2)+
+  geom_vline(xintercept=7.5,linetype=2,col="darkred")+
+  geom_vline(xintercept=10.5,linetype=2,col="darkred")+
+  geom_errorbar(aes(ymin=(rev_tot-2*rev_se)/1e3,ymax=(rev_tot+2*rev_se)/1e3),width=0.2)+
+  labs(x="Crab Season",y="Non-Dungeness Revenue ($1000s)",col="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      legend.text = element_text(size=8),
+      legend.position = 'bottom',
+        axis.title=element_text(size=10))
+other_rev_season
+ggsave(here::here('fishing behavior','plots','outside_revenue_by_season_group.png'),other_rev_season,w=8,h=6)
+
+# bar plots of heatwave vs. non-heatwave years
+# heatwave vs. non heatwave years
+heatwave_non_dcrb_barplot <- drvid_dcrb_other %>% 
+  mutate(is_heatwave=ifelse(crab_season %in% c('2015-2016','2016-2017','2017-2018'),"MHW","Non-MHW")) %>%
+  mutate(is_heatwave=factor(is_heatwave,levels=c("MHW","Non-MHW"))) %>%
+  group_by(drvid,crab_season,is_heatwave,partition) %>% 
+  summarise(r=sum(tot_other_revenue,na.rm=T)) %>% 
+  ungroup() %>% 
+  group_by(is_heatwave,partition) %>%
+  # group_by(crab_season,partition) %>% 
+  summarise(n=n(),
+            rev_tot=mean(r,na.rm=T),
+            rev_sd=sd(r,na.rm=T),
+            rev_se=rev_sd/n^0.5) %>% 
+  ggplot(aes(partition,rev_tot/1000,fill=is_heatwave))+
+  scale_color_aaas()+
+  geom_col(position=position_dodge(),col='black')+
+  geom_errorbar(aes(partition,rev_tot/1000,group=is_heatwave,ymin=(rev_tot-2*rev_se)/1000,ymax=(rev_tot+2*rev_se)/1000),position=position_dodge(0.9),width=0.2)+
+  theme(panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        axis.title=element_text(family="sans",size=10,color="black"),
+        legend.position = c(0.2,0.8),
+        axis.text.x = element_text(angle=45,vjust=0.75),)+
+  labs(x="Behavioral Group",y="Non-Dungeness Revenue ($1000s)",fill="Period")
+heatwave_non_dcrb_barplot
+ggsave(here::here('fishing behavior','plots','heatwave_non_dcrb_revenue.png'),heatwave_non_dcrb_barplot,w=6,h=6)
+
+other_revenue_season_heatwave <- plot_grid(other_rev_season, heatwave_non_dcrb_barplot,labels = "auto",nrow = 2)
+other_revenue_season_heatwave
+ggsave(here::here('fishing behavior','plots','non_dcrb_seasons_groups_revenue.png'),other_revenue_season_heatwave,w=6,h=8)
 ```
 
 
 
 ```{r}
 # miport Richerson et al.'s preseason abundance estimates
-# abun <- read_csv(here::here('fishing behavior','crab_model_results_2020422.csv'))
+abun <- read_csv(here::here('fishing behavior','crab_model_results_2020422.csv'))
 # 
 # # need to adjust abundance by proportional VMS representation
 # # vms_rep <- read_rds(here('fishing behavior','vms_proportional_landings_key.rds'))
@@ -1281,16 +1712,24 @@ ggsave(here::here('fishing behavior','outside_revenue_by_season.png'),outside_re
 # 
 # 
 # # group all of CA
-# abun %<>% mutate(agency_code=case_when(
-#   area %in% c('Central CA','North CA') ~ "C",
-#   area == "OR" ~ "O",
-#   area == "WA" ~ "W"
-# )) %>% 
-#   mutate(lagseason=season-1) %>% 
-#   mutate(crab_season=paste(lagseason,season,sep="-")) %>% 
-#   group_by(agency_code,crab_season) %>% 
-#   summarise(mean_preseason_abun=sum(mean_est_thousands_mt)) %>% 
-#   ungroup()
+abun %<>% mutate(agency_code=case_when(
+  area %in% c('Central CA','North CA') ~ "C",
+  area == "OR" ~ "O",
+  area == "WA" ~ "W"
+)) %>%
+  mutate(lagseason=season-1) %>%
+  mutate(crab_season=paste(lagseason,season,sep="-")) %>%
+  group_by(agency_code,crab_season) %>%
+  summarise(mean_preseason_abun=sum(mean_est_thousands_mt)) %>%
+  ungroup()
+
+# Time series of abundance
+abun %>% 
+  filter(crab_season %in% unique(dat$crab_season)) %>% 
+  filter(crab_season != "2008-2009") %>% 
+  ggplot(aes(crab_season,mean_preseason_abun,group=agency_code,col=agency_code))+
+  geom_line(size=1.5)+
+  labs(x="Crab Season",y="Preseason Abundance Estimate (1000 MT)")
 # 
 # # from the fish tickets, find weekly cumulative landings of D. crab by state
 # # then estimate remaining crabs by including preseason abundance information
@@ -1446,6 +1885,159 @@ ggsave(here::here('fishing behavior','outside_revenue_by_season.png'),outside_re
 #   # scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
 #   labs(x="Relative Abundance (CPUE)",y="Proportion Captured by Group",color="Group")
 ```
+
+## Average Spatial Footprints
+
+Look at the spatial footprints by season for vessels in different groups. We look at the total convex hulls (spatial footprint) for vessels out of specific ports (defined as the most common landing port in a season), in different behavioral groups.
+
+```{r}
+vms_all_grd <- read_rds(here::here('data','processed','vms','vms_all_w_grd.rds'))
+vms_all_grd %<>%
+  dplyr::filter(TARGET_rev=='DCRB') %>% 
+  # join crab season indicator
+  left_join(recid_crabseason,by='Rec_ID')
+
+vms_groups <- vms_all_grd %>% 
+  left_join(dat_clustered,by=c('drvid','crab_season')) %>% 
+  filter(!is.na(partition)) %>% 
+  mutate(is_heatwave=ifelse(crab_season %in% c('2015-2016','2016-2017','2017-2018'),"MHW","Non-MHW"))
+
+# define home ports as most commonly-landed port for each vessel in each year
+homeports <- fishtix %>% 
+  group_by(drvid,crab_season,agency_code) %>% 
+  count(port_group_code) %>% 
+  top_n(1,n) %>% 
+  rename(homeport=port_group_code) %>%
+  select(-n)
+
+# join homeports to vms data
+vms_groups %<>%
+  left_join(homeports,by=c('drvid','crab_season','agency_code'))
+```
+
+How do we average home ranges across groups?
+We'll take the approach of the 95th percentile of lat and lon for vessels in each home port and behavioral group.
+
+```{r}
+# library(RANN)
+states_all <- coaststates %>% summarise()
+find_hull <- function(df){
+  dsts <- RANN::nn2(df %>% as_tibble() %>% select(X_COORD,Y_COORD),k=min(100,nrow(df)))$nn.dists %>% rowMeans()
+  hull<-df %>%
+    mutate(meandist=dsts) %>%
+    # remove top 5% spatial outliers based on distance from other points
+    mutate(rnk=percent_rank(dsts)) %>%
+    filter(rnk<0.98) %>%
+    ungroup() %>%
+    summarise() %>%
+    st_convex_hull()%>%
+    st_difference(states_all)
+  return(hull)
+}
+# find_average_range <- function(df){
+#   latmax=quantile(df$Y_COORD,0.975)
+#   latmin=quantile(df$Y_COORD,0.025)
+#   lonmax=quantile(df$X_COORD,0.975)
+#   lonmin=quantile(df$X_COORD,0.025)
+#   out <- st_polygon(list(matrix(c(lonmin,latmin,lonmin,latmax,lonmax,latmax,lonmax,latmin),nrow=4,byrow = T))
+# }
+```
+
+```{r}
+# CA example footprints
+cca <- vms_groups %>%
+  filter(homeport=="CCA") %>%
+  # group by behavioral group and home port and calculate hulls
+  # st_as_sf(coords=c("X_COORD","Y_COORD"))
+  group_by(partition,is_heatwave) %>%
+  nest() %>%
+  mutate(cvxhull=purrr::map(data,find_hull)) %>% 
+  ungroup()
+
+footprints_cca <- cca %>%
+  pluck("cvxhull") %>%
+  bind_rows()
+
+footprints_cca <- cca %>%
+  select(-data,-cvxhull) %>%
+  bind_cols(footprints_cca) %>%
+  st_as_sf() %>% 
+  mutate(a=st_area(geometry)/1e6 %>% as.numeric())
+#
+# library(ggforce)
+bbox <- st_bbox(footprints_cca)
+footprints_cca %>% 
+  mutate(pltgrp=factor(partition,levels=c("Roving Generalists","Roving Specialists","Local Generalists","Local Specialists"))) %>%
+  ggplot()+
+  geom_sf(aes(fill=pltgrp),alpha=1)+
+  geom_sf(data=coaststates)+
+  scale_fill_manual(values=rev(viridis_pal(begin=0.2,end=0.8)(4)))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]),datum=NA)+
+  labs(fill="Group")+
+  facet_wrap(~is_heatwave,nrow=1)
+```
+
+```{r}
+# Oregon example footprints
+newport <- vms_groups %>%
+  filter(homeport=="NPA") %>%
+  # group by behavioral group and home port and calculate hulls
+  # st_as_sf(coords=c("X_COORD","Y_COORD"))
+  group_by(partition,is_heatwave) %>%
+  nest() %>%
+  mutate(cvxhull=purrr::map(data,find_hull))
+
+footprints_newport <- newport %>%
+  pluck("cvxhull") %>%
+  bind_rows()
+
+footprints_newport <- newport %>%
+  select(-data,-cvxhull) %>%
+  bind_cols(footprints_newport) %>%
+  st_as_sf() %>% 
+  mutate(a=st_area(geometry)/1e6 %>% as.numeric())
+#
+# library(ggforce)
+bbox <- st_bbox(footprints_newport)
+footprints_newport %>% 
+  mutate(pltgrp=factor(partition,levels=c("Roving Generalists","Roving Specialists","Local Generalists","Local Specialists"))) %>%
+  ggplot()+
+  geom_sf(aes(fill=pltgrp),alpha=1)+
+  geom_sf(data=coaststates)+
+  scale_fill_manual(values=rev(viridis_pal(begin=0.2,end=0.8)(4)))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]),datum=NA)+
+  labs(fill="Group")+
+  facet_wrap(~is_heatwave,nrow=1)
+```
+
+
+```{r}
+# did home ranges change in MHW?
+mhw_homeranges <- dat %>% 
+  select(drvid,crab_season,homerange) %>% 
+  left_join(dat_clustered %>% select(drvid,crab_season,partition)) %>% 
+  left_join(homeports,by=c('drvid','crab_season')) %>% 
+  filter(!is.na(partition)) %>% 
+  mutate(is_heatwave=ifelse(crab_season %in% c('2015-2016','2016-2017','2017-2018'),"MHW","Non-MHW")) %>%
+  group_by(partition,is_heatwave) %>% 
+  summarise(homerange_area=mean(homerange),sd_homerange=sd(homerange,na.rm=T),se_homerange=sd_homerange/sqrt(n()))
+
+mhw_homeranges_plot <-mhw_homeranges %>% 
+  ggplot(aes(partition,homerange_area,fill=is_heatwave))+
+  scale_color_aaas()+
+  geom_col(position=position_dodge(),col='black')+
+  geom_errorbar(aes(partition,homerange_area,group=is_heatwave,ymin=(homerange_area-2*se_homerange),ymax=homerange_area+2*se_homerange),position=position_dodge(0.9),width=0.2)+
+  # facet_wrap(~agency_code,nrow=3,scales="free_y")+
+  labs(y="Home Range Area (square km)",fill="Period",col="Period",x="Behavioral Group")+
+  theme(panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        axis.title=element_text(family="sans",size=10,color="black"))
+        # legend.position = c(0.2,0.8),
+        # axis.text.x = element_text(angle=45,vjust=0.75),)
+mhw_homeranges_plot
+```
+
+
 
 ## Simple Logistic Regressions
 

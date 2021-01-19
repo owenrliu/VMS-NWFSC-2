@@ -1,0 +1,228 @@
+---
+title: "VMS Representation Index"
+author: "Owen Liu"
+date: "12/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r pkgs, include=FALSE,message=F,warning=FALSE}
+library(tidyverse)
+library(knitr)
+library(extrafont)
+library(ggsci)
+library(lubridate)
+library(sf)
+library(geosphere)
+library(magrittr)
+library(here)
+
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=10,color="black"),
+        legend.text = element_text(size=10),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+# Introduction
+
+The purpose of this document is to produce a number of plots that describe the relationships between variables in the cleaned, interpolated VMS data for all years from 2009-2018. Speficially, we explore differences in patterns of landings and effort over time, between VMS and non-VMS-equipped vessels, and between large and small vessels.
+
+The cleaning of the data has been done elsewhere, but for the purposes of the following plots, the important points are:
+
+* Raw VMS data were cleaned and checked for errors, and then linearly interpolated and regularized. We linearly interpolated between recorded VMS points to obtain a relative measure of speed and distance traveled during each trip, then regularized those data, choosing points along the paths such that we have a VMS record for each vessel at more regular intervals.
+* A fishing "trip" (the unit of many of the analyses below) is defined as the collection of VMS records preceding a landed, recorded PacFIN fish ticket. This means that one "trip" could involve multiple returns to port by a vessel across multiple days, as long as there is no ticket submitted within that time frame.
+* In data processing, VMS records were assigned to fish tickets using two criteria. First, for each ticket, we looked backwards to see when the previous ticket had been submitted, and assigned all VMS records after the previous ticket to the current ticket. Second, for those vessels with long periods between submitted tickets, we enforced a 10 day "lookback window", such that the maximum number of calendar days of VMS records that could be associated with a single ticket is 10.
+* We are focused here on fishing trips for Dungeness crab, but some vessels can participate in multiple fisheries. In data processing, if multiple tickets were submitted by a vessel on the same day, we denoted the primary target species for that trip as the species with the most landed pounds across all tickets. However, we also marked those trips so we can investigate any differences between single and multispecies fishing trips.
+
+```{r import data}
+# Load Rdata files
+
+fishtix <- read_rds(here::here('data','processed','fish tickets','fish_tickets_w_dayofseason.rds'))
+fishtix %<>% filter(ticket_day_of_season>=0)
+
+# vms_rep <- read_rds(here('fishing behavior','vms_proportional_landings_key.rds'))
+vms_tickets <- read_rds(here('fishing behavior','fish_tickets_with_vms.rds'))
+recid_crabseason <- fishtix %>% select(Rec_ID,crab_season) %>% distinct()
+
+# import vms data as well, to pull out trip duration in days
+# vms <- purrr::map_df(2009:2019, function(yr){
+#   read_rds(paste0(here::here('data','processed','matched','filtering',yr),"matched_filtered.rds"))
+# }) %>% 
+#   filter(TARGET_rev=='DCRB') %>% 
+#   # join crab season indicator
+#   left_join(recid_crabseason,by='Rec_ID') %>% 
+#   filter(!is.na(crab_season))
+
+# Interpolated, regularized VMS data, all years 
+# vms_sf<-read_rds(here::here('data','processed','vms','vms_all_w_grd.rds'))
+# vms <- vms_sf %>% st_set_geometry(NULL)
+
+```
+
+# Total Landings, Trips, and Number of Vessels over Time
+
+In this section, we summarize the data on broad scales to look at total landings over time and representation of the fleet through VMS records.
+
+
+```{r fishtix}
+# Summarize fish tickets by target species as defined above, and denote whether each trip is multispecies
+# fishtix <- fishtix_vlength_all %>% 
+#   
+#   # start with all fishtickets for the year
+#   select(Rec_ID,pacfin_port_code,drvid,date,TARGET,DCRB..lbs.,LOBS..lbs.,SABL..lbs.,SPRW..lbs.,OtherGear..lbs., Other..lbs.,FINAL_LENGTH) %>%
+#   
+#   #rename port
+#   rename(Port_Of_Landing=pacfin_port_code) %>% 
+# 
+#   # group by vessel
+#   group_by(drvid) %>%
+#   arrange(desc(date),pmin(DCRB..lbs.,LOBS..lbs.,SABL..lbs.,SPRW..lbs.,OtherGear..lbs., Other..lbs.)) %>%
+#   
+#   # For multiple-ticket days,
+#   # define "TARGET" from the ticket with most landed pounds for that day, but also retain the other targets in a string
+#   group_by(drvid, date) %>% 
+#   mutate(all_spp=paste(TARGET,sep='',collapse=''),sumlbs=DCRB..lbs.+LOBS..lbs.+SABL..lbs.+SPRW..lbs.+OtherGear..lbs.+Other..lbs.) %>% 
+#   top_n(1,wt=sumlbs) %>% 
+#   select(-sumlbs) %>% 
+#   ungroup() %>% 
+#   
+#   # denote whether a trip is multispecies (binary)
+#   mutate(num_TARGET=nchar(all_spp)/4) %>% 
+#   mutate(date=as_date(date,format="%B/%d/%Y",tz="America/Los_Angeles")) %>% 
+#   mutate(month=month(date),year=year(date))
+```
+
+```{r}
+fishtix <- fishtix %>% left_join(vms_tickets) %>% 
+  mutate(has_vms=replace_na(has_vms,0))
+```
+
+## Total Dungeness Vessels
+
+*  How many vessels recorded landings in each month in our data?
+*  What proportion of vessels have associated VMS data in each month?
+
+```{r count vessels}
+nvessels_by_month <- fishtix %>% 
+  group_by(year,month,has_vms) %>% 
+  summarise(nvessels=n_distinct(drvid)) %>% 
+  ungroup() %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles"))
+
+nvessels_by_month %>% 
+  ggplot(aes(date,nvessels,fill=factor(has_vms),col=factor(has_vms)))+
+  geom_bar(stat='identity')+
+  scale_fill_locuszoom(name="",labels=c("No VMS","VMS"))+
+  scale_color_locuszoom(name="",labels=c("No VMS","VMS"))+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Vessels Recording Landings",title="Number of Vessels by Month")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+```
+
+
+## Total Landings
+
+*  What are the total Dungeness landings represented in the fish ticket data over time?
+*  What proportion of those landings are represented in our VMS records?
+
+```{r}
+landings_by_month <- fishtix %>%
+  group_by(year,month,has_vms) %>% 
+  summarise(DCRB_lbs=sum(DCRB_lbs)) %>%
+  mutate(DCRB_mt=DCRB_lbs/2204.62) %>% 
+  ungroup() %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles"))
+
+landings_by_month %>% 
+  ggplot(aes(date,DCRB_lbs/1e6,fill=factor(has_vms),col=factor(has_vms)))+
+  geom_bar(stat='identity')+
+  scale_fill_locuszoom(labels=c("No VMS","VMS"),name="")+
+  scale_color_locuszoom(labels=c("No VMS","VMS"),name="")+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="DCRB Landings (Million Lbs)",title="DCRB Landings by Month, all Tickets")+
+  theme(legend.position = c(0.8,0.9))+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+
+landings_by_year <- fishtix %>%
+  group_by(year,has_vms) %>% 
+  summarise(DCRB_lbs=sum(DCRB_lbs)) %>%
+  mutate(DCRB_mt=DCRB_lbs/2204.62) %>% 
+  ungroup()
+
+landings_by_year %>% 
+  ggplot(aes(year,DCRB_lbs/1e6,fill=factor(has_vms),col=factor(has_vms)))+
+  geom_bar(stat='identity')+
+  scale_fill_locuszoom(labels=c("No VMS","VMS"),name="")+
+  scale_color_locuszoom(labels=c("No VMS","VMS"),name="")+
+  labs(x="Year",y="DCRB Landings (Million Lbs)",title="DCRB Landings by Year, all Tickets")+
+  theme(legend.position = c(0.8,0.9))
+```
+
+## By State
+
+```{r}
+landings_by_month_state <- fishtix %>%
+  group_by(year,month,agency_code,has_vms) %>% 
+  summarise(DCRB_lbs=sum(DCRB_lbs)) %>%
+  mutate(DCRB_mt=DCRB_lbs/2204.62) %>% 
+  ungroup() %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles"))
+
+landings_by_month_state %>% 
+  ggplot(aes(date,DCRB_lbs/1e6,fill=factor(has_vms),col=factor(has_vms)))+
+  geom_bar(stat='identity')+
+  facet_wrap(~agency_code,nrow=3)+
+  scale_fill_locuszoom(labels=c("No VMS","VMS"),name="")+
+  scale_color_locuszoom(labels=c("No VMS","VMS"),name="")+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="DCRB Landings (Million Lbs)",title="DCRB Landings by Month, all Tickets")+
+  theme(legend.position = c(0.8,0.9))+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+
+revenue_by_month_state <- fishtix %>%
+  group_by(year,month,agency_code,has_vms) %>% 
+  summarise(DCRB_revenue=sum(DCRB_revenue)) %>%
+  mutate(DCRB_revenue=DCRB_revenue/1000) %>% 
+  ungroup() %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles"))
+
+revenue_by_month_state %>% 
+  ggplot(aes(date,DCRB_revenue,fill=factor(has_vms),col=factor(has_vms)))+
+  geom_bar(stat='identity')+
+  facet_wrap(~agency_code,nrow=3)+
+  scale_fill_locuszoom(labels=c("No VMS","VMS"),name="")+
+  scale_color_locuszoom(labels=c("No VMS","VMS"),name="")+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Revenue ($1000s)",title="DCRB Landings by Month, all Tickets")+
+  theme(legend.position = c(0.8,0.9))+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+
+relative_revenue <- revenue_by_month_state %>% 
+  mutate(has_vms=ifelse(has_vms==1,"VMS","nonVMS")) %>% 
+  pivot_wider(names_from=has_vms,values_from = DCRB_revenue) %>% 
+  drop_na() %>%
+  mutate(vms_relative=VMS/(VMS+nonVMS)) %>% 
+  filter(!(month(date) %in% c(7,8,9,10)))
+  
+```
+
