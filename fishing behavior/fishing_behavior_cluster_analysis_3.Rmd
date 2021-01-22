@@ -92,6 +92,12 @@ vms <- purrr::map_df(2009:2019, function(yr){
   left_join(recid_crabseason,by='Rec_ID') %>% 
   filter(!is.na(crab_season))
 
+vms_all_grd <- read_rds(here::here('data','processed','vms','vms_all_w_grd.rds'))
+vms_all_grd %<>%
+  dplyr::filter(TARGET_rev=='DCRB') %>% 
+  # join crab season indicator
+  left_join(recid_crabseason,by='Rec_ID')
+
 trip_duration_key <- vms %>% 
   distinct(Rec_ID,trip_dur)
 ```
@@ -1891,11 +1897,6 @@ abun %>%
 Look at the spatial footprints by season for vessels in different groups. We look at the total convex hulls (spatial footprint) for vessels out of specific ports (defined as the most common landing port in a season), in different behavioral groups.
 
 ```{r}
-vms_all_grd <- read_rds(here::here('data','processed','vms','vms_all_w_grd.rds'))
-vms_all_grd %<>%
-  dplyr::filter(TARGET_rev=='DCRB') %>% 
-  # join crab season indicator
-  left_join(recid_crabseason,by='Rec_ID')
 
 vms_groups <- vms_all_grd %>% 
   left_join(dat_clustered,by=c('drvid','crab_season')) %>% 
@@ -1945,8 +1946,8 @@ find_hull <- function(df){
 
 ```{r}
 # CA example footprints
-cca <- vms_groups %>%
-  filter(homeport=="CCA") %>%
+sfa <- vms_groups %>%
+  filter(homeport=="SFA") %>%
   # group by behavioral group and home port and calculate hulls
   # st_as_sf(coords=c("X_COORD","Y_COORD"))
   group_by(partition,is_heatwave) %>%
@@ -1954,19 +1955,19 @@ cca <- vms_groups %>%
   mutate(cvxhull=purrr::map(data,find_hull)) %>% 
   ungroup()
 
-footprints_cca <- cca %>%
+footprints_sfa <- sfa %>%
   pluck("cvxhull") %>%
   bind_rows()
 
-footprints_cca <- cca %>%
+footprints_sfa <- sfa %>%
   select(-data,-cvxhull) %>%
-  bind_cols(footprints_cca) %>%
+  bind_cols(footprints_sfa) %>%
   st_as_sf() %>% 
   mutate(a=st_area(geometry)/1e6 %>% as.numeric())
 #
 # library(ggforce)
-bbox <- st_bbox(footprints_cca)
-footprints_cca %>% 
+bbox <- st_bbox(footprints_sfa)
+footprints_sfa %>% 
   mutate(pltgrp=factor(partition,levels=c("Roving Generalists","Roving Specialists","Local Generalists","Local Specialists"))) %>%
   ggplot()+
   geom_sf(aes(fill=pltgrp),alpha=1)+
@@ -2019,14 +2020,16 @@ mhw_homeranges <- dat %>%
   left_join(homeports,by=c('drvid','crab_season')) %>% 
   filter(!is.na(partition)) %>% 
   mutate(is_heatwave=ifelse(crab_season %in% c('2015-2016','2016-2017','2017-2018'),"MHW","Non-MHW")) %>%
+  mutate(is_heatwave=factor(is_heatwave,levels=c("Non-MHW","MHW"))) %>% 
   group_by(partition,is_heatwave) %>% 
   summarise(homerange_area=mean(homerange),sd_homerange=sd(homerange,na.rm=T),se_homerange=sd_homerange/sqrt(n()))
 
 mhw_homeranges_plot <-mhw_homeranges %>% 
-  ggplot(aes(partition,homerange_area,fill=is_heatwave))+
-  scale_color_aaas()+
-  geom_col(position=position_dodge(),col='black')+
-  geom_errorbar(aes(partition,homerange_area,group=is_heatwave,ymin=(homerange_area-2*se_homerange),ymax=homerange_area+2*se_homerange),position=position_dodge(0.9),width=0.2)+
+  ggplot(aes(partition,homerange_area,fill=is_heatwave,col=is_heatwave))+
+  scale_fill_manual(values=c("#3B4992FF","#EE0000FF"))+
+  scale_color_manual(values=c("#3B4992FF","#EE0000FF"))+
+  geom_col(position=position_dodge())+
+  geom_errorbar(aes(partition,homerange_area,group=is_heatwave,ymin=(homerange_area-2*se_homerange),ymax=homerange_area+2*se_homerange),position=position_dodge(0.9),width=0.2,col="black")+
   # facet_wrap(~agency_code,nrow=3,scales="free_y")+
   labs(y="Home Range Area (square km)",fill="Period",col="Period",x="Behavioral Group")+
   theme(panel.grid.major=element_blank(),
