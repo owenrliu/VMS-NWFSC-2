@@ -394,6 +394,35 @@ participation_metrics <- participation_metric %>%
 cor(participation_metrics$prop_other_tix,participation_metrics$revenue_diversity,use='complete.obs')
 ```
 
+```{r}
+# Update 02/09/21
+# Checking how much participation diversity is driven by groundfish
+
+# check species prevalence
+other_fisheries_revenues <- fishtix_long %>%
+  filter(drvid %in% vessel_list) %>%
+  distinct(Rec_ID,drvid,crab_season,PACFIN_SPECIES_CODE,tot_revenue_spp) %>%
+  group_by(drvid,crab_season,PACFIN_SPECIES_CODE) %>%  
+  summarise(tot_rev=sum(tot_revenue_spp,na.rm=T)) %>% 
+  ungroup() %>% 
+  complete(nesting(drvid,crab_season),PACFIN_SPECIES_CODE,fill=list(tot_rev=0)) %>% 
+  ungroup() %>% 
+  group_by(drvid,crab_season) %>% 
+  mutate(prop_rev=tot_rev/sum(tot_rev)) %>%
+  ungroup() %>% 
+  group_by(PACFIN_SPECIES_CODE) %>% 
+  summarise(mean_prop_rev=mean(prop_rev,na.rm=T))
+
+# Across all crab seasons and vessels, this is what the breakdown of mean percent revenue by fishery looks like
+other_fisheries_revenues %>% 
+  arrange(desc(mean_prop_rev)) %>% 
+  slice(1:20) %>% 
+  ggplot(aes(x=fct_reorder(PACFIN_SPECIES_CODE,-mean_prop_rev),y=mean_prop_rev*100))+
+  geom_col()+
+  labs(x="Species Code",y="Mean Percent of Revenue",title="Top 20 Species by Proportion of Revenue")
+```
+
+
 ### Risk Metric
 
 Following O'Farrell et al., we extract wind speeds from NOAA's ERDAPP server and use them to measure a fisher's propensity to go out in stormy weather. Following Pfeiffer and Gratz (2016), who also studied west coast fishing, we calculate a max (95th percentile) wind speed per trip, and then calculate what percent of a vessel's trips in a given crab season were pursued in winds >7.5m/s.

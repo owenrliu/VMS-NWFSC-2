@@ -133,14 +133,17 @@ rawdat.sub <- rawdat %>% select(FISH_TICKET_ID, PACFIN_PORT_CODE, PACFIN_GROUP_P
                           "PACFIN_SPECIES_CODE", "LANDED_WEIGHT_LBS", "EXVESSEL_REVENUE"))
 ```
 
-Remove the columns where the vessel identifier (drvid) is either "UNKNOWN" or blank ("")
+Remove the rows where the vessel identifier (drvid) is either "UNKNOWN" or blank ("")
+
 ```{r}
+# should we remove "MISSING" here as well?
 rawdat.sub %<>%
   filter(drvid != "UNKNOWN") %>%
   filter(drvid != "")
 ```
 
 Adjust gear group codes for some uncategorized gears
+
 ```{r}
 rawdat.sub %<>%
   mutate(gear_group=case_when(

@@ -51,7 +51,7 @@ rm(list=setdiff(ls(),c('process_year','alltime')))
 First, the full vms data set for `r process_year`.
 
 ```{r data}
-# Owen note: using read_csv here to ensure the data types of different variables are read in correctly
+# Owen note: using read_rds here to ensure the data types of different variables are read in correctly
 vms <- read_rds(here::here('data','processed','matched','matching',paste0(process_year,'matched_vmstix_only.rds')))
 ```
 
@@ -74,6 +74,11 @@ fishtix_lastVMS <- vms %>%
   group_by(Rec_ID) %>%
   top_n(1, wt=westcoastdate) %>%
   ungroup()
+
+# fishtix_lastVMS <- vms %>%
+#   group_by(Rec_ID) %>%
+#   slice_max(n=1, order_by=westcoastdate) %>%
+#   ungroup()
 ```
 
 Add port locations to last VMS points

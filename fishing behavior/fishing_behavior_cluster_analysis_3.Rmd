@@ -607,13 +607,14 @@ This is how vessel length maps on to behavioral groups in the fishery.
 #   labs(x="Vessel Length",y='density',fill='Group',title="Vessel Length Distribution by Behavioral Group")+
 #   scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
 #   facet_wrap(~crab_season)
-dat_clustered %>% left_join(vessel_sizes) %>% 
+vessel_length_dist_plot <-dat_clustered %>% left_join(vessel_sizes) %>% 
   ggplot(aes(vessel_size,fill=factor(partition)))+
   geom_density(alpha=0.5)+
   labs(x="Vessel Length",y='density',fill='Group',title="Vessel Length Distribution by Behavioral Group")+
   scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   facet_wrap(~crab_season)
-
+vessel_length_dist_plot
+ggsave(here::here('fishing behavior','plots','vessel_length_dist_by_group.png'),vessel_length_dist_plot,w=6,h=5)
 ```
 
 While the largest vessels are mostly categorized as Roving Generalists and the smallest are mostly Local Specialists, the other two behavioral groups are made up of a wide range of intermediate vessel sizes.
@@ -621,7 +622,7 @@ While the largest vessels are mostly categorized as Roving Generalists and the s
 We can also investigate the correlation of vessel size with other variables in the cluster analysis. As expected from the above, larger vessels are associated with longer trips, more exploratory behavior, risk-taking behavior (i.e. propensity to fish in high winds), and shorter seasons.
 
 ```{r}
-vars.corrs %>% 
+vessel_length_corr_plot <- vars.corrs %>% 
   filter(var1=='vessel_size',var2 !='vessel_size') %>% 
   arrange(desc(corr)) %>% 
   mutate(varname=factor(var2,levels=var2)) %>% 
@@ -633,6 +634,9 @@ vars.corrs %>%
   scale_y_continuous(breaks=seq(-1,1,by=0.2))+
   guides(fill='none')+
   theme(axis.text.x = element_text(angle=90,vjust=0.5,hjust=1))
+vessel_length_corr_plot
+ggsave(here::here('fishing behavior','plots','vessel_length_correlations.png'),vessel_length_corr_plot,w=6,h=5)
+
 ```
 
 ## Class Transition Across Years
@@ -2498,7 +2502,7 @@ class_by_yr_state <- dat_clustered %>%
   group_by(crab_season,agency_code,partition) %>% 
   summarise(n_vessels=n_distinct(drvid)) %>% 
   ungroup()
-class_by_yr_state %>% 
+num_vessels_states_plot <- class_by_yr_state %>% 
   ggplot(aes(crab_season,n_vessels,fill=factor(partition)))+
   geom_col()+
   labs(x="Crab Season",y="Number of Vessels",title="Number of Vessels by Behavior Class and Year",fill="Group")+
@@ -2507,7 +2511,7 @@ class_by_yr_state %>%
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
 
-class_by_yr_state %>% 
+prop_vessels_states_plot <- class_by_yr_state %>% 
   group_by(crab_season,agency_code) %>%
   mutate(prop_group=n_vessels/sum(n_vessels)) %>% 
   ggplot(aes(crab_season,prop_group,group=factor(partition),color=factor(partition)))+
@@ -2517,6 +2521,11 @@ class_by_yr_state %>%
   facet_wrap(~agency_code,ncol=1)+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
+num_vessels_states_plot
+prop_vessels_states_plot
+ggsave(here::here('fishing behavior','plots','num_vessels_by_state.png'),num_vessels_states_plot,w=6,h=8)
+ggsave(here::here('fishing behavior','plots','prop_vessels_by_state.png'),prop_vessels_states_plot,w=6,h=8)
+
 ```
 
 ```{r}

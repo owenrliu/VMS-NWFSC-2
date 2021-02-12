@@ -100,7 +100,7 @@ permits <- purrr::map_df(permitsfiles,function(fl){
 Choose columns of interest and subset the data frame
 ```{r pthin}
 pcols <- c("VESSEL_NUM", "AGENCY_CODE","REGISTRATION_YEAR","VESSEL_LENGTH", "LENGTH_TYPE_CODE")
-pthin <- permits %>%  select(pcols)
+pthin <- permits %>%  select(all_of(pcols))
 ```
 
 Change all entries of `777` for vessel length to `NA` (based on recommendation from Blake Feist)

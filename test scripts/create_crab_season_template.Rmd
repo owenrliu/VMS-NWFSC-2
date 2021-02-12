@@ -83,6 +83,7 @@ first_commercial_landings <- fishtix %>%
 ```
 
 What about the first *large* commercial landings? (say, in the top 50th percentile of year long catches, to try to avoid mis-labeled experimental catches)
+
 ```{r}
 first_large_commercial_landings <- fishtix %>% 
   filter(removal_type_code %in% c("C","D")) %>%
@@ -289,7 +290,7 @@ crab_season_template <- first_commercial_landings %>%
 
 ### Make 1% Landings Key
 
-For now, we use the 1% landings achievement key to indicate the start of each crab season for each individual port group in each year.
+We use the 1% landings achievement key to indicate the start of each crab season for each individual port group in each year.
 
 ```{r}
 write_csv(one_percent_landings_achievement,here::here('data','processed','one_perc_season_start_key.csv'))
