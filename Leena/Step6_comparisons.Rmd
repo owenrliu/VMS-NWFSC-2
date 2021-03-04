@@ -1,0 +1,195 @@
+---
+title: "Step6_comparisons"
+author: "Leena"
+date: "04/03/2021"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(magrittr)
+library(here)
+library(janitor)
+library(sf)
+library(rnaturalearth)
+
+
+
+process_year=2014
+```
+
+```{r}
+#2014 interpolated vms from Owens pipeline run
+owendat <- read_rds(here::here('data','processed','matched','interpolation',paste0(process_year,'interpolated_Owen.rds')))
+
+#2014 interpolated vms using Mary's way of creating move object
+marydat <- read_rds(here::here('data','processed','matched','interpolation',paste0(process_year,'interpolated_Mary.rds')))
+
+#2014 interpolated vms using Jameals's way of creating move object
+jamealdat <- read_rds(here::here('data','processed','matched','interpolation',paste0(process_year,'interpolated_Jameal.rds')))
+
+
+```
+
+
+```{r}
+nrow(owendat)
+nrow(marydat)
+nrow(jamealdat)
+
+#Owen version has 145 more rows than mary or jameal dataset (which have same number of rows)
+nrow(owendat)-nrow(marydat)
+
+```
+
+```{r}
+identical(owendat, marydat)
+identical(owendat, jamealdat)
+identical(marydat, jamealdat)
+#False for all
+
+all.equal(owendat, marydat)
+all.equal(owendat, jamealdat)
+all.equal(marydat, jamealdat) #TRUE
+
+```
+```{r}
+#no. and names of columns are same
+identical(colnames(owendat), colnames(marydat)) #TRUE
+identical(colnames(owendat), colnames(jamealdat)) #TRUE
+
+compare_df_cols(owendat, marydat, jamealdat, return = "mismatch")
+#only difference is character columns being factor columns
+
+```
+
+```{r}
+summary(owendat)
+summary(marydat)
+summary(jamealdat)
+
+
+#Based on visual comparison of summaries, there really don't seem to be any differences between marydat and jamealdat...
+
+#owendat min utcdatetim 2013-12-28 15:42:00
+#marydat min utcdatetim 2014-01-01 08:04:00
+#this might relate to an earlier step where get data from end of 2013 to cover trips that started end of 2013 but fishticket was logged in early 2014...
+
+
+
+```
+
+```{r}
+
+```
+
+```{r}
+owendat_sf <- owendat %>% st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+marydat_sf <- marydat %>% st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+jamealdat_sf <- jamealdat %>% st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+
+# Try with a subset of 100k points from the end of data frame
+owendat_sf_sample <- owendat_sf %>% 
+  slice_tail(n = 100000)
+
+marydat_sf_sample <- marydat_sf %>% 
+  slice_tail(n = 100000) 
+
+jamealdat_sf_sample <- jamealdat_sf %>% 
+  slice_tail(n = 100000) 
+  
+
+# coastline
+coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington')) %>% 
+  st_transform(st_crs(owendat_sf))
+
+map1 <- ggplot()+
+  geom_sf(data=coaststates,fill='gray50',col=NA)+
+  geom_sf(data=owendat_sf_sample,size=0.5,col='blue')+
+  geom_sf(data=marydat_sf_sample,size=0.5,col='red')+
+  labs(x='Longitude',y='Latitude',title=paste0(process_year," VMS records"))
+
+map2 <- ggplot()+
+  geom_sf(data=coaststates,fill='gray50',col=NA)+
+  geom_sf(data=marydat_sf_sample,size=0.5,col='red')+
+  geom_sf(data=owendat_sf_sample,size=0.5,col='blue')+
+  labs(x='Longitude',y='Latitude',title=paste0(process_year," VMS records"))
+
+map3 <- ggplot()+
+  geom_sf(data=coaststates,fill='gray50',col=NA)+
+  geom_sf(data=marydat_sf_sample,size=0.5,col='red')+
+  geom_sf(data=jamealdat_sf_sample,size=0.5,col='green')+
+  labs(x='Longitude',y='Latitude',title=paste0(process_year," VMS records"))
+
+
+
+map1
+map2
+map3
+
+#maps between marydat and jamealdat seem the same
+#owendat is missing some points that exists in marydat & jamealdat
+```
+
+```{r}
+#Add extra column for month
+owendat_sf %<>% mutate(Month = month(UTCDATETIM))
+owendat_may <- owendat_sf %>% 
+  filter(Month == 5)
+owendat_may_580792 <- owendat_may %>% 
+  filter(drvid == 580792)
+
+marydat_sf %<>% mutate(Month = month(UTCDATETIM))
+marydat_may <- marydat_sf %>% 
+  filter(Month == 5)
+marydat_may_580792 <- marydat_may %>% 
+  filter(drvid == 580792)
+
+jamealdat_sf %<>% mutate(Month = month(UTCDATETIM))
+jamealdat_may <- jamealdat_sf %>% 
+  filter(Month == 5)
+jamealdat_may_580792 <- jamealdat_may %>% 
+  filter(drvid == 580792)
+
+#coaststates2 <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  #filter(name %in% c('Oregon','Washington')) %>% 
+  #st_transform(st_crs(owendat_sf))
+coaststatescropped <- st_crop(coaststates2, xmin = -126, xmax = 122, ymin = 40, ymax = 45)
+
+may_580792_map <- ggplot()+
+  geom_sf(data=coaststatescropped,fill='gray50',col=NA)+
+  geom_sf(data=owendat_may_580792,size=0.8,col='blue')+
+  geom_sf(data=marydat_may_580792,size=0.7,color=alpha("red",0.3))+
+  #coord_sf(datum = 9001)+
+  #coord_sf(ylim = c(4500000, 5000000), xlim = c(400000, 600000)) +
+  labs(x='Longitude',y='Latitude',title=paste0(process_year,"Vessel 580792 in May")) 
+
+#Trying to figure out how to zoom - coaststates and the samples have crs
+#issues with ylim and xlim part
+#geom_sf by default changes things to lat longs from UTM
+
+may_580792_map <- ggplot()+
+  geom_sf(data=coaststatescropped,fill='gray50',col=NA)+
+  geom_sf(data=jamealdat_may_580792,size=0.8,col='green')+
+  geom_sf(data=marydat_may_580792,size=0.7,color=alpha("red",0.3))+
+  #coord_sf(datum = 9001)+
+  #coord_sf(ylim = c(4500000, 5000000), xlim = c(400000, 600000)) +
+  labs(x='Longitude',y='Latitude',title=paste0(process_year,"Vessel 580792 in May")) 
+
+
+##Plotting these in QGIS shows perfect overlap
+```
+
+
+
+
+```{r}
+write_csv(owendat_may_580792,here::here('data','processed','matched','interpolation','owendat_may_580792.csv'))
+write_csv(marydat_may_580792,here::here('data','processed','matched','interpolation','marydat_may_580792.csv'))
+write_csv(jamealdat_may_580792,here::here('data','processed','matched','interpolation','jamealdat_may_580792.csv'))
+
+
+```
+
+
