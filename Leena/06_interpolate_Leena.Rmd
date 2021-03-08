@@ -23,6 +23,7 @@ library(tidyverse)
 library(magrittr)
 library(here)
 library(lubridate)
+library(sf)
 library(move)
 library(rgdal)
 
@@ -110,6 +111,7 @@ vms_move <- vms_gapfiltered %>%
 ### Create `move` Object
 
 ```{r move}
+#This does not work
 start.time <- Sys.time()
 movedat <- move(x=vms_move$X_COORD,
                 y=vms_move$Y_COORD,
@@ -118,6 +120,56 @@ movedat <- move(x=vms_move$X_COORD,
                 proj=sp::CRS("+proj=utm +north +zone=10 +ellps=WGS84"),
                 animal=vms_move$Rec_ID)
 Sys.time() - start.time
+
+
+#The version of code that works for Leena - chunk starting from line 110
+start.time <- Sys.time()
+movedat <- move(x=vms_move$LONGITUDE,
+                y=vms_move$LATITUDE,
+                time=vms_move$UTCDATETIM,
+                data=vms_move,
+                proj=sp::CRS("+proj=longlat +ellps=WGS84 +datum=WGS84"),
+                animal=vms_move$Rec_ID)
+Sys.time() - start.time
+
+movedatProj <- spTransform(movedat, CRSobj="+proj=utm +north +zone=10 +ellps=WGS84")
+# Seems to work although at the end still says Discarded datum Unknown based on WGS84 ellipsoid in Proj4 definition
+
+
+#Mary's solution
+start.time <- Sys.time()
+movedat2 <- move(x=vms_move$X_COORD,
+                y=vms_move$Y_COORD,
+                time=vms_move$UTCDATETIM,
+                data=vms_move,
+                proj=sp::CRS("+proj=utm +zone=10 +datum=WGS84 +units=m +no_defs +type=crs"),
+                animal=vms_move$Rec_ID)
+Sys.time() - start.time
+# Doesn't work - Error in SpatialPointsDataFrame(coords = cbind(x, y, deparse.level = 0),  :   row.names of data and coords do not match
+
+movedat3 <- move(x=vms_move$LONGITUDE,
+                y=vms_move$LATITUDE,
+                time=vms_move$UTCDATETIM,
+                data=vms_move,
+                proj=sp::CRS("+proj=longlat +datum=WGS84 +no_defs +type=crs"),
+                animal=vms_move$Rec_ID)
+
+movedatProj3 <- spTransform(movedat, CRSobj="+proj=utm +zone=10 +datum=WGS84 +units=m +no_defs +type=crs")
+# This works best, no messages at all
+
+
+#Jameals version
+sp::coordinates(vms_move) <- c(38,39)
+start.time <- Sys.time()
+movedat4 <- move(x=coordinates(vms_move)[,1], #[1:100,1]
+                y=coordinates(vms_move)[,2], #[1:100,2]
+                time=as.data.frame(vms_move)$UTCDATETIM,#[1:100]
+                data=as.data.frame(vms_move), #[1:100,]
+                proj=sp::CRS("+proj=utm +north +zone=10 +datum=WGS84 +units=m +no_defs +type=crs"),
+                animal=as.data.frame(vms_move)$Rec_ID) #[1:100]
+Sys.time() - start.time
+#This also work, no messages, BUT need to make vms_move back into a data.frame for later code to work
+vms_move <- as.data.frame(vms_move)
 ```
 
 ### Run Interpolation
@@ -126,10 +178,12 @@ Starting from a MoveStack object
 
 ```{r}
 ptm <- proc.time()
-ntrips <- n.indiv(movedat)
-interpolated_data <- purrr::map_df(1:ntrips,function(i){
+#ntrips <- n.indiv(movedatProj3)
+ntrips <- n.indiv(movedat4)
+interpolated_data2 <- purrr::map_df(1:ntrips,function(i){
 
-  tmp_movedat <- movedat[[i]]
+  #tmp_movedat <- movedatProj3[[i]]
+  tmp_movedat <- movedat4[[i]]
   
   inter_movedat <- interpolateTime(x=tmp_movedat, time=as.difftime(60, units="mins"), spaceMethod='euclidean')
   inter_df <- as.data.frame(inter_movedat)
@@ -143,6 +197,14 @@ interpolated_data <- purrr::map_df(1:ntrips,function(i){
   return(inter_df)
 })
 tm <- proc.time()-ptm
+
+#interpolated_data created based on Mary's move object. Interpolation took 16.25minutes
+#interpolated_data2 created based on Jameal's move object. Interpolation took 16.79minutes
+#identical(interpolated_data,interpolated_data2)
+#[1] FALSE
+#all.equal(interpolated_data,interpolated_data2)
+#[1] "Component “X_COORD”: names for target but not for current"
+#[2] "Component “Y_COORD”: names for target but not for current"
 ```
 
 Interpolation took taken `r round(tm[3]/60,2)` minutes to run.
@@ -152,11 +214,25 @@ Interpolation took taken `r round(tm[3]/60,2)` minutes to run.
 Rename columns from interpolation so we can re-join the rest of the VMS trip information. For original (non-interpolated) data, we can re-join with times and coordinates. For newly-interpolated data, we define the new time and coordinates and then join the trip-level information.
 
 ```{r}
-orig_vms <- interpolated_data %>%
+orig_vms2 <- interpolated_data2 %>%
   filter(sensor=="unknown") %>% 
   dplyr::select(-UTCDATETIM,-X_COORD,-Y_COORD) %>% 
   rename(UTCDATETIM=timestamps,X_COORD=coords.x1,Y_COORD=coords.x2) %>% 
   left_join(vms_move,by = c("Rec_ID", "drvid", "UTCDATETIM", "X_COORD", "Y_COORD"))
+#This version gives NAs for Mary's way, but 'works' for Jameal's way
+
+#Other version
+orig_vms <- interpolated_data %>%
+  filter(sensor=="unknown") %>% 
+  left_join(vms_move,by = c("Rec_ID", "drvid", "UTCDATETIM", "X_COORD", "Y_COORD")) %>% 
+  dplyr::select(-UTCDATETIM,-X_COORD,-Y_COORD) %>% 
+  rename(UTCDATETIM=timestamps,X_COORD=coords.x1,Y_COORD=coords.x2)
+#This works on Mary's way
+# identical(orig_vms, orig_vms2)
+#[1] FALSE
+# all.equal(orig_vms, orig_vms2)
+#[1] TRUE
+
 
 vms_trip_info <- vms_move %>% 
   dplyr::select(-VMS_RECNO,-UTCDATETIM,-LATITUDE,-LONGITUDE,-NGDC_M,-X_COORD,-Y_COORD,-AVG_SPEED,-AVG_COURSE,-westcoastdate,-westcoastdate_notime,-segment_dur,-avg_speed_recalc,-in_port,-recnum,-keep_remove_timelag,-longest_seg,-last_seg_longest,-is_last_seg) %>%
@@ -167,6 +243,18 @@ new_vms <- interpolated_data %>%
   dplyr::select(-UTCDATETIM,-X_COORD,-Y_COORD) %>% 
   rename(UTCDATETIM=timestamps,X_COORD=coords.x1,Y_COORD=coords.x2) %>% 
   left_join(vms_trip_info,by = c("Rec_ID", "drvid"))
+#Mary's way
+
+new_vms2 <- interpolated_data2 %>% 
+  filter(sensor=="interpolateTime")%>% 
+  dplyr::select(-UTCDATETIM,-X_COORD,-Y_COORD) %>% 
+  rename(UTCDATETIM=timestamps,X_COORD=coords.x1,Y_COORD=coords.x2) %>% 
+  left_join(vms_trip_info,by = c("Rec_ID", "drvid"))
+#Jameal's way
+# identical(new_vms, new_vms2)
+#[1] FALSE
+# all.equal(new_vms, new_vms2)
+#[1] TRUE
 ```
 
 Create calculable missing columns: west coast dates, latitude, longitude.
@@ -188,6 +276,25 @@ new_vms_coords <- new_vms %>%
 # add the new lat/lon into the dataset
 new_vms %<>%
   bind_cols(new_vms_coords)
+
+
+#For Jameal's way
+# west coast dates
+new_vms2 %<>%
+  mutate(westcoastdate = with_tz(UTCDATETIM, tzone = "America/Los_Angeles"),
+         westcoastdate_notime = as_date(westcoastdate))
+
+# convert UTM x/y coordinates to lat/lon
+new_vms_coords2 <- new_vms2 %>% 
+  st_as_sf(coords=c("X_COORD","Y_COORD"),crs="+proj=utm +north +zone=10 +ellps=WGS84") %>% 
+  st_transform(4326) %>% 
+  st_coordinates() %>% 
+  as_tibble() %>% 
+  set_colnames(c('LONGITUDE','LATITUDE'))
+
+# add the new lat/lon into the dataset
+new_vms2 %<>%
+  bind_cols(new_vms_coords2)
 ```
 
 Add in VMS Record Numbers for new VMS points
@@ -195,6 +302,11 @@ Add in VMS Record Numbers for new VMS points
 ```{r}
 new_recnos <- seq(from=(max(vms_move$VMS_RECNO)+10), length.out=nrow(new_vms))
 new_vms %<>% mutate(VMS_RECNO = new_recnos)
+
+
+#For Jameal's way
+new_recnos2 <- seq(from=(max(vms_move$VMS_RECNO)+10), length.out=nrow(new_vms2))
+new_vms2 %<>% mutate(VMS_RECNO = new_recnos2)
 ```
 
 Recombine
@@ -203,6 +315,17 @@ vms_regular <- bind_rows(orig_vms, new_vms)
 
 # check record numbers to make sure they're unique
 length(unique(vms_regular$VMS_RECNO))/length(vms_regular$VMS_RECNO)
+
+#returns 1 for Mary's way
+
+
+#For Jameal's way
+vms_regular2 <- bind_rows(orig_vms2, new_vms2)
+
+# check record numbers to make sure they're unique
+length(unique(vms_regular2$VMS_RECNO))/length(vms_regular2$VMS_RECNO)
+
+#returns 1 for Jameal's way
 ```
 
 ## Re-calculate Speeds
@@ -235,6 +358,35 @@ vms_regular %<>%
   mutate(avg_speed_recalc=ifelse(segment_dist==0|segment_dur==0,0,avg_speed_recalc)) %>% 
   # select out columns we don't want (columns that were just used for intermediate calculations)
   dplyr::select(-(recnum:lagdate))
+
+
+
+#For Jameal's way
+vms_regular2 <- vms_regular2 %>% 
+  ungroup() %>% 
+  group_by(Rec_ID) %>% 
+  # lag latitude and longitude by 1 time step
+  mutate(laglon=lag(LONGITUDE,1,order_by=westcoastdate),laglat=lag(LATITUDE,1,order_by=westcoastdate)) %>% 
+  # lag time by 1 time step
+  mutate(lagdate=lag(westcoastdate,1,order_by=westcoastdate)) %>% 
+  # calculate duration since last ping, in seconds
+  mutate(segment_dur=as.duration(lagdate %--% westcoastdate)/dseconds()) %>% 
+  ungroup()
+
+# Calculate distance (Note: geosphere seems much faster than doing this with sf())
+segment_dists2 <- geosphere::distHaversine(p1=cbind(vms_regular2$LONGITUDE, vms_regular2$LATITUDE),
+                                    p2=cbind(vms_regular2$laglon, vms_regular2$laglat))
+
+vms_regular2 %<>% 
+  mutate(segment_dist=segment_dists)
+
+# Speed is just segment distance (default in meters) divided by segment duration (in seconds)
+vms_regular2 %<>%
+  mutate(avg_speed_recalc=segment_dist/segment_dur) %>% 
+  # some calculations will be NaN or Inf because of 0 distance or time. Fix these as zeroes
+  mutate(avg_speed_recalc=ifelse(segment_dist==0|segment_dur==0,0,avg_speed_recalc)) %>% 
+  # select out columns we don't want (columns that were just used for intermediate calculations)
+  dplyr::select(-(recnum:lagdate))
 ```
 
 ## Add Bathymetry Again
@@ -258,6 +410,26 @@ bathy.points <- over(vms_sp, bathy.grid)$vms_composite_bath
 # proc.time()-tm
 
 vms_regular %<>% mutate(NGDC_M = bathy.points)
+
+
+
+
+#For Jameal's way
+# tm <- proc.time()
+vms_sp2 <- vms_regular2
+coordinates(vms_sp2) <- c("LONGITUDE", "LATITUDE") 
+proj4string(vms_sp2)<-proj4string(bathy.grid) <- CRS("+init=epsg:4326") # WGS 84
+bathy.points2 <- over(vms_sp2, bathy.grid)$vms_composite_bath
+# proc.time()-tm
+
+vms_regular2 %<>% mutate(NGDC_M = bathy.points)
+
+
+#The bathy step gives the following message for both solution options (during line CRS("+init=espg:4326")) -- proj4string thing - can this be altered for PROJ6?
+#A new CRS was assigned to an object with an existing CRS:
+#+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0
+#without reprojecting.
+#For reprojection, use function spTransform
 ```
 
 ## Save Results
@@ -266,7 +438,11 @@ Add a final indicator for whether a point was interpolated or not, then save
 
 ```{r}
 vms_regular %<>% mutate(is_interpolated=ifelse(sensor=="interpolateTime",1,0)) %>% dplyr::select(-sensor)
+vms_regular2 %<>% mutate(is_interpolated=ifelse(sensor=="interpolateTime",1,0)) %>% dplyr::select(-sensor)
 
-write_rds(vms_regular,here::here('data','processed','matched','interpolation',paste0(process_year,'interpolated.rds')))
+
+write_rds(vms_regular,here::here('data','processed','matched','interpolation',paste0(process_year,'interpolated_Mary.rds')))
+write_rds(vms_regular2,here::here('data','processed','matched','interpolation',paste0(process_year,'interpolated_Jameal.rds')))
+
 ```
 

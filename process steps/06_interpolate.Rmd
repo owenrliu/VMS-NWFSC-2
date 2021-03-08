@@ -50,8 +50,7 @@ vms_filtered <- read_rds(here::here('data','processed','matched','filtering',pas
 
 ## Remove Trips with Large Time Gaps
 
-Find trips whose maximum time gap is greater than 4 hours or encompasses more than 25 percent of the trip
-NOTE:: Was this 40% before??
+Find trips whose maximum time gap is greater than 4 hours or encompasses more than 40 percent of the trip
 
 ```{r}
 # random_trip <- vms_filtered %>% filter(TARGET_rev=='DCRB') %>% distinct(Rec_ID) %>% sample_n(3) %>% pull(Rec_ID)
