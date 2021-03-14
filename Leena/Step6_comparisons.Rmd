@@ -75,7 +75,7 @@ lib_versions
 owendat <- read_rds(here::here('data','processed','matched','interpolation','2014interpolated_Owen.rds'))
 
 #2014 interpolated vms using Mary's way of creating move object
-marydat <- read_rds(here::here('data','processed','matched','interpolation','2014interpolated_Mary.rds'))
+marydat <- read_rds(here::here('data','processed','matched','interpolation','2014interpolated_MaryV2.rds'))
 
 #2014 interpolated vms using Jameals's way of creating move object
 jamealdat <- read_rds(here::here('data','processed','matched','interpolation','2014interpolated_Jameal.rds'))
@@ -92,7 +92,7 @@ identical(marydat, jamealdat)
 
 all.equal(owendat, marydat) #Gives a list of 'discrepancies'
 all.equal(owendat, jamealdat) #Gives a list of 'discrepancies'
-all.equal(marydat, jamealdat) #TRUE --> so perhaps no difference between the Mary way and the Jameal way
+all.equal(marydat, jamealdat) #Gives a list of 'discrepancies'
 
 ```
 
@@ -103,7 +103,7 @@ identical(colnames(owendat), colnames(marydat)) #TRUE
 identical(colnames(owendat), colnames(jamealdat)) #TRUE
 
 compare_df_cols(owendat, marydat, jamealdat, return = "mismatch")
-#only difference is that some columns are character columns in owendat, but factor columns in marydat and jamealdat
+#only difference is that some columns are character columns in owendat and marydat, but factor columns in jamealdat
 
 ```
 
