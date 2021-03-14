@@ -154,7 +154,7 @@ movedat3 <- move(x=vms_move$LONGITUDE,
                 proj=sp::CRS("+proj=longlat +datum=WGS84 +no_defs +type=crs"),
                 animal=vms_move$Rec_ID)
 
-movedatProj3 <- spTransform(movedat, CRSobj="+proj=utm +zone=10 +datum=WGS84 +units=m +no_defs +type=crs")
+movedatProj3 <- spTransform(movedat3, CRSobj="+proj=utm +zone=10 +datum=WGS84 +units=m +no_defs +type=crs")
 # This works best, no messages at all
 
 
@@ -178,12 +178,12 @@ Starting from a MoveStack object
 
 ```{r}
 ptm <- proc.time()
-#ntrips <- n.indiv(movedatProj3)
-ntrips <- n.indiv(movedat4)
+ntrips <- n.indiv(movedatProj3)
+#ntrips <- n.indiv(movedat4)
 interpolated_data2 <- purrr::map_df(1:ntrips,function(i){
 
-  #tmp_movedat <- movedatProj3[[i]]
-  tmp_movedat <- movedat4[[i]]
+  tmp_movedat <- movedatProj3[[i]]
+  #tmp_movedat <- movedat4[[i]]
   
   inter_movedat <- interpolateTime(x=tmp_movedat, time=as.difftime(60, units="mins"), spaceMethod='euclidean')
   inter_df <- as.data.frame(inter_movedat)
@@ -221,8 +221,8 @@ orig_vms2 <- interpolated_data2 %>%
   left_join(vms_move,by = c("Rec_ID", "drvid", "UTCDATETIM", "X_COORD", "Y_COORD"))
 #This version gives NAs for Mary's way, but 'works' for Jameal's way
 
-#Other version
-orig_vms <- interpolated_data %>%
+#Other version -- USE THIS!
+orig_vms <- interpolated_data2 %>%
   filter(sensor=="unknown") %>% 
   left_join(vms_move,by = c("Rec_ID", "drvid", "UTCDATETIM", "X_COORD", "Y_COORD")) %>% 
   dplyr::select(-UTCDATETIM,-X_COORD,-Y_COORD) %>% 
@@ -238,7 +238,8 @@ vms_trip_info <- vms_move %>%
   dplyr::select(-VMS_RECNO,-UTCDATETIM,-LATITUDE,-LONGITUDE,-NGDC_M,-X_COORD,-Y_COORD,-AVG_SPEED,-AVG_COURSE,-westcoastdate,-westcoastdate_notime,-segment_dur,-avg_speed_recalc,-in_port,-recnum,-keep_remove_timelag,-longest_seg,-last_seg_longest,-is_last_seg) %>%
   distinct()
 
-new_vms <- interpolated_data %>% 
+
+new_vms <- interpolated_data2 %>% 
   filter(sensor=="interpolateTime")%>% 
   dplyr::select(-UTCDATETIM,-X_COORD,-Y_COORD) %>% 
   rename(UTCDATETIM=timestamps,X_COORD=coords.x1,Y_COORD=coords.x2) %>% 
