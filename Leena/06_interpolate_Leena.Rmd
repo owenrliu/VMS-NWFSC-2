@@ -442,7 +442,7 @@ vms_regular %<>% mutate(is_interpolated=ifelse(sensor=="interpolateTime",1,0)) %
 vms_regular2 %<>% mutate(is_interpolated=ifelse(sensor=="interpolateTime",1,0)) %>% dplyr::select(-sensor)
 
 
-write_rds(vms_regular,here::here('data','processed','matched','interpolation',paste0(process_year,'interpolated_Mary.rds')))
+write_rds(vms_regular,here::here('data','processed','matched','interpolation',paste0(process_year,'interpolated_MaryV2.rds')))
 write_rds(vms_regular2,here::here('data','processed','matched','interpolation',paste0(process_year,'interpolated_Jameal.rds')))
 
 ```
