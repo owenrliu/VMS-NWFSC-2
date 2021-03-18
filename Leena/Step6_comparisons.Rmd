@@ -346,16 +346,7 @@ summary(owendat2018_step2)
 summary(Leenadat2018_step2)
 ```
 ```{r}
-points_owen2018 <- owendat2018_step2 %>% group_by(Rec_ID) %>% summarise(n_owen = n())
-points_Leena2018 <- Leenadat2018_step2 %>% group_by(Rec_ID) %>% summarise(n_leena = n())
 
-joined <- left_join(points_owen2018,points_Leena2018, by=c("Rec_ID"))
-
-joined %>% 
-  ggplot(aes(n_owen,n_leena))+
-  geom_point()+
-  geom_smooth(method='lm')+
-  labs(x='points by tix_owen',y="points by tix_leena")
 ```
 Step 3
 
@@ -380,5 +371,20 @@ nrow(Leenadat2018_step3) #same number of rows
 ```{r}
 summary(owendat2018_step3)
 summary(Leenadat2018_step3)
+```
+```{r}
+#points_owen2018 <- owendat2018_step3 %>% group_by(Rec_ID) %>% summarise(n_owen = n())
+#points_Leena2018 <- Leenadat2018_step3 %>% group_by(Rec_ID) %>% summarise(n_leena = n())
+points_owen2018 <- owendat2018_step3 %>% group_by(VESSEL_NAM) %>% summarise(n_owen = n())
+points_Leena2018 <- Leenadat2018_step3 %>% group_by(VESSEL_NAM) %>% summarise(n_leena = n())
+
+#joined <- left_join(points_owen2018,points_Leena2018, by=c("Rec_ID"))
+joined <- left_join(points_owen2018,points_Leena2018, by=c("VESSEL_NAM"))
+
+joined %>% 
+  ggplot(aes(n_owen,n_leena))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  labs(x='points by tix_owen',y="points by tix_leena")
 ```
 
