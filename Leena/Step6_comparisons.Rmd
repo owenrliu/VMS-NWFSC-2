@@ -294,4 +294,31 @@ write_csv(marydat,here::here('data','processed','matched','interpolation','maryd
 write_csv(jamealdat,here::here('data','processed','matched','interpolation','jamealdat.csv'))
 ```
 
+Comparing 2018 VMS pipeline output at each step
+
+Step 1
+
+
+```{r}
+#2018 step 1 from Owens pipeline run
+owendat2018_step1 <- read_rds(here::here('data','processed','fish tickets','2018fishtix_Owen.rds'))
+
+#2018 step 1 from my pipeline run
+Leenadat2018_step1 <- read_rds(here::here('data','processed','fish tickets','2018fishtix.rds'))
+
+```
+
+```{r}
+identical(owendat2018_step1, Leenadat2018_step1) #True
+
+all.equal(owendat2018_step1, Leenadat2018_step1) #True
+
+identical(colnames(owendat2018_step1), colnames(Leenadat2018_step1)) #TRUE
+
+```
+```{r}
+summary(owendat2018_step1)
+summary(Leenadat2018_step1)
+```
+
 
