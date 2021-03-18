@@ -320,7 +320,8 @@ for(y in unique(vessel_length_key_df$year)){
     filter(year == y)
   vessel_length_key_df_subset <- vessel_length_key_df %>%
     filter(year==y) %>%
-    select(-year)
+   #select(-year)
+    dplyr::select(-year)
   dcrb_landings_length <- left_join(landings_subset,vessel_length_key_df_subset, by=c("drvid", "agency_code"))
   write_rds(dcrb_landings_length,here::here('data','processed','fish tickets',paste0(y, "fishtix_vlengths.rds")))
 }
