@@ -154,7 +154,21 @@ summary(marydat_tail)
 ```
 
 
+Sum of the number of VMS point per fish ticket, if map Mary and Owen data in x and y in a plot, it should run as a 1-to-1 line.
+```{r}
 
+VMSpoints_owen <- owendat %>% group_by(Rec_ID) %>% summarise(n_owen = n())
+VMSpoints_mary <- marydat %>% group_by(Rec_ID) %>% summarise(n_mary = n())
+
+joined <- left_join(VMSpoints_owen,VMSpoints_mary, by=c("Rec_ID"))
+
+joined %>% 
+  ggplot(aes(n_owen,n_mary))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  labs(x='VMS by tix_owen',y="VMS by tix_mary")
+#Almost all points fall on a 1-to-1 line, 10 points that don't - quite likely related to mary data not having point in Dec 2013
+```
 
 ```{r}
 #QGIS mapping seems better
