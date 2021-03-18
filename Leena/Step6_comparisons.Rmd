@@ -357,4 +357,21 @@ joined %>%
   geom_smooth(method='lm')+
   labs(x='points by tix_owen',y="points by tix_leena")
 ```
+Step 3
+
+```{r}
+#2018 step 3 from Owens pipeline run
+owendat2018_step3 <- read_rds(here::here('data','processed','vms','2018_vms_clean_Owen.rds'))
+
+#2018 step 3 from my pipeline run
+Leenadat2018_step3 <- read_rds(here::here('data','processed','vms','2018_vms_clean.rds'))
+```
+
+```{r}
+identical(owendat2018_step3, Leenadat2018_step3) #
+
+all.equal(owendat2018_step3, Leenadat2018_step3) #
+
+identical(colnames(owendat2018_step3), colnames(Leenadat2018_step3)) #TRUE
+```
 
