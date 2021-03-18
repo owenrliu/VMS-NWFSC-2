@@ -101,6 +101,8 @@ Choose columns of interest and subset the data frame
 ```{r pthin}
 pcols <- c("VESSEL_NUM", "AGENCY_CODE","REGISTRATION_YEAR","VESSEL_LENGTH", "LENGTH_TYPE_CODE")
 pthin <- permits %>%  select(all_of(pcols))
+#If this returns an error ("Error in (function (classes, fdef, mtable)  :   unable to find an inherited method for function ‘select’ for signature ‘"tbl_df"’")
+#Use pthin <- permits %>%  dplyr::select(all_of(pcols))
 ```
 
 Change all entries of `777` for vessel length to `NA` (based on recommendation from Blake Feist)
