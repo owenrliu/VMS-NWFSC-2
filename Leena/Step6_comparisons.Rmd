@@ -412,8 +412,34 @@ summary(owendat2018_step4_vmstixonly)
 summary(Leenadat2018_step4_vmstixonly)
 ```
 ```{r}
-points_owen2018 <- owendat2018_step4_vmstixonly %>% group_by(Rec_ID) %>% summarise(n_owen = n())
-points_Leena2018 <- Leenadat2018_step4_vmstixonly %>% group_by(Rec_ID) %>% summarise(n_leena = n())
+
+```
+Step 5
+
+```{r}
+#2018 step 5 from Owens pipeline run
+owendat2018_step5 <- read_rds(here::here('data','processed','matched','filtering','2018matched_filtered_Owen.rds'))
+
+#2018 step 5 from my pipeline run
+Leenadat2018_step5 <- read_rds(here::here('data','processed','matched','filtering','2018matched_filtered.rds'))
+```
+```{r}
+identical(owendat2018_step5, Leenadat2018_step5) #False
+
+all.equal(owendat2018_step5, Leenadat2018_step5) #gives list of discrepancies
+
+identical(colnames(owendat2018_step5), colnames(Leenadat2018_step5)) #TRUE
+
+nrow(owendat2018_step5)
+nrow(Leenadat2018_step5) #same number of rows
+```
+```{r}
+summary(owendat2018_step5)
+summary(Leenadat2018_step5)
+```
+```{r}
+points_owen2018 <- owendat2018_step5 %>% group_by(Rec_ID) %>% summarise(n_owen = n())
+points_Leena2018 <- Leenadat2018_step5 %>% group_by(Rec_ID) %>% summarise(n_leena = n())
 #points_owen2018 <- owendat2018_step3 %>% group_by(VESSEL_NAM) %>% summarise(n_owen = n())
 #points_Leena2018 <- Leenadat2018_step3 %>% group_by(VESSEL_NAM) %>% summarise(n_leena = n())
 
