@@ -94,6 +94,7 @@ tixfiles <- list.files(here::here('data','raw','fish tickets'),full.names = T)
 rawdat <- purrr::map_df(tixfiles,function(fl){
   read_csv(fl,col_types= cols_only(
     FISH_TICKET_ID = col_double(), 
+    #FTID = col_character(), #Also include FTID column to compare between logbooks - won't work if column doesn't appear in ALL raw fish ticket files
     PACFIN_PORT_CODE= col_character(), 
     PACFIN_GROUP_PORT_CODE= col_character(), 
     VESSEL_NUM= col_character(), 
