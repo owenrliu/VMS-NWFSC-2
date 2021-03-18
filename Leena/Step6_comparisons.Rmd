@@ -321,4 +321,40 @@ summary(owendat2018_step1)
 summary(Leenadat2018_step1)
 ```
 
+```{r}
+
+```
+Step 2
+
+```{r}
+#2018 step 2 from Owens pipeline run
+owendat2018_step2 <- read_rds(here::here('data','processed','fish tickets','2018fishtix_vlengths_Owen.rds'))
+
+#2018 step 2 from my pipeline run
+Leenadat2018_step2 <- read_rds(here::here('data','processed','fish tickets','2018fishtix_vlengths.rds'))
+```
+
+```{r}
+identical(owendat2018_step2, Leenadat2018_step2) #True
+
+all.equal(owendat2018_step2, Leenadat2018_step2) #True
+
+identical(colnames(owendat2018_step2), colnames(Leenadat2018_step2)) #TRUE
+```
+```{r}
+summary(owendat2018_step2)
+summary(Leenadat2018_step2)
+```
+```{r}
+points_owen2018 <- owendat2018_step2 %>% group_by(Rec_ID) %>% summarise(n_owen = n())
+points_Leena2018 <- Leenadat2018_step2 %>% group_by(Rec_ID) %>% summarise(n_leena = n())
+
+joined <- left_join(points_owen2018,points_Leena2018, by=c("Rec_ID"))
+
+joined %>% 
+  ggplot(aes(n_owen,n_leena))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  labs(x='points by tix_owen',y="points by tix_leena")
+```
 
