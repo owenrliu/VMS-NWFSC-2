@@ -387,4 +387,43 @@ joined %>%
   geom_smooth(method='lm')+
   labs(x='points by tix_owen',y="points by tix_leena")
 ```
+Step 3
+
+```{r}
+#2018 step 4 from Owens pipeline run
+owendat2018_step4_vmstixonly <- read_rds(here::here('data','processed','matched','matching','2018matched_vmstix_only_Owen.rds'))
+
+#2018 step 4 from my pipeline run
+Leenadat2018_step4_vmstixonly <- read_rds(here::here('data','processed','matched','matching','2018matched_vmstix_only.rds'))
+```
+
+```{r}
+identical(owendat2018_step4_vmstixonly, Leenadat2018_step4_vmstixonly) #False
+
+all.equal(owendat2018_step4_vmstixonly, Leenadat2018_step4_vmstixonly) #"Component “X_COORD”: names for current but not for target"
+
+identical(colnames(owendat2018_step4_vmstixonly), colnames(Leenadat2018_step4_vmstixonly)) #TRUE
+
+nrow(owendat2018_step4_vmstixonly)
+nrow(Leenadat2018_step4_vmstixonly) #same number of rows
+```
+```{r}
+summary(owendat2018_step4_vmstixonly)
+summary(Leenadat2018_step4_vmstixonly)
+```
+```{r}
+points_owen2018 <- owendat2018_step4_vmstixonly %>% group_by(Rec_ID) %>% summarise(n_owen = n())
+points_Leena2018 <- Leenadat2018_step4_vmstixonly %>% group_by(Rec_ID) %>% summarise(n_leena = n())
+#points_owen2018 <- owendat2018_step3 %>% group_by(VESSEL_NAM) %>% summarise(n_owen = n())
+#points_Leena2018 <- Leenadat2018_step3 %>% group_by(VESSEL_NAM) %>% summarise(n_leena = n())
+
+joined <- left_join(points_owen2018,points_Leena2018, by=c("Rec_ID"))
+#joined <- left_join(points_owen2018,points_Leena2018, by=c("VESSEL_NAM"))
+
+joined %>% 
+  ggplot(aes(n_owen,n_leena))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  labs(x='points by tix_owen',y="points by tix_leena")
+```
 
