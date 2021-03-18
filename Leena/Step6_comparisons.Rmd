@@ -368,10 +368,13 @@ Leenadat2018_step3 <- read_rds(here::here('data','processed','vms','2018_vms_cle
 ```
 
 ```{r}
-identical(owendat2018_step3, Leenadat2018_step3) #
+identical(owendat2018_step3, Leenadat2018_step3) #False
 
-all.equal(owendat2018_step3, Leenadat2018_step3) #
+all.equal(owendat2018_step3, Leenadat2018_step3) #gives list of discrepancies
 
 identical(colnames(owendat2018_step3), colnames(Leenadat2018_step3)) #TRUE
+
+nrow(owendat2018_step3)
+nrow(Leenadat2018_step3) #same number of rows
 ```
 
