@@ -133,7 +133,8 @@ landings <- purrr::map(process_year, function(y){
 # find relevant vessels (all vessels versus Dungeness vessels only)
 vessels <- landings %>%
   filter(drvid != "UNKNOWN", drvid != "MISSING", drvid != "", !is.na(drvid)) %>%
-  select(drvid, agency_code, year) %>%
+ # select(drvid, agency_code, year) %>%
+  dplyr::select(drvid, agency_code, year) %>%
   distinct()
 
 if(dcrb_only){
