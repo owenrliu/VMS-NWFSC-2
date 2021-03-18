@@ -377,4 +377,8 @@ identical(colnames(owendat2018_step3), colnames(Leenadat2018_step3)) #TRUE
 nrow(owendat2018_step3)
 nrow(Leenadat2018_step3) #same number of rows
 ```
+```{r}
+summary(owendat2018_step3)
+summary(Leenadat2018_step3)
+```
 
