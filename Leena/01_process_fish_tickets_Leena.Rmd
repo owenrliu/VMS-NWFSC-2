@@ -54,6 +54,7 @@ Choose directories and set objects
 ```{r objects}
 ## which years of fish tickets are you interested in?
 # process_year = 2017
+# process_year = 2018 #Create a version of 2018 that has FTID
 
 ## which species-specific revenue and lbs columns would you like? (static)
 species_cols <- c("DCRB", "SABL", "LOBS", "SPRW") 
@@ -89,12 +90,13 @@ This should be a .csv file containing raw PacFIN data. We only read in columns t
 
 ```{r rawdata}
 
-tixfiles <- list.files(here::here('data','raw','fish tickets'),full.names = T)
+#tixfiles <- list.files(here::here('data','raw','fish tickets'),full.names = T)
+tixfiles <- list.files(here::here('data','raw','fish tickets','has FTID'),full.names = T)
 
 rawdat <- purrr::map_df(tixfiles,function(fl){
   read_csv(fl,col_types= cols_only(
     FISH_TICKET_ID = col_double(), 
-    #FTID = col_character(), #Also include FTID column to compare between logbooks - won't work if column doesn't appear in ALL raw fish ticket files
+    FTID = col_character(), #Also include FTID column to compare between logbooks - won't work if column doesn't appear in ALL raw fish ticket files
     PACFIN_PORT_CODE= col_character(), 
     PACFIN_GROUP_PORT_CODE= col_character(), 
     VESSEL_NUM= col_character(), 
@@ -128,9 +130,9 @@ problems(rawdat) %>% select(col) %>% distinct()
 First, subset the raw data to include only the columns that are needed. Rename the columns that will be retained in the final processed data. The last three columns are used to calculate per-species / total revenue and landed weight, but will not ultimately be retained.
 
 ```{r}
-rawdat.sub <- rawdat %>% select(FISH_TICKET_ID, PACFIN_PORT_CODE, PACFIN_GROUP_PORT_CODE, VESSEL_NUM, AGENCY_CODE, GEAR_CODE, GEAR_NAME, PACFIN_GROUP_GEAR_CODE, REMOVAL_TYPE_CODE, REMOVAL_TYPE_NAME, LANDING_DATE, LANDING_MONTH, LANDING_YEAR, PACFIN_SPECIES_CODE, LANDED_WEIGHT_LBS, EXVESSEL_REVENUE) %>% 
+rawdat.sub <- rawdat %>% select(FISH_TICKET_ID, FTID, PACFIN_PORT_CODE, PACFIN_GROUP_PORT_CODE, VESSEL_NUM, AGENCY_CODE, GEAR_CODE, GEAR_NAME, PACFIN_GROUP_GEAR_CODE, REMOVAL_TYPE_CODE, REMOVAL_TYPE_NAME, LANDING_DATE, LANDING_MONTH, LANDING_YEAR, PACFIN_SPECIES_CODE, LANDED_WEIGHT_LBS, EXVESSEL_REVENUE) %>% 
 # change some column names
-  set_colnames(c("Rec_ID","pacfin_port_code", "port_group_code","drvid", "agency_code","gear_code", "gear_name", "gear_group", "removal_type_code", "removal_type_name", "date", "month", "year", 
+  set_colnames(c("Rec_ID", "FTID", "pacfin_port_code", "port_group_code","drvid", "agency_code","gear_code", "gear_name", "gear_group", "removal_type_code", "removal_type_name", "date", "month", "year", 
                           "PACFIN_SPECIES_CODE", "LANDED_WEIGHT_LBS", "EXVESSEL_REVENUE"))
 ```
 
@@ -232,9 +234,9 @@ rawdat.w.targets <- rawdat.sub %>%
   ungroup() %>% 
   select(-(first_rev:second_lbs_spp))
 
-# Add back in dates, vessel IDs, etc.
+# Add back in dates, vessel IDs, etc.##Added FTID in this list
 recID_attributes <- rawdat.sub %>% 
-  select(Rec_ID,PACFIN_SPECIES_CODE,pacfin_port_code,port_group_code,gear_code,gear_name,gear_group,drvid,agency_code,date,month,year)
+  select(Rec_ID,FTID,PACFIN_SPECIES_CODE,pacfin_port_code,port_group_code,gear_code,gear_name,gear_group,drvid,agency_code,date,month,year)
   
 rawdat.w.targets %<>%
   left_join(recID_attributes,by=c("Rec_ID","PACFIN_SPECIES_CODE"))
@@ -335,9 +337,10 @@ dat_out <- dat_targets_other %>%
 Clean up the output by reording the columns of interest
 
 ```{r reorder_dataframe}
+#Added FTID to select list
 dat_out %<>%
   select(-(spp_lbs:prop_revenue_spp),-is_other) %>% 
-  select(Rec_ID,pacfin_port_code,port_group_code,drvid,agency_code,removal_type_code,removal_type_name,gear_code_all,TRAP.OR.POT.OR.RING,date,month,year,year_mo,jdate,year_jdate,Week,year_Wk,contains("_lbs"),contains("_rev"),species_code_all,other_lbs,other_rev) %>% 
+  select(Rec_ID,FTID,pacfin_port_code,port_group_code,drvid,agency_code,removal_type_code,removal_type_name,gear_code_all,TRAP.OR.POT.OR.RING,date,month,year,year_mo,jdate,year_jdate,Week,year_Wk,contains("_lbs"),contains("_rev"),species_code_all,other_lbs,other_rev) %>% 
   # the last distinct() removes records for which we no longer care about individual sub-trip species catches (we only care about catched of the focal species, plus total catch and TARGETs)
   distinct()
 ```
@@ -348,11 +351,12 @@ dat_out %<>%
 Save the data!
 
 ```{r save}
+#Save a separate version of output with FTID still included
 yrs_of_data <- unique(dat_out$year)
 for(y in 1:length(yrs_of_data)) {
  dat_out %>% 
     filter(year==yrs_of_data[y]) %>% 
-    write_rds(here::here('data','processed','fish tickets',paste0(yrs_of_data[y],"fishtix",".rds",collapse=""))) 
+    write_rds(here::here('data','processed','fish tickets',paste0(yrs_of_data[y],"fishtix_withFTID",".rds",collapse=""))) 
 }
 # for(y in unique(rawdat$LANDING_YEAR)){
 #   year.final.processdat <- filter(final.processdat, year == y )
