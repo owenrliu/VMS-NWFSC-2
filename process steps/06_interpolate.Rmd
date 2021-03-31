@@ -23,6 +23,7 @@ library(tidyverse)
 library(magrittr)
 library(here)
 library(lubridate)
+library(sf)
 library(move)
 library(rgdal)
 
@@ -51,7 +52,7 @@ vms_filtered <- read_rds(here::here('data','processed','matched','filtering',pas
 ## Remove Trips with Large Time Gaps
 
 Find trips whose maximum time gap is greater than 4 hours or encompasses more than 40 percent of the trip
-
+#This section may provide a message "no non-missing arguments to max; returning -Inf" which is a warning, and not an error
 ```{r}
 # random_trip <- vms_filtered %>% filter(TARGET_rev=='DCRB') %>% distinct(Rec_ID) %>% sample_n(3) %>% pull(Rec_ID)
 
@@ -109,15 +110,28 @@ vms_move <- vms_gapfiltered %>%
 
 ### Create `move` Object
 
+#The code for creating a 'move' object and for runing interpolation have been updated due to changes in GDAL and PROJ libraries.
+#The projection command in the following chunk has been updated to use proj6 string fromatting. To check your GDAL and PROJ versions use code rgdal::rgdal_extSoftVersion()
 ```{r move}
-start.time <- Sys.time()
-movedat <- move(x=vms_move$X_COORD,
-                y=vms_move$Y_COORD,
+#OLD CODE 
+#start.time <- Sys.time()
+#movedat <- move(x=vms_move$X_COORD,
+#                y=vms_move$Y_COORD,
+#                time=vms_move$UTCDATETIM,
+#                data=vms_move,
+#                proj=sp::CRS("+proj=utm +north +zone=10 +ellps=WGS84"),
+#                animal=vms_move$Rec_ID)
+#Sys.time() - start.time
+#The old code gives the following error message: Error in SpatialPointsDataFrame(coords = cbind(x, y, deparse.level = 0),  :   row.names of data and coords do not match
+
+#NEW VERSION
+movedat <- move(x=vms_move$LONGITUDE,
+                y=vms_move$LATITUDE,
                 time=vms_move$UTCDATETIM,
                 data=vms_move,
-                proj=sp::CRS("+proj=utm +north +zone=10 +ellps=WGS84"),
+                proj=sp::CRS("+proj=longlat +datum=WGS84 +no_defs +type=crs"),
                 animal=vms_move$Rec_ID)
-Sys.time() - start.time
+movedatProj <- spTransform(movedat, CRSobj="+proj=utm +zone=10 +datum=WGS84 +units=m +no_defs +type=crs")
 ```
 
 ### Run Interpolation
@@ -126,10 +140,12 @@ Starting from a MoveStack object
 
 ```{r}
 ptm <- proc.time()
-ntrips <- n.indiv(movedat)
+#ntrips <- n.indiv(movedat) #OLD CODE
+ntrips <- n.indiv(movedatProj) #NEW CODE
 interpolated_data <- purrr::map_df(1:ntrips,function(i){
 
-  tmp_movedat <- movedat[[i]]
+  # tmp_movedat <- movedat[[i]] #OLD CODE
+  tmp_movedat <- movedatProj[[i]] #NEW CODE
   
   inter_movedat <- interpolateTime(x=tmp_movedat, time=as.difftime(60, units="mins"), spaceMethod='euclidean')
   inter_df <- as.data.frame(inter_movedat)
@@ -152,11 +168,20 @@ Interpolation took taken `r round(tm[3]/60,2)` minutes to run.
 Rename columns from interpolation so we can re-join the rest of the VMS trip information. For original (non-interpolated) data, we can re-join with times and coordinates. For newly-interpolated data, we define the new time and coordinates and then join the trip-level information.
 
 ```{r}
+#OLD CODE
+#orig_vms <- interpolated_data %>%
+#  filter(sensor=="unknown") %>% 
+#  dplyr::select(-UTCDATETIM,-X_COORD,-Y_COORD) %>% 
+#  rename(UTCDATETIM=timestamps,X_COORD=coords.x1,Y_COORD=coords.x2) %>% 
+#  left_join(vms_move,by = c("Rec_ID", "drvid", "UTCDATETIM", "X_COORD", "Y_COORD"))
+
+#NEW CODE
+#join datasets using original UTCDATETIM, X_COORD and Y_COORD columns prior to replacing them with the results from the interpolation
 orig_vms <- interpolated_data %>%
   filter(sensor=="unknown") %>% 
+  left_join(vms_move,by = c("Rec_ID", "drvid", "UTCDATETIM", "X_COORD", "Y_COORD")) %>% 
   dplyr::select(-UTCDATETIM,-X_COORD,-Y_COORD) %>% 
-  rename(UTCDATETIM=timestamps,X_COORD=coords.x1,Y_COORD=coords.x2) %>% 
-  left_join(vms_move,by = c("Rec_ID", "drvid", "UTCDATETIM", "X_COORD", "Y_COORD"))
+  rename(UTCDATETIM=timestamps,X_COORD=coords.x1,Y_COORD=coords.x2)
 
 vms_trip_info <- vms_move %>% 
   dplyr::select(-VMS_RECNO,-UTCDATETIM,-LATITUDE,-LONGITUDE,-NGDC_M,-X_COORD,-Y_COORD,-AVG_SPEED,-AVG_COURSE,-westcoastdate,-westcoastdate_notime,-segment_dur,-avg_speed_recalc,-in_port,-recnum,-keep_remove_timelag,-longest_seg,-last_seg_longest,-is_last_seg) %>%
@@ -249,6 +274,7 @@ bathy.grid <- read_rds(here::here('data','raw','vms_composite_bath_spGrid.RDS'))
 
 Get bathymetry at VMS data points
 
+#This chunk currently gives the following message: "A new CRS was assigned to an object with an existing CRS:+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0 without reprojecting. For reprojection, use function spTransform"
 ```{r}
 # tm <- proc.time()
 vms_sp <- vms_regular

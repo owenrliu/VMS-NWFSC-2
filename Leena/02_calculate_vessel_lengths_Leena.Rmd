@@ -123,8 +123,9 @@ Read in raw fish ticket `.rds` files for each year of interest to data frame "la
 
 ```{r}
 # import landings data
+#Adjust import file name - use one that has FTID columns
 landings <- purrr::map(process_year, function(y){
-  read_rds(here::here('data','processed','fish tickets',paste0(y,'fishtix.rds')))
+  read_rds(here::here('data','processed','fish tickets',paste0(y,'fishtix_withFTID.rds')))
 }) %>% 
   bind_rows()
 
@@ -312,6 +313,7 @@ for(y in unique(vessel_length_key_df$year)){
 Landings matched to vessel lengths
 
 ```{r eval=TRUE}
+#save output with diff name to indicate FTID still in data
 for(y in unique(vessel_length_key_df$year)){
   landings_subset <- landings %>%
     filter(year == y)
@@ -319,7 +321,7 @@ for(y in unique(vessel_length_key_df$year)){
     filter(year==y) %>%
     select(-year)
   dcrb_landings_length <- left_join(landings_subset,vessel_length_key_df_subset, by=c("drvid", "agency_code"))
-  write_rds(dcrb_landings_length,here::here('data','processed','fish tickets',paste0(y, "fishtix_vlengths.rds")))
+  write_rds(dcrb_landings_length,here::here('data','processed','fish tickets',paste0(y, "fishtix_vlengths_withFTID.rds")))
 }
 # for(y in unique(vessel_length_key_df$year)){
 #   landings_subset <- landings %>%

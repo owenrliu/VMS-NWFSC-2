@@ -213,7 +213,7 @@ We now have the full matched dataset, including retaining `r sum(!fishtix_vms$ha
 #   mutate(has_vms=ifelse(has_vms,"VMS Trips","Non-VMS Trips"))
 # How long are trips?
 fishtix_vms %>% 
-  select(Rec_ID,trip_dur,has_vms) %>%
+  dplyr::select(Rec_ID,trip_dur,has_vms) %>%
   mutate(trip_dur=as.integer(trip_dur)) %>% 
   distinct() %>% 
   ungroup() %>% 
@@ -228,7 +228,7 @@ fishtix_vms %>%
 fishtix_vms %<>% mutate(multispecies=ifelse(nchar(species_code_all)>4,1,0))
 
 fishtix_vms %>% 
-  select(Rec_ID,multispecies,has_vms) %>%
+  dplyr::select(Rec_ID,multispecies,has_vms) %>%
   distinct() %>% 
   mutate(has_vms=ifelse(has_vms,"VMS Trips","Non-VMS Trips")) %>% 
   ggplot(aes(factor(multispecies),fill=factor(multispecies)))+
@@ -255,7 +255,7 @@ fishtix_vms %>%
 Save a version that has all fish ticket data, including records with no VMS match, as well as a filtered dataset that excludes non-VMS records.
 
 ```{r}
-fishtix_vms %<>% select(-month)
+fishtix_vms %<>% dplyr::select(-month)
 fishtix_vms_all <- fishtix_vms
 fishtix_vms_only <- fishtix_vms %>% filter(has_vms==1)
 write_rds(fishtix_vms_all,here::here('data','processed','matched','matching',paste0(process_year,'matched_alltix.rds')))

@@ -101,6 +101,8 @@ Choose columns of interest and subset the data frame
 ```{r pthin}
 pcols <- c("VESSEL_NUM", "AGENCY_CODE","REGISTRATION_YEAR","VESSEL_LENGTH", "LENGTH_TYPE_CODE")
 pthin <- permits %>%  select(all_of(pcols))
+#If this returns an error ("Error in (function (classes, fdef, mtable)  :   unable to find an inherited method for function ‘select’ for signature ‘"tbl_df"’")
+#Use pthin <- permits %>%  dplyr::select(all_of(pcols))
 ```
 
 Change all entries of `777` for vessel length to `NA` (based on recommendation from Blake Feist)
@@ -131,7 +133,8 @@ landings <- purrr::map(process_year, function(y){
 # find relevant vessels (all vessels versus Dungeness vessels only)
 vessels <- landings %>%
   filter(drvid != "UNKNOWN", drvid != "MISSING", drvid != "", !is.na(drvid)) %>%
-  select(drvid, agency_code, year) %>%
+ # select(drvid, agency_code, year) %>%
+  dplyr::select(drvid, agency_code, year) %>%
   distinct()
 
 if(dcrb_only){
@@ -317,7 +320,8 @@ for(y in unique(vessel_length_key_df$year)){
     filter(year == y)
   vessel_length_key_df_subset <- vessel_length_key_df %>%
     filter(year==y) %>%
-    select(-year)
+   #select(-year)
+    dplyr::select(-year)
   dcrb_landings_length <- left_join(landings_subset,vessel_length_key_df_subset, by=c("drvid", "agency_code"))
   write_rds(dcrb_landings_length,here::here('data','processed','fish tickets',paste0(y, "fishtix_vlengths.rds")))
 }
