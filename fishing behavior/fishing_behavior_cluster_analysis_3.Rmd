@@ -20,6 +20,7 @@ library(ggsci)
 library(forcats)
 library(rnaturalearth)
 library(sf)
+library(corrplot)
 
 # ggplot theme
 plot_theme <-   theme_minimal()+
@@ -194,6 +195,11 @@ dat_clust <- dat_scaled %>% select(-(1:2)) %>% NbClust(method="ward.D2",min.nc =
 
 After clustering, there was a range of number of clusters (groups) suggested by the clustering indices, but the **strong majority vote was 4 groups**. 7 of 22 clustering methods suggested that 4 was the best number of clusters. 6 methods suggested 3 groups, 4 suggested 2 groups, and no other group number received more than 2 votes.
 
+```{r}
+write_rds(dat_clust,here('fishing behavior','FBT_clusters.rds'))
+dat_clust <- read_rds(here('fishing behavior','FBT_clusters.rds'))
+```
+
 ## Visualize Clustering
 
 ```{r,include=FALSE,eval=FALSE}
@@ -306,7 +312,7 @@ cluster3_pca <- fviz_pca(dat.pca,geom.ind="point",
          addEllipses=TRUE,col.var="black",
          palette=p,alpha.ind=0.4)+
   labs(color="",shape="",fill="",shape="",title="")+
-  scale_x_continuous(expand = c(.1,0))+
+  scale_x_continuous(expand = c(.1,0),limits=c(-5,6))+
   theme(panel.grid.major = element_blank(),panel.grid.minor=element_blank())
 
 cluster3_pca
@@ -1263,6 +1269,9 @@ dat_rev <- fishtix_plus %>% group_by(crab_season,partition) %>%
             rev_per_trip=mean(DCRB_revenue,na.rm=T),
             rev_sd=sd(DCRB_revenue,na.rm=T),
             rev_se=rev_sd/n^0.5,
+            cost_per_trip = mean(trip_cost,na.rm=T),
+            cost_sd=sd(trip_cost,na.rm=T),
+            cost_se=cost_sd/n^0.5,
             land_per_trip=mean(DCRB_lbs,na.rm=T),
             land_sd=sd(DCRB_lbs,na.rm=T),
             land_se=land_sd/n^0.5,
@@ -1276,6 +1285,15 @@ dat_rev %>%
   ggplot(aes(crab_season,rev_per_trip,ymin=rev_per_trip-2*rev_se,ymax=rev_per_trip+2*rev_se,group=factor(partition),color=factor(partition)))+
   geom_line(size=1.5)+geom_linerange(size=1.5)+
   labs(x="Crab Season",y="Revenue per Trip",title="Per-trip Revenue by Behavior Class and Year",color="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        legend.position = 'bottom')
+
+# Per trip cost +/- 2SE
+dat_rev %>% 
+  ggplot(aes(crab_season,cost_per_trip,ymin=cost_per_trip-2*cost_se,ymax=cost_per_trip+2*cost_se,group=factor(partition),color=factor(partition)))+
+  geom_line(size=1.5)+geom_linerange(size=1.5)+
+  labs(x="Crab Season",y="Cost per Trip",title="Per-trip Cost by Behavior Class and Year",color="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
@@ -1345,10 +1363,11 @@ What about total revenue gained from the Dungeness fishery over the course of th
 
 ```{r}
 total_rev_landings_season <- fishtix_plus %>%
-  distinct(drvid,crab_season,Rec_ID,DCRB_revenue,DCRB_lbs,trip_profit,partition) %>% 
+  distinct(drvid,crab_season,Rec_ID,DCRB_revenue,DCRB_lbs,trip_cost,trip_profit,partition) %>% 
   group_by(drvid,crab_season,partition) %>% 
   summarise(
     total_rev=sum(DCRB_revenue,na.rm=T),
+    total_cost=sum(trip_cost,na.rm=T),
     total_land=sum(DCRB_lbs,na.rm=T),
     total_profit=sum(trip_profit,na.rm=T)) %>% 
   ungroup() %>% 
@@ -1357,6 +1376,9 @@ total_rev_landings_season <- fishtix_plus %>%
             rev_tot=mean(total_rev,na.rm=T),
             rev_sd=sd(total_rev,na.rm=T),
             rev_se=rev_sd/n^0.5,
+            cost_tot=mean(total_cost,na.rm=T),
+            cost_sd=sd(total_cost,na.rm=T),
+            cost_se=cost_sd/n^0.5,
             # landings in MT
             land_tot=mean(total_land,na.rm=T)/2204.64,
             land_sd=sd(total_land,na.rm=T)/2204.64,
@@ -1371,6 +1393,15 @@ total_rev_landings_season %>%
              group=factor(partition),color=factor(partition)))+
   geom_line(size=1.5,position=position_dodge(width=0.2))+geom_linerange(size=1,position=position_dodge(width=0.2))+
   labs(x="Crab Season",y="Mean Total Season Revenue",title="Total Revenue by Behavior Class and Year",color="Group")+
+  scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        legend.position = 'bottom')
+
+total_rev_landings_season %>%
+  ggplot(aes(crab_season,cost_tot,ymin=cost_tot-2*cost_se,ymax=cost_tot+2*cost_se,
+             group=factor(partition),color=factor(partition)))+
+  geom_line(size=1.5,position=position_dodge(width=0.2))+geom_linerange(size=1,position=position_dodge(width=0.2))+
+  labs(x="Crab Season",y="Mean Total Season Costs",title="Total Cost by Behavior Class and Year",color="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
@@ -1405,27 +1436,51 @@ tot_profit_season_plot
 ggsave(here::here('fishing behavior','plots','total_profit_by_season.png'),tot_profit_season_plot,w=8,h=6)
 
 # heatwave vs. non heatwave years
-heatwave_profit_barplot <- fishtix_plus %>%
+heatwave_profit <- fishtix_plus %>%
   filter(crab_season != "2008-2009") %>%
-  distinct(drvid,crab_season,Rec_ID,DCRB_revenue,DCRB_lbs,trip_profit,partition) %>% 
+  distinct(drvid,crab_season,Rec_ID,DCRB_revenue,DCRB_lbs,trip_cost,trip_profit,partition) %>% 
   group_by(drvid,crab_season,partition) %>% 
   summarise(total_rev=sum(DCRB_revenue,na.rm=T),
+    total_cost=sum(trip_cost,na.rm=T),
     total_land=sum(DCRB_lbs,na.rm=T),
     total_profit=sum(trip_profit,na.rm=T)) %>% 
   ungroup() %>%  
   mutate(is_heatwave=ifelse(crab_season %in% c('2015-2016','2016-2017','2017-2018'),"MHW","Non-MHW")) %>%
-  mutate(is_heatwave=factor(is_heatwave,levels=c("Non-MHW","MHW"))) %>% 
+  mutate(is_heatwave=factor(is_heatwave,levels=c("Non-MHW","MHW")))
+
+heatwave_profit_summ <- heatwave_profit %>%
   group_by(partition,is_heatwave,drvid) %>% 
-  summarise(period_profit=mean(total_profit)) %>% 
+  summarise(period_profit=mean(total_profit),
+            period_rev=mean(total_rev),
+            period_cost=mean(total_cost)) %>% 
   ungroup() %>% 
   group_by(partition,is_heatwave) %>% 
-  summarise(mean_profit=mean(period_profit),sd_profit=sd(period_profit,na.rm=T),se_profit=sd_profit/sqrt(n())) %>% 
-  ungroup() %>% 
+  summarise(mean_profit=mean(period_profit),
+            sd_profit=sd(period_profit,na.rm=T),
+            se_profit=sd_profit/sqrt(n()),
+            mean_rev=mean(period_rev),
+            sd_rev=sd(period_rev,na.rm=T),
+            se_rev=sd_rev/sqrt(n()),
+            mean_cost=mean(period_cost),
+            sd_cost=sd(period_cost,na.rm=T),
+            se_cost=sd_cost/sqrt(n())) %>% 
+  ungroup() 
+
+# look for significant differences between groups
+mhw_profit_aov <- aov(total_profit~is_heatwave*partition,data=heatwave_profit)
+summary(mhw_profit_aov)
+mhw_profit_tukey <- TukeyHSD(mhw_profit_aov)$`is_heatwave:partition` %>% as_tibble(rownames = "comp")
+
+heatwave_profit_barplot <- heatwave_profit_summ %>% 
   ggplot(aes(partition,mean_profit/1000,fill=is_heatwave))+
   scale_fill_manual(values=c("#3B4992FF","#EE0000FF"))+
   scale_color_manual(values=c("#3B4992FF","#EE0000FF"))+
   geom_col(position=position_dodge())+
   geom_errorbar(aes(partition,mean_profit/1000,group=is_heatwave,ymin=(mean_profit-2*se_profit)/1000,ymax=(mean_profit+2*se_profit)/1000),position=position_dodge(0.9),width=0.2,col="black")+
+  # annotate signif diffs
+  annotate('text',label="*",size=8,x=2.23,y=105)+
+  annotate('text',label="*",size=8,x=3.23,y=157)+
+  annotate('text',label="*",size=8,x=4.23,y=225)+
   theme(panel.grid.major=element_blank(),
         panel.grid.minor=element_blank(),
         axis.title=element_text(family="sans",size=14,color="black"),
@@ -1433,6 +1488,35 @@ heatwave_profit_barplot <- fishtix_plus %>%
         axis.text.x = element_text(angle=45,vjust=0.75))+
   labs(x="Behavioral Group",y="Profit per Vessel ($1000s)",fill="Period")
 heatwave_profit_barplot
+
+# revenue
+heatwave_rev_barplot <- heatwave_profit_summ %>% 
+  ggplot(aes(partition,mean_rev/1000,fill=is_heatwave))+
+  scale_fill_manual(values=c("#3B4992FF","#EE0000FF"))+
+  scale_color_manual(values=c("#3B4992FF","#EE0000FF"))+
+  geom_col(position=position_dodge())+
+  geom_errorbar(aes(partition,mean_rev/1000,group=is_heatwave,ymin=(mean_rev-2*se_rev)/1000,ymax=(mean_rev+2*se_rev)/1000),position=position_dodge(0.9),width=0.2,col="black")+
+  theme(panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        legend.position = c(0.2,0.8),
+        axis.text.x = element_text(angle=45,vjust=0.75))+
+  labs(x="Behavioral Group",y="Revenue per Vessel ($1000s)",fill="Period")
+heatwave_rev_barplot
+#cost
+heatwave_cost_barplot <- heatwave_profit_summ %>% 
+  ggplot(aes(partition,mean_cost/1000,fill=is_heatwave))+
+  scale_fill_manual(values=c("#3B4992FF","#EE0000FF"))+
+  scale_color_manual(values=c("#3B4992FF","#EE0000FF"))+
+  geom_col(position=position_dodge())+
+  geom_errorbar(aes(partition,mean_cost/1000,group=is_heatwave,ymin=(mean_cost-2*se_cost)/1000,ymax=(mean_cost+2*se_cost)/1000),position=position_dodge(0.9),width=0.2,col="black")+
+  theme(panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        legend.position = c(0.2,0.8),
+        axis.text.x = element_text(angle=45,vjust=0.75))+
+  labs(x="Behavioral Group",y="Cost per Vessel ($1000s)",fill="Period")
+heatwave_cost_barplot
 
 # grid with a few plots
 row2 <- plot_grid(heatwave_profit_barplot, profit_per_day, labels = c('b', 'c'), label_size = 12)
@@ -1670,15 +1754,27 @@ other_rev_season <- other_rev %>%
         axis.title=element_text(size=10))
 other_rev_season
 ggsave(here::here('fishing behavior','plots','outside_revenue_by_season_group.png'),other_rev_season,w=8,h=6)
+```
 
+MHW vs. non-MHW years, with significance testing
+
+```{r}
 # bar plots of heatwave vs. non-heatwave years
 # heatwave vs. non heatwave years
-heatwave_non_dcrb_barplot <- drvid_dcrb_other %>% 
+# estimate statistical signif
+mhw_outside_revenue <- drvid_dcrb_other %>% 
   mutate(is_heatwave=ifelse(crab_season %in% c('2015-2016','2016-2017','2017-2018'),"MHW","Non-MHW")) %>%
   mutate(is_heatwave=factor(is_heatwave,levels=c("Non-MHW","MHW"))) %>%
   group_by(drvid,crab_season,is_heatwave,partition) %>% 
   summarise(r=sum(tot_other_revenue,na.rm=T)) %>% 
-  ungroup() %>% 
+  ungroup()
+mhw_outside_revenue_aov <- aov(r~is_heatwave*partition,data=mhw_outside_revenue)
+summary(mhw_outside_revenue_aov)
+# look for significant differences between groups
+mhw_outside_revenue_tukey <- TukeyHSD(mhw_outside_revenue_aov)$`is_heatwave:partition` %>% as_tibble(rownames = "comp")
+
+
+heatwave_non_dcrb_barplot <- mhw_outside_revenue %>%  
   group_by(is_heatwave,partition) %>%
   # group_by(crab_season,partition) %>% 
   summarise(n=n(),
@@ -1694,7 +1790,10 @@ heatwave_non_dcrb_barplot <- drvid_dcrb_other %>%
         panel.grid.minor=element_blank(),
         axis.title=element_text(family="sans",size=10,color="black"),
         legend.position = c(0.2,0.8),
-        axis.text.x = element_text(angle=45,vjust=0.75),)+
+        axis.text.x = element_text(angle=45,vjust=0.75))+
+  # manually annotate signif diffs
+  annotate("text",x=2.22,y=500,label="*",size=8)+
+  annotate("text",x=4.22,y=1000,label="*",size=8)+
   labs(x="Behavioral Group",y="Non-Dungeness Revenue ($1000s)",fill="Period",col="Period")
 heatwave_non_dcrb_barplot
 ggsave(here::here('fishing behavior','plots','heatwave_non_dcrb_revenue.png'),heatwave_non_dcrb_barplot,w=6,h=6)
@@ -2060,11 +2159,18 @@ mhw_homeranges <- dat %>%
   left_join(homeports,by=c('drvid','crab_season')) %>% 
   filter(!is.na(partition)) %>% 
   mutate(is_heatwave=ifelse(crab_season %in% c('2015-2016','2016-2017','2017-2018'),"MHW","Non-MHW")) %>%
-  mutate(is_heatwave=factor(is_heatwave,levels=c("Non-MHW","MHW"))) %>% 
+  mutate(is_heatwave=factor(is_heatwave,levels=c("Non-MHW","MHW"))) 
+
+mhw_homeranges_summ <- mhw_homeranges %>% 
   group_by(partition,is_heatwave) %>% 
   summarise(homerange_area=mean(homerange),sd_homerange=sd(homerange,na.rm=T),se_homerange=sd_homerange/sqrt(n()))
 
-mhw_homeranges_plot <-mhw_homeranges %>% 
+mhw_homerange_aov <- aov(homerange~is_heatwave*partition,data=mhw_homeranges)
+summary(mhw_homerange_aov)
+# look for significant differences between groups
+mhw_homerange_tukey <- TukeyHSD(mhw_homerange_aov)$`is_heatwave:partition` %>% as_tibble(rownames = "comp")
+
+mhw_homeranges_plot <-mhw_homeranges_summ %>% 
   ggplot(aes(partition,homerange_area,fill=is_heatwave,col=is_heatwave))+
   scale_fill_manual(values=c("#3B4992FF","#EE0000FF"))+
   scale_color_manual(values=c("#3B4992FF","#EE0000FF"))+
@@ -2072,6 +2178,8 @@ mhw_homeranges_plot <-mhw_homeranges %>%
   geom_errorbar(aes(partition,homerange_area,group=is_heatwave,ymin=(homerange_area-2*se_homerange),ymax=homerange_area+2*se_homerange),position=position_dodge(0.9),width=0.2,col="black")+
   # facet_wrap(~agency_code,nrow=3,scales="free_y")+
   labs(y="Home Range Area (square km)",fill="Period",col="Period",x="Behavioral Group")+
+  annotate("text",label="*",x=3.23,y=4150,size=8)+
+  annotate("text",label="*",x=4.23,y=6550,size=8)+
   theme(panel.grid.major=element_blank(),
         panel.grid.minor=element_blank(),
         legend.position = c(0.2,0.8),

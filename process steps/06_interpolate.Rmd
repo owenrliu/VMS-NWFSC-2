@@ -254,7 +254,7 @@ Get bathymetry at VMS data points
 vms_sp <- vms_regular
 coordinates(vms_sp) <- c("LONGITUDE", "LATITUDE") 
 proj4string(vms_sp)<-proj4string(bathy.grid) <- CRS("+init=epsg:4326") # WGS 84
-bathy.points <- over(vms_sp, bathy.grid)$vms_composite_bath
+bathy.points <- over(vms_sp, bathy.grid)$vms_composite_bath/10
 # proc.time()-tm
 
 vms_regular %<>% mutate(NGDC_M = bathy.points)
