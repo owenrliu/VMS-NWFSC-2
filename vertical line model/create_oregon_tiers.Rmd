@@ -1,0 +1,173 @@
+---
+title: "Create Oregon Tier Data"
+author: "Owen Liu"
+date: "9/29/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Purpose
+
+Using Oregon logbook data, define trap tiers to match to vertical line model. We want to create 3 different helpful keys:
+
+*  Pot limits matched to vessel IDs for every year/month in the data
+*  Maximum possible traps for vessels that landed catch in Oregon in each year/month
+*  Key for representation of VMS vessels relative to all vessels in each tier/year/month
+
+```{r}
+library(raster)
+library(tidyverse)
+library(lubridate)
+library(sf)
+library(magrittr)
+library(here)
+
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+# Import Data
+
+```{r}
+# Oregon logbook data
+permits <- read_csv(here::here('data','oregon','oregon_permits.csv'))
+logs <- read_csv(here::here('data','oregon','oregon_logs.csv'))
+
+# fish tickets
+fishtix_matched_all <- read_rds("C:/Users/Owen.Liu/Documents/github/VMS-NWFSC-2/data/processed/fish tickets/fish_tickets_w_dayofseason.rds")
+# filter for out of season?
+fishtix_matched_all %<>% filter(ticket_day_of_season>=0)
+
+# VLM-simulated traps for entire coast
+simulated_traps <- read_rds(here::here('data','processed',"sim_traps_speed_depth_filters.rds")) %>% ungroup()
+
+```
+
+# Create Vessel ID/Tier Key
+
+Create matching keys by year, month, and DOCNUM.
+
+These are made by "filling down" pot limits for individual vessels. From the issuance of the first permit per vessel to the next, the pot limit remains the same. That means that this key will have NAs for years/months before ANY permits have been issued for that vessel, but will have pot limit values for all dates after the issuance of the first permit.
+
+```{r}
+glimpse(permits)
+
+docnum_tier_match <- permits %>% 
+  mutate(begin_date=as_date(Begindate,format="%m/%d/%Y"),
+         begin_month=month(begin_date),
+         begin_year=year(begin_date)) %>% 
+  distinct(Docnum,begin_month,begin_year,Potlimit) %>% 
+  complete(begin_month,begin_year,Docnum) %>% 
+  arrange(Docnum,begin_year,begin_month) %>% 
+  fill(Potlimit) %>% 
+  #rename for matching
+  rename(year=begin_year,drvid=Docnum,ntraps_permitted=Potlimit) %>% 
+  mutate(month=month.name[begin_month]) %>% 
+  select(-begin_month)
+```
+
+# Create Year/Month/Pots Key
+We also want to create a key that shows the maximum permitted traps for Oregon by year/month. We'll base this on the fish tickets to avoid counting latent effort (i.e., don't count the traps for vessels that didn't fish in a month)
+
+```{r}
+fishtix_tier <- fishtix_matched_all %>% filter(agency_code=="O") %>%
+  left_join(docnum_tier_match,by=c('year','month','drvid')) %>% 
+  distinct(Rec_ID,.keep_all = T)
+
+traps_month_key <- fishtix_tier %>% 
+  filter(!is.na(ntraps_permitted)) %>% 
+  distinct(crab_season,year,month,drvid,ntraps_permitted) %>% 
+  group_by(crab_season,year,month) %>% 
+  summarise(max_traps_region=sum(ntraps_permitted)) %>% 
+  ungroup()
+```
+
+# Create VMS Representation Key
+
+Finally, we want to create a key that represents the relative representation in the VMS data of each tier of pot limits. Using this key, we can weight observations in the VLM by their under- or over-representation in the VMS data relatie to other tiers. We attach the key to the fish ticket data, such that each individual ticket is assigned a relative VMS weight
+
+```{r}
+# traps locations only (discard VMS data for now), attached to fish ticket data
+traplocs <- simulated_traps %>% dplyr::select(Rec_ID,traps) %>% 
+  left_join(fishtix_matched_all,by="Rec_ID") %>% 
+  dplyr::select(Rec_ID,date,year,month,ticket_day_of_season,pacfin_port_code,port_group_code,agency_code,drvid,FINAL_LENGTH,traps) %>% 
+  distinct(Rec_ID,.keep_all = T) %>% 
+  # count number of traps associated with each trip
+  mutate(ntraps=purrr::map_int(traps,nrow))
+
+# join the permits key by year/month/vesselID
+OR_traplocs <- traplocs %>% filter(agency_code=="O") %>% left_join(docnum_tier_match,by=c('year','month','drvid'))
+
+# subsample traps down to trap limit (hacky...)
+OR_traplocs <- OR_traplocs %>% 
+  mutate(traps=purrr::map2(traps,ntraps_permitted,function(x,y){
+    if(y<nrow(x)&!is.na(y)) {sample_n(x,y)} else{x}
+  }))
+
+OR_vms_vessels <- OR_traplocs %>% 
+  distinct(Rec_ID,year,month,drvid,ntraps_permitted) %>% 
+  drop_na() %>%
+  mutate(has_vms=1)
+
+OR_vms_prop_tier <- fishtix_tier %>% 
+  left_join(OR_vms_vessels) %>% 
+  # mutate(CA_region=case_when(
+  #   port_group_code %in% cenCA_ports ~ "cenCA",
+  #   port_group_code %in% norCA_ports ~ "norCA"
+  # )) %>% 
+  # filter(!is.na(CA_region)) %>% 
+  mutate(has_vms=replace_na(has_vms,0)) %>%
+  distinct(crab_season,year,month,drvid,.keep_all = T) %>% 
+  group_by(crab_season,year,month,ntraps_permitted) %>% 
+  summarise(tot_vessels=n_distinct(drvid),tot_vms=sum(has_vms)) %>% 
+  ungroup() %>% 
+  mutate(prop_vms=tot_vms/tot_vessels,tier_wt=1/prop_vms) %>% 
+  # This is a very important line- IF NO TIER INFO, WE DO NOT ASSIGN WEIGHTS, AND EVERY TRAP HAS JUST A WEIGHT OF 1
+  mutate(tier_wt=ifelse(is.infinite(tier_wt),0,tier_wt))
+RecID_tier_weights <- fishtix_tier %>%
+  # mutate(CA_region=case_when(
+  #   port_group_code %in% cenCA_ports ~ "cenCA",
+  #   port_group_code %in% norCA_ports ~ "norCA"
+  # )) %>% 
+  left_join(OR_vms_prop_tier) %>% 
+  select(Rec_ID,date,year,month,drvid,ntraps_permitted,tot_vessels,tot_vms,prop_vms,tier_wt)
+
+# For Thamanna 11/15/20
+# tier info removed, how many VMS and non-VMS vessels observed in each month?
+OR_vms_prop <- OR_vms_prop_tier %>% 
+  ungroup() %>% 
+  group_by(year,month) %>% 
+  summarise(tot_vessels=sum(tot_vessels),tot_vms=sum(tot_vms)) %>% 
+  ungroup() %>% 
+  mutate(prop_vms=tot_vms/(tot_vessels)) %>% 
+  mutate(day=1) %>% 
+  mutate(date=as_date(paste(year,month,day,sep="-")))
+
+OR_vms_prop %>% 
+  ggplot()+
+  geom_line(aes(date,prop_vms))+
+  labs(x="Date",y="Proportion of Vessels Covered by VMS")+
+  scale_x_date(breaks='6 months')+
+  scale_y_continuous(limits=c(0,0.6),breaks=seq(0,0.6,by=0.1))+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5))
+```
+
+# Save the Keys
+
+```{r}
+write_rds(docnum_tier_match,here('data','oregon_tier_drvid_matching_key.rds'))
+write_rds(traps_month_key,here('data','oregon_traps_month_key.rds'))
+write_rds(RecID_tier_weights,here('data','oregon_tier_vms_weights.rds'))
+
+```
+
+

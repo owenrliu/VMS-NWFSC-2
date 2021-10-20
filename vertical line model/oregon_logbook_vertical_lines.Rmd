@@ -1,0 +1,650 @@
+---
+title: "Oregon Logbook Comparison"
+author: "Owen Liu"
+date: "3/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r pkgs, include=FALSE,message=F,warning=FALSE}
+library(raster)
+library(tidyverse)
+library(lubridate)
+library(sf)
+library(magrittr)
+library(rnaturalearth)
+library(fasterize)
+library(viridis)
+library(here)
+
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+## Purpose
+
+The purpose of this analysis is to compare Oregon logbook data on Dungeness fishing to the vertical line model estimated from VMS data and PacFIN fish tickets.
+
+We will compare them in two ways-- trip by trip and in regards to overall density. In other words, we will investigate how the two data sources align, on both a small and large scale.
+
+## Import Data
+
+```{r}
+# Oregon logbook data
+permits <- read_csv(here::here('data','oregon','oregon_permits.csv'))
+logs <- read_csv(here::here('data','oregon','oregon_logs.csv'))
+
+# fish tickets
+fishtix_matched_all <- read_rds("C:/Users/Owen.Liu/Documents/github/VMS-NWFSC-2/data/processed/fish tickets/fish_tickets_w_dayofseason.rds")
+# filter for out of season?
+fishtix_matched_all %<>% filter(ticket_day_of_season>=0)
+
+# 3 keys for matching Oregon VLM
+drvid_tier_match <- read_rds(here('data','oregon_tier_drvid_matching_key.rds'))
+traps_month_key <- read_rds(here('data','oregon_traps_month_key.rds'))
+RecID_tier_weights <- read_rds(here('data','oregon_tier_vms_weights.rds'))
+
+# a coastline, for plotting
+# coastline for plotting
+coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('Oregon'))
+coastline <- ne_coastline(scale='medium',returnclass = 'sf') %>% 
+  st_crop(st_bbox(coaststates))
+
+# Load if not already loaded
+simulated_traps <- read_rds(here::here('data','processed',"sim_traps_speed_depth_filters.rds")) %>% ungroup()
+
+```
+
+## Organize Oregon Data
+
+Clean up the data such that it is Oregon-specific
+
+### VLM
+
+```{r}
+# traps locations only (discard VMS data for now), attached to fish ticket data
+traplocs <- simulated_traps %>% dplyr::select(Rec_ID,traps) %>% 
+  left_join(fishtix_matched_all,by="Rec_ID") %>% 
+  dplyr::select(Rec_ID,date,year,month,ticket_day_of_season,pacfin_port_code,port_group_code,agency_code,drvid,FINAL_LENGTH,traps) %>% 
+  distinct(Rec_ID,.keep_all = T) %>% 
+  # count number of traps associated with each trip
+  mutate(ntraps=purrr::map_int(traps,nrow))
+
+# join the permits key by year/month/vesselID
+OR_traplocs <- traplocs %>% filter(agency_code=="O") %>% left_join(drvid_tier_match,by=c('year','month','drvid'))
+
+# subsample traps down to trap limit (hacky...)
+OR_traplocs <- OR_traplocs %>% 
+  mutate(traps=purrr::map2(traps,ntraps_permitted,function(x,y){
+    if(y<nrow(x)&!is.na(y)) {sample_n(x,y)} else{x}
+  }))
+```
+
+### Logbooks
+
+Organize the permit and logbook data such that we can use it to compare to vertical line model.
+
+Here's the metadata about the Oregon logbook records
+
+```{r}
+logs_meta <- read_csv(here::here('data','oregon','oregon_logs_metadata.csv'))
+
+knitr::kable(logs_meta)
+```
+
+Pull out the important variables, rename them to match our other data. Also, remove any records for whom the spatial information is unreasonable (variable `SpatialFlag==T`)
+
+```{r}
+glimpse(logs)
+
+# discard and rename some variables
+logs %<>% 
+  filter(!SpatialFlag) %>% 
+  select(FishTicket,VessID,Date,Pots,AdjLbs,BegLat,Beglon,EndLat,EndLon) %>% 
+  rename(FTID=FishTicket,drvid=VessID,date=Date,n_pots=Pots,adj_lbs=AdjLbs,startlat=BegLat,startlon=Beglon,endlat=EndLat,endlon=EndLon)
+
+# Reduce logs to only those years for which we have VMS data
+logs %<>% 
+  mutate(date=dmy(date)) %>%
+  filter(year(date)>2008)
+# reduce logs data to only those vessels for which we have VMS data
+# Unique vessels
+# oregon_vessels <- unique(logs$drvid)
+# vms_vessels <- unique(traplocs$drvid)
+# vessel_list <- intersect(oregon_vessels,vms_vessels)
+
+# logs %<>%
+#   filter(drvid %in% vessel_list) %>% 
+#   mutate(date=dmy(date)) %>% 
+#   filter(year(date)>2008)
+
+```
+
+Some of the records are associated with multiple fish tickets (around 7 percent of records). For now, we discard them, but we should come back to this later and figure out how to handle those records.
+
+```{r}
+# mult_tix <- logs %>% slice(str_which(logs$Rec_ID,';')) %>% 
+#   mutate(num_tix=str_count(Rec_ID,";")+1)
+# # make a new row record for each ticket
+# expanded_tix <- mult_tix %>% 
+#   uncount(num_tix) %>% 
+#   group_by(Rec_ID) %>% 
+#   mutate(which_obs=row_number())
+  
+# a list of all the fish tickets and vessels associated with Oregon logbook data
+# logs %<>%
+#   mutate(num_tix=str_count(Rec_ID,";")+1) %>% 
+#   # filter out records with more than 1 fish ticket
+#   filter(num_tix==1) %>% 
+#   mutate(Rec_ID=as.numeric(Rec_ID))
+# 
+```
+
+## Create Oregon Logbooks Trap Density
+
+Make density rasters from Oregon logbook data.
+
+*  Use spatial information (start and end points of strings) to assign traps to the 5km grid
+*  If the start and end points of the string are in different 5km grid cells, split them evenly between those cells
+
+```{r}
+string_starts <- logs %>% 
+  #lat and lons cannot be NA
+  filter(!is.na(startlat),!is.na(startlon),!is.na(endlat),!is.na(endlon)) %>% 
+  select(startlat,startlon) %>% 
+  mutate(startlon=startlon*-1) %>% 
+  st_as_sf(coords=c('startlon','startlat'),crs=4326) %>% 
+  st_transform(st_crs(grd))
+# example map
+string_starts %>% slice(1:1000) %>% ggplot()+geom_sf()+geom_sf(data=coaststates)
+
+string_ends <- logs %>%
+  #lat and lons cannot be NA
+  filter(!is.na(startlat),!is.na(startlon),!is.na(endlat),!is.na(endlon)) %>% 
+  select(endlat,endlon) %>% 
+  mutate(endlon=endlon*-1) %>% 
+  st_as_sf(coords=c('endlon','endlat'),crs=4326)%>% 
+  st_transform(st_crs(grd))
+# example map
+string_ends %>% slice(1:1000) %>% ggplot()+geom_sf()+geom_sf(data=coaststates)
+
+# Match to the grid
+string_starts %<>% st_join(grd) %>% select(GRID5KM_ID) %>% rename(startgrd=GRID5KM_ID)
+string_ends %<>% st_join(grd) %>% select(GRID5KM_ID) %>% rename(endgrd=GRID5KM_ID)
+
+# collect grid matches and join to logbook data
+logs_grd <- logs %>% 
+  #lat and lons cannot be NA
+  filter(!is.na(startlat),!is.na(startlon),!is.na(endlat),!is.na(endlon)) %>%
+  mutate(startgrd=string_starts$startgrd,endgrd=string_ends$endgrd) %>% 
+  filter(!is.na(startgrd),!is.na(endgrd)) %>% 
+  ungroup() %>% 
+  # add a new identifier for unique fished strings
+  mutate(newID=row_number())
+  
+logs_trap_density <- logs_grd %>% 
+  select(newID,FTID,date,n_pots,startgrd,endgrd) %>% 
+  pivot_longer(startgrd:endgrd,names_to='type',values_to='GRID5KM_ID') %>% 
+  group_by(newID) %>% 
+  # see whether start and end grids are the same
+  mutate(n_grd=n_distinct(GRID5KM_ID)) %>% 
+  # if grids are not the same, split pots evenly amongst start and end grids
+  mutate(n_pots_adj=ifelse(n_grd==1,n_pots,n_pots/2)) %>% 
+  ungroup() %>% 
+  distinct(newID,FTID,date,GRID5KM_ID,n_grd,n_pots_adj) %>% 
+  filter(!is.na(n_pots_adj)) %>% 
+  # finally, organize by grid cell and date, and sum the number of traps
+  group_by(GRID5KM_ID,date) %>% 
+  summarise(n_pots=sum(n_pots_adj)) %>% 
+  ungroup() %>% 
+  # convert to a density
+  mutate(pot_density=n_pots/25)
+
+# by month
+logs_trap_density_month <- logs_trap_density %>% 
+  mutate(year=year(date),month=month(date)) %>% 
+  # MAX by grid cell/year/month
+  group_by(GRID5KM_ID,year,month) %>% 
+  summarise(max_pot_density=max(pot_density,na.rm=T))
+  
+```
+
+Distribution of Trap Densities, all years, according to Oregon logbook data.
+```{r}
+logs_trap_density %>% 
+  mutate(yr=year(date)) %>% 
+  ggplot(aes(pot_density))+
+  geom_density(alpha=0.5,fill=viridis_pal(begin=0.2,end=0.8)(1))+
+  labs(x="Traps per sq. km",y="Kernel Density")
+
+# and by month across all years
+
+logs_trap_density %>% 
+  mutate(mth=month(date),mth_nm=month.name[mth],mth_nm=factor(mth_nm,levels=month.name)) %>%
+  ggplot(aes(pot_density))+
+  geom_density(alpha=0.5,fill=viridis_pal(begin=0.2,end=0.8)(1))+
+  facet_wrap(~mth_nm)+
+  labs(x="Traps per sq. km",y="Kernel Density")
+```
+
+# Join Grid to VLM
+
+We make a grid representation of the simulated traps data for Oregon, assigning a 5km grid cell to each observation. Then, we produce both an unweighted (no correction for tier weights) and weighted (tier-representation-adjusted) version of monthly rasters.
+
+First, attach the appropriate grid cell to each simulated trap
+
+```{r grid fxn,warning=FALSE,fig.height=8,fig.width=4}
+# 5x5 grid shapefile
+# grd <- read_sf(here::here("Input_Data","5x5 Grid","five_km_grid_polys_geo.shp"))
+grd <- read_sf(here::here("data","grid","regions_master_final_lamb.shp"))
+names(grd)
+
+# raster representation of grid.
+# transform to a projection that uses meters
+grd_rast <- fasterize(grd,raster = raster(grd,res=5000,crs=crs(grd)),field="GRID5KM_ID")
+# set -99999 to NA
+grd_rast[grd_rast==-99999] <- NA
+
+grd_xy <- rasterToPoints(grd_rast) %>% as_tibble() %>% set_colnames(c("x","y","GRID5KM_ID")) %>%
+  st_as_sf(coords=c('x','y'),crs=st_crs(grd)) %>% st_transform(4326)
+grd_xy <- grd_xy %>% st_coordinates() %>% as_tibble() %>% mutate(GRID5KM_ID=grd_xy$GRID5KM_ID) %>% 
+  set_colnames(c("grd_x","grd_y","GRID5KM_ID"))
+
+# unlist the traps and attach grid cells using nearest neighbors
+OR_traps_long <- OR_traplocs %>% 
+  mutate(traps_xy=purrr::map(traps,function(x)st_coordinates(x) %>% set_colnames(c('x','y')) %>% as_tibble())) %>%
+  select(-traps) %>% 
+  unnest(c(traps_xy))
+
+# nearest neighbors
+traps_nn <- RANN::nn2(grd_xy[,1:2],OR_traps_long[,c('x','y')],k=1)[[1]]
+# attach to observations
+OR_traps_long <- OR_traps_long %>% mutate(GRID5KM_ID = grd_xy$GRID5KM_ID[traps_nn])
+# clean up variable names
+OR_traps_long %<>%
+  rename(ntraps_trip=ntraps)
+```
+
+Make weighted and unweighted rasters of trap counts. 
+
+```{r}
+# add tier weights to traps list-column
+RecID_tier_weights %>% ungroup() %>%  select(Rec_ID,tot_vessels:tier_wt) %>% right_join(OR_traps_long)->OR_traps_long
+
+OR_traps_long <- OR_traps_long %>% left_join(grd_xy,by="GRID5KM_ID")
+
+# add total Oregon trap numbers by month
+OR_traps_long <- OR_traps_long %>% 
+  left_join(traps_month_key) %>% 
+  group_by(year,month) %>% 
+  # if no recorded trap limits, the number of traps is just the sum of all simulated traps
+  mutate(max_traps_region=replace_na(max_traps_region,n()))
+```
+
+```{r}
+count_traps <- function(yr,mth,use_weights=F,norm_index=F){
+  mth_name <- month.name[mth]
+  samp <- OR_traps_long %>%
+    ungroup() %>%
+    filter(year==yr,month==mth_name,!is.na(GRID5KM_ID))
+  if(nrow(samp)==0){
+    print(paste(mth_name,yr,"had zero observations."))
+    zero_rast <- setValues(grd_rast,NA)
+    names(zero_rast) <- paste0(mth_name,yr)
+    return(zero_rast)
+  } else {
+    samp_sf <- samp %>% 
+      mutate(norm=norm_index) %>% 
+      group_by(norm,GRID5KM_ID,grd_x,grd_y,max_traps_region) %>% 
+      # if using weights, the counted trap value is equal to the sum of the relative tier weights
+      summarise(tot_traps=ifelse(use_weights,sum(tier_wt),n())) %>%
+      ungroup() %>%
+      # the relative index is the total traps in each grid cell, divided by the sum of all simulated traps in the region
+      mutate(traps_relative=tot_traps/sum(tot_traps)) %>% 
+      ungroup() %>% 
+      # if normalizing by region, leave it as is. If looking for total traps, multiply by total regional traps (from fish tickets)
+      mutate(ntraps_calc=traps_relative*max_traps_region) %>% 
+      mutate(ntraps=ifelse(norm,traps_relative,ntraps_calc)) %>% 
+      ungroup() %>% 
+      sf::st_as_sf(coords=c('grd_x','grd_y'),crs=4326) %>% 
+      st_transform(st_crs(grd)) %>%
+      dplyr::select(ntraps) %>% 
+      as_Spatial()
+  out_rast <- raster::rasterize(samp_sf,grd_rast,field='ntraps',fun='first')
+  names(out_rast) <- paste0(mth_name,yr)
+  }
+  
+  print(paste(mth_name,yr,"done."))
+
+  return(out_rast)
+}
+
+
+# sample map
+p <- proc.time()
+dec2013 <- count_traps(2013,12,use_weights = T,norm_index=F)
+proc.time()-p
+dec2013
+plot(dec2013)
+# data.table version (dunno why i can't get something like this to work in tidy) 
+#   traps_sf<-setDT( samp )[, rbindlist( traps ) ] %>% 
+#     sf::st_as_sf()
+```
+Apply to all years/months
+```{r,echo=F,message=F,warning=F}
+p <- proc.time()
+years_months <- crossing(yr=2009:2018,mth=1:12)
+trap_density_unweighted_norm <- purrr::map2(years_months$yr,years_months$mth,count_traps,use_weights=F,norm_index=T)
+trap_density_weighted_norm <- purrr::map2(years_months$yr,years_months$mth,count_traps,use_weights=T,norm_index=T)
+trap_density_unweighted <- purrr::map2(years_months$yr,years_months$mth,count_traps,use_weights=F,norm_index=F)
+trap_density_weighted <- purrr::map2(years_months$yr,years_months$mth,count_traps,use_weights=T,norm_index=F)
+proc.time()-p
+
+trap_density_unweighted_stack <- raster::stack(trap_density_unweighted)
+trap_density_weighted_stack <- raster::stack(trap_density_weighted)
+trap_density_unweighted_norm_stack <- raster::stack(trap_density_unweighted_norm)
+trap_density_weighted_norm_stack <- raster::stack(trap_density_weighted_norm)
+
+write_rds(trap_density_unweighted_stack,here::here('data','processed',"OR_trap_counts_unweighted.rds"))
+write_rds(trap_density_weighted_stack,here::here('data','processed',"OR_trap_counts_weighted.rds"))
+write_rds(trap_density_unweighted_norm_stack,here::here('data','processed',"OR_trap_counts_unweighted_norm.rds"))
+write_rds(trap_density_weighted_norm_stack,here::here('data','processed',"OR_trap_counts_weighted_norm.rds"))
+```
+
+## Compare to Vertical Lines Density by Grid Cell
+
+Convert raster data to tibble of trap densities by year/month/grid cell
+
+```{r}
+grd_template <- grd_rast %>% rasterToPoints() %>% as_tibble() %>% set_names(c('x','y','GRID5KM_ID'))
+
+# RasterStack to long form xy
+all_obs_xy_weighted_norm <- purrr::map(as.list(trap_density_weighted_norm_stack),function(x){
+  mth <- names(x)
+  y<-rasterToPoints(x) %>% as_tibble() %>% set_names(c('x','y','value'))
+  z <-y %>% mutate(month=mth)
+  z
+}) %>% bind_rows() %>% 
+  mutate(year=str_sub(month,-4,-1) %>% as.numeric(),month=str_remove_all(month,"[:digit:]"),
+         month=match(month,month.name)) %>% 
+  left_join(grd_template)
+
+all_obs_xy_unweighted <- purrr::map(as.list(trap_density_unweighted_stack),function(x){
+  mth <- names(x)
+  y<-rasterToPoints(x) %>% as_tibble() %>% set_names(c('x','y','value'))
+  z <-y %>% mutate(month=mth)
+  z
+}) %>% bind_rows() %>% 
+  mutate(year=str_sub(month,-4,-1) %>% as.numeric(),month=str_remove_all(month,"[:digit:]"),
+         month=match(month,month.name)) %>% 
+  left_join(grd_template)
+
+all_obs_xy_weighted <- purrr::map(as.list(trap_density_weighted_stack),function(x){
+  mth <- names(x)
+  y<-rasterToPoints(x) %>% as_tibble() %>% set_names(c('x','y','value'))
+  z <-y %>% mutate(month=mth)
+  z
+}) %>% bind_rows() %>% 
+  mutate(year=str_sub(month,-4,-1) %>% as.numeric(),month=str_remove_all(month,"[:digit:]"),
+         month=match(month,month.name)) %>% 
+  left_join(grd_template)
+
+# vert_lines_density <- purrr::map(as.list(trap_density),function(x){
+#   mth <- names(x)
+#   y<-rasterToPoints(x) %>% as_tibble() %>% set_names(c('x','y','density'))
+#   z <-y %>% mutate(month=mth) %>% left_join(grd_template,by=c('x','y'))
+#   z
+# }) %>% bind_rows() %>%
+#   select(GRID5KM_ID,month,density) %>% 
+#   filter(!is.na(GRID5KM_ID)) %>% 
+#   mutate(yr=str_extract(month,"[:digit:]+") %>% as.integer(),mth=str_extract(month,"[:alpha:]+")) %>% 
+#   rowwise() %>% 
+#   mutate(mth=which(month.name==mth)) %>% 
+#   select(yr,mth,GRID5KM_ID,density) %>% 
+#   rename(vlm_density=density)
+
+# vert_lines_density %>% 
+#   filter(GRID5KM_ID %in% unique(logs_trap_density$GRID5KM_ID)) %>% 
+#   ggplot(aes(vlm_density))+
+#   geom_density(alpha=0.5,fill=viridis_pal(begin=0.2,end=0.8)(1))+
+#   facet_wrap(~mth)
+```
+
+Join and compare. First, using VMS-weighted, normalized density
+
+```{r}
+trap_dens_both <- logs_trap_density_month %>%
+  left_join(all_obs_xy_weighted_norm) %>% 
+  rename(vlm_density=value) %>% 
+  # rename(vlm_trap_count=value) %>% 
+  # mutate(vlm_density=vlm_trap_count/25) %>% 
+  ungroup() %>% 
+  distinct() %>% 
+  mutate(logs_z=(max_pot_density-mean(max_pot_density,na.rm=T))/sd(max_pot_density,na.rm=T),
+         vlm_z=(vlm_density-mean(vlm_density,na.rm=T))/sd(vlm_density,na.rm=T))
+
+# ggplot(trap_dens_both,aes(max_pot_density,vlm_density))+
+  # geom_point(size=0.5)+
+  # geom_smooth(method='lm',formula='y~x-1')
+trap_density_comparison_long <- trap_dens_both %>% 
+  pivot_longer(contains("_density"),names_to = 'type',values_to = 'density')
+
+trap_density_comparison <- trap_density_comparison_long %>% 
+  ggplot(aes(density,fill=type))+
+  geom_density(alpha=0.7,col=NA)+
+  xlim(c(0,90))+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(2),labels=c('Logbook','VLM'))+
+  labs(x='Trap Density',y="",fill='')
+ggsave(here::here('plots','OR_trap_density_comparison.png'),trap_density_comparison,w=7,h=5)
+```
+
+```{r}
+library(cowplot)
+make_comparison_map <- function(yr,mth){
+  dat <-trap_dens_both %>%
+    filter(year==yr,month==mth) %>% 
+    distinct(GRID5KM_ID,vlm_z,logs_z)
+  if(nrow(dat)==0) stop('no observations for that month')
+  dat %<>% left_join(grd,by="GRID5KM_ID") %>% st_as_sf()
+  
+  mnth_name<-month.name[mth]
+  
+  bbox <- st_bbox(dat)
+  plt_vlm <- dat %>% 
+    filter(vlm_z<=quantile(vlm_z,0.98,na.rm=T)) %>% 
+    ggplot()+
+    geom_sf(aes(fill=vlm_z),col=NA)+
+    geom_sf(data=coaststates,fill='gray70')+
+    scale_fill_viridis(na.value='white',limits=c(-1,1),breaks=seq(-1,1,by=0.5))+
+    coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]),datum=NA)+
+    labs(title=paste('VLM',mnth_name,yr),fill='Trap Density (Z-score)')+
+    theme(axis.text=element_blank())
+  plt_logs <- dat %>% 
+    filter(logs_z<=quantile(logs_z,0.98,na.rm=T)) %>% 
+    ggplot()+
+    geom_sf(aes(fill=logs_z),col=NA)+
+    geom_sf(data=coaststates,fill='gray70')+
+    scale_fill_viridis(na.value='white',limits=c(-1,1),breaks=seq(-1,1,by=0.5))+
+    coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]),datum=NA)+
+    labs(title=paste('Logbooks',mnth_name,yr),fill='Trap Density (Z-score)')+
+    theme(axis.text=element_blank())
+  plot_grid(plt_vlm,plt_logs)
+}
+jan2014 <- make_comparison_map(yr=2014,mth=1)
+jan2014
+ggsave(here::here('plots','jan2014_zscore_comparison.png'),dec2013)
+make_comparison_map(yr=2013,mth=12)
+
+```
+
+## Total Traps Timeseries Comparison
+
+Compare the total number of estimated traps between logbooks and VLM over time
+
+```{r}
+# Total logbook traps
+# have to figure this out
+# logs_timeseries <- logs_trap_density_month %>% 
+#   distinct() %>% 
+#   select(date,n_pots) %>%
+#   mutate(year=year(date),month=month(date)) %>% 
+#   group_by(year,month) %>% 
+#   summarise(tot_pots_logs=sum(n_pots,na.rm=T)) %>% 
+#   ungroup()
+
+# VLM timeseries
+vlm_timeseries <- all_obs_xy_weighted %>% 
+  group_by(year,month) %>% 
+  summarise(tot_pots_vlm=sum(value,na.rm=T)) %>% 
+  ungroup() %>% 
+  mutate(date=paste(year,month,"01",sep="_") %>% as_date())
+
+vlm_ts <-vlm_timeseries %>% 
+  # filter(month %in% c(1:8,12)) %>% 
+  ggplot(aes(date,tot_pots_vlm/1000))+
+  geom_point()+geom_line()+
+  labs(x="Date",y="Thousands of Traps in Oregon")
+ggsave(here('plots','OR_vlm_ts.png'),vlm_ts,w=7,h=5)
+```
+
+
+# OLD
+
+## Investigate Fish Ticket Numbering Issue
+
+The fish tickets don't seem to line up to the numbers in the VMS-matched data. Let's investigate
+
+```{r}
+oregon_tix <- unique(logs$FTID)
+vms_tix <- unique(traplocs$Rec_ID)
+fishtix_tix <- fishtix_matched_all %>% .$Rec_ID %>% unique() %>% as.numeric()
+# and tickets that match our vertical line model
+tix_match <- intersect(fishtix_tix,oregon_tix)
+
+# these don't match
+
+## Raw, raw fish tickets with FTID column
+tixfiles <- list.files("C:/Users/Owen.Liu/Documents/github/VMS-NWFSC-2/data/raw/fish tickets",full.names = T)
+
+rawtest <- read_csv(tixfiles[4])
+rawdat <- purrr::map_df(tixfiles,function(fl){
+  read_csv(fl,col_types= cols_only(
+    FISH_TICKET_ID = col_double(), 
+    FTID = col_character(),
+    PACFIN_PORT_CODE= col_character(), 
+    PACFIN_GROUP_PORT_CODE= col_character(), 
+    VESSEL_NUM= col_character(), 
+    AGENCY_CODE= col_character(), 
+    GEAR_CODE= col_double(),
+    GEAR_NAME= col_character(), 
+    PACFIN_GROUP_GEAR_CODE= col_character(), 
+    REMOVAL_TYPE_CODE= col_character(), 
+    REMOVAL_TYPE_NAME= col_character(), 
+    LANDING_DATE= col_character(),
+    LANDING_MONTH= col_double(), 
+    LANDING_YEAR= col_double(), 
+    PACFIN_SPECIES_CODE= col_character(), 
+    LANDED_WEIGHT_LBS= col_double(), 
+    EXVESSEL_REVENUE= col_double()))
+})
+raw_fishtix_FTID <- unique(rawdat$FTID)
+tix_match2 <- intersect(raw_fishtix_FTID,oregon_tix)
+
+# okay, these match, so let's make a matching key to match PacFIN Rec_IDs to FTIDs for Oregon
+ftid_recid <- rawdat %>% select(FISH_TICKET_ID,FTID) %>% distinct() %>% 
+  filter(FTID %in% tix_match2)
+
+# join to logs data
+logs %<>%
+  left_join(ftid_recid,by='FTID') %>% 
+  rename(Rec_ID=FISH_TICKET_ID)
+```
+
+## Match Individual Trips
+
+Now that we can match logbook data to individual Oregon trips, we can explore the vertical line model on a trip-by-trip basis.
+
+Note that in the logbook data, there are often more than one string of pots associated with each fish ticket.
+
+```{r}
+# logs_nest <- logs %>% 
+#   filter(!is.na(Rec_ID)) %>% 
+#   ungroup() %>% 
+#   nest(logbook_traps=c(n_pots,adj_lbs,startlat,startlon,endlat,endlon))
+
+# inner join to only retain trips/fish tickets that are associated with both VMS-simulated traps and logbooks
+traplocs_sim_logbook <- logs %>% inner_join(traplocs)
+
+# sample trip
+# samptrip <- unique(traplocs_sim_logbook$Rec_ID) %>% sample(1)
+samptrip <- 449325098
+sample_logs <- traplocs_sim_logbook %>% filter(Rec_ID==samptrip)
+
+lns <- purrr::map(1:nrow(sample_logs),function(i){
+  ln <- sample_logs[i,c(7,6,9,8)] %>% as.numeric() %>%  matrix(nrow=2,byrow = T)
+  ln[,1] <- -ln[,1]
+  ln
+}) %>%  st_multilinestring() %>% st_sfc() %>% st_sf() %>% st_set_crs(4326) %>%  st_transform(st_crs(grd))
+simpots <- sample_logs %>% slice(1) %>% pluck('traps',1) %>% st_set_crs(4326) %>% st_transform(st_crs(grd))
+totlogpots <- sum(sample_logs$n_pots)
+totsimpots <- unique(sample_logs$ntraps)
+bbox1 <- st_bbox(lns) %>% st_as_sfc()
+bbox2 <- st_bbox(simpots) %>% st_as_sfc()
+bbox <- st_union(bbox1,bbox2) %>% st_bbox()
+ggplot()+
+  geom_sf(data=coaststates,fill='gray70')+
+  geom_sf(data=simpots)+
+  geom_sf(data=lns,col='red',size=2)+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(title=paste0("Simulated versus Logged Traps\nTotal Traps Logged: ",totlogpots,"\nTotal Traps Simulated: ",totsimpots))
+```
+
+We can map out individual tracks to compare
+
+```{r}
+trip_compare <- function(recid) {
+  sample_logs <- traplocs_sim_logbook %>% filter(Rec_ID==recid) 
+  lns <- purrr::map(1:nrow(sample_logs),function(i){
+    ln <- sample_logs[i,c(7,6,9,8)] %>% as.numeric() %>%  matrix(nrow=2,byrow = T)
+    ln[,1] <- -ln[,1]
+    ln
+  }) %>%  st_multilinestring() %>% st_sfc() %>% st_set_crs(4326) %>%  st_transform(st_crs(grd))
+  simpots <- sample_logs %>% slice(1) %>% pluck('traps',1) %>% st_set_crs(4326) %>% st_transform(st_crs(grd))
+  totlogpots <- sum(sample_logs$n_pots)
+  totsimpots <- unique(sample_logs$ntraps)
+  bbox1 <- st_bbox(lns) %>% st_as_sfc()
+  bbox2 <- st_bbox(simpots) %>% st_as_sfc()
+  bbox <- st_union(bbox1,bbox2) %>% st_bbox()
+  ggplot()+
+    geom_sf(data=coaststates,fill='gray70')+
+    geom_sf(data=simpots)+
+    geom_sf(data=lns,col='red',size=2)+
+    coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+    theme(axis.text.x = element_text(angle=90,vjust=0.5))+
+    labs(title=paste0("Simulated versus Logged Traps\nTotal Traps Logged: ",totlogpots,"\nTotal Traps Simulated: ",totsimpots))
+}
+```
+
+```{r,fig.height=10,fig.width=10}
+library(cowplot)
+# samp_recids  <- unique(traplocs_sim_logbook$Rec_ID) %>% sample(6)
+samp_recids <- c(50073739, 449325098, 427580126, 449333293, 427598582, 48070529)
+samptrips <- purrr::map(samp_recids,function(x){
+  trip_compare(x)
+})
+sample_trip_plots <- plot_grid(plotlist=samptrips,nrow=3)
+sample_trip_plots
+ggsave(here::here('plots','sample_comparison_plots.png'),sample_trip_plots,h=10,w=8)
+```
+
+
