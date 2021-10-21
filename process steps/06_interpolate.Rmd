@@ -39,13 +39,15 @@ theme_set(plot_theme)
 rm(list=setdiff(ls(),c('process_year','alltime')))
 
 #if needed, process_year
-# process_year=2012
+process_year=2014
 ```
 
 Read in the filtered VMS data set from the previous step
 
 ```{r rawdat}
-vms_filtered <- read_rds(here::here('data','processed','matched','filtering',paste0(process_year,'matched_filtered.rds')))
+# vms_filtered <- read_rds(here::here('data','processed','matched','filtering',paste0(process_year,'matched_filtered.rds')))
+
+vms_filtered <- read_rds(paste0("/Users/jameal.samhouri/Documents/RAIMBOW/Processed Data/VMS/",process_year,'matched_filtered.rds'))
 ```
 
 ## Remove Trips with Large Time Gaps
@@ -105,20 +107,55 @@ vms_move <- vms_gapfiltered %>%
   arrange(Rec_ID, UTCDATETIM) %>% 
   distinct(VMS_RECNO,UTCDATETIM,.keep_all = T) %>% 
   mutate(DECLARATIO=na_if(DECLARATIO,'N/A')) %>% 
+  #remove_rownames %>%
   as.data.frame()
 ```
 
 ### Create `move` Object
 
 ```{r move}
+# install.packages("proj4")
+# library("proj4")
 start.time <- Sys.time()
 movedat <- move(x=vms_move$X_COORD,
                 y=vms_move$Y_COORD,
                 time=vms_move$UTCDATETIM,
                 data=vms_move,
-                proj=sp::CRS("+proj=utm +north +zone=10 +ellps=WGS84"),
+                proj=sp::CRS("+proj=utm +north +zone=10 +ellps=WGS84 +datum=WGS84"),
                 animal=vms_move$Rec_ID)
 Sys.time() - start.time
+
+##
+start.time <- Sys.time()
+movedat <- move(x=vms_move$LONGITUDE,
+                y=vms_move$LATITUDE,
+                time=vms_move$UTCDATETIM,
+                data=vms_move,
+                proj=sp::CRS("+proj=longlat +ellps=WGS84 +datum=WGS84"),
+                animal=vms_move$Rec_ID)
+Sys.time() - start.time
+
+movedatProj <- spTransform(movedat, CRSobj="+proj=utm +north +zone=10 +ellps=WGS84")
+
+## as.character( as.numeric(
+start.time <- Sys.time()
+movedat <- move(x=vms_move$X_COORD,#[1:100],
+                y=vms_move$Y_COORD,#[1:100],
+                time=vms_move$UTCDATETIM,#[1:100],
+                data=vms_move[1:100,],
+                proj=sp::CRS("+proj=utm +zone=10 +datum=WGS84 +units=m +no_defs +type=crs"),
+                animal=vms_move$Rec_ID#[1:100]
+                )
+Sys.time() - start.time
+
+# start.time <- Sys.time()
+# movedat <- move(x=vms_move$LONGITUDE,
+#                 y=vms_move$LATITUDE,
+#                 time=vms_move$UTCDATETIM,
+#                 data=vms_move,
+#                 proj=sp::CRS("+proj=longlat +datum=WGS84 +no_defs +type=crs"),
+#                 animal=vms_move$Rec_ID)
+# Sys.time() - start.time
 ```
 
 ### Run Interpolation
