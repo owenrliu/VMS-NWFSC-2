@@ -1,0 +1,495 @@
+---
+title: "Step6_comparisons"
+author: "Leena"
+date: "04/03/2021"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(magrittr)
+library(here)
+library(janitor)
+library(sf)
+library(rnaturalearth)
+library(lubridate)
+library(move)
+
+
+```
+Package and Library versions on Leena's computer
+
+sessionInfo()
+R version 3.6.3 (2020-02-29)
+Platform: x86_64-w64-mingw32/x64 (64-bit)
+Running under: Windows 10 x64 (build 19041)
+
+Matrix products: default
+
+locale:
+[1] LC_COLLATE=English_New Zealand.1252  LC_CTYPE=English_New Zealand.1252   
+[3] LC_MONETARY=English_New Zealand.1252 LC_NUMERIC=C                        
+[5] LC_TIME=English_New Zealand.1252    
+
+attached base packages:
+[1] stats     graphics  grDevices utils     datasets  methods   base     
+
+other attached packages:
+ [1] move_4.0.6          rgdal_1.5-23        raster_3.4-5        sp_1.4-1           
+ [5] geosphere_1.5-10    lubridate_1.7.9.2   rnaturalearth_0.1.0 sf_0.9-7           
+ [9] janitor_2.1.0       here_1.0.1          magrittr_2.0.1      forcats_0.5.1      
+[13] stringr_1.4.0       dplyr_1.0.4         purrr_0.3.4         readr_1.4.0        
+[17] tidyr_1.1.2         tibble_3.0.6        ggplot2_3.3.3       tidyverse_1.3.0    
+
+loaded via a namespace (and not attached):
+ [1] httr_1.4.2               jsonlite_1.7.2           modelr_0.1.8            
+ [4] rnaturalearthhires_0.2.0 assertthat_0.2.1         cellranger_1.1.0        
+ [7] yaml_2.2.1               pillar_1.4.7             backports_1.2.1         
+[10] lattice_0.20-38          glue_1.4.2               digest_0.6.27           
+[13] rvest_0.3.6              snakecase_0.11.0         colorspace_2.0-0        
+[16] htmltools_0.5.1.1        pkgconfig_2.0.3          broom_0.7.4             
+[19] haven_2.3.1              scales_1.1.1             generics_0.1.0          
+[22] farver_2.0.3             ellipsis_0.3.1           cachem_1.0.4            
+[25] withr_2.4.1              cli_2.3.0                crayon_1.4.1            
+[28] readxl_1.3.1             memoise_2.0.0            evaluate_0.14           
+[31] fs_1.5.0                 fansi_0.4.2              xml2_1.3.2              
+[34] class_7.3-15             tools_3.6.3              hms_1.0.0               
+[37] lifecycle_1.0.0          munsell_0.5.0            reprex_1.0.0            
+[40] compiler_3.6.3           e1071_1.7-4              tinytex_0.29            
+[43] rlang_0.4.10             classInt_0.4-3           units_0.6-7             
+[46] grid_3.6.3               rstudioapi_0.13          rmarkdown_2.6           
+[49] gtable_0.3.0             codetools_0.2-16         DBI_1.1.1               
+[52] R6_2.5.0                 knitr_1.31               fastmap_1.1.0           
+[55] rgeos_0.5-5              utf8_1.1.4               rprojroot_2.0.2         
+[58] KernSmooth_2.23-16       stringi_1.5.3            parallel_3.6.3          
+[61] Rcpp_1.0.6               vctrs_0.3.6              dbplyr_2.1.0            
+[64] tidyselect_1.1.0         xfun_0.21     
+
+
+lib_versions <- sf::sf_extSoftVersion() 
+lib_versions 
+          GEOS           GDAL         proj.4 GDAL_with_GEOS     USE_PROJ_H 
+       "3.8.0"        "3.0.4"        "6.3.1"         "true"         "true" 
+```{r}
+#2014 interpolated vms from Owens pipeline run
+owendat <- read_rds(here::here('data','processed','matched','interpolation','2014interpolated_Owen.rds'))
+
+#2014 interpolated vms using Mary's way of creating move object
+marydat <- read_rds(here::here('data','processed','matched','interpolation','2014interpolated_MaryV2.rds'))
+
+#2014 interpolated vms using Jameals's way of creating move object
+jamealdat <- read_rds(here::here('data','processed','matched','interpolation','2014interpolated_Jameal.rds'))
+
+
+```
+
+
+```{r}
+identical(owendat, marydat)
+identical(owendat, jamealdat)
+identical(marydat, jamealdat)
+#False for all
+
+all.equal(owendat, marydat) #Gives a list of 'discrepancies'
+all.equal(owendat, jamealdat) #Gives a list of 'discrepancies'
+all.equal(marydat, jamealdat) #Gives a list of 'discrepancies'
+
+```
+
+```{r}
+
+#no. and names of columns are same
+identical(colnames(owendat), colnames(marydat)) #TRUE
+identical(colnames(owendat), colnames(jamealdat)) #TRUE
+
+compare_df_cols(owendat, marydat, jamealdat, return = "mismatch")
+#only difference is that some columns are character columns in owendat and marydat, but factor columns in jamealdat
+
+```
+
+```{r}
+nrow(owendat)
+nrow(marydat)
+nrow(jamealdat)
+
+#Owen version has 145 more rows than mary or jameal dataset (which have same number of rows)
+nrow(owendat)-nrow(marydat)
+```
+
+```{r}
+summary(owendat)
+summary(marydat)
+summary(jamealdat)
+
+#Based on visual comparison of summaries, there really doesn't seem to be any differences between marydat and jamealdat...
+
+#owendat min utcdatetim 2013-12-28 15:42:00
+#marydat min utcdatetim 2014-01-01 08:04:00
+#this might relate to Step 4, section 'Load VMS data, including the last month of the previous year (for handling trips spanning January 1st of the current year)'
+#It is quite likely I have done something wrong along the way and didn't accurately bring in data for trips that started in late December 2013
+#Which would explain the discrepancy between owendat and marydat/jamealdat at least to some extent
+#Even if looking at only 2014 data, the first observation in owendat is 2014-01-01 00:10:00 and in marydat 2014-01-01 089:04:00 -- so my version of things is missing some of the early data
+
+
+owendat %<>% mutate(year = year(UTCDATETIM)) 
+owendat$year <- as.factor(owendat$year)
+summary(owendat$year)
+#292 records with year 2013, which is more than the 145 row difference between the data frames...
+
+
+```
+```{r}
+owendat_tail <- owendat %>% 
+  arrange(UTCDATETIM) %>% 
+  slice_tail(n = 100000)
+
+marydat_tail <- marydat %>% 
+  arrange(UTCDATETIM) %>% 
+  slice_tail(n = 100000)
+
+summary(owendat_tail)
+summary(marydat_tail)
+#If just compare sub-sample from the end of (ordered) datasets, they seem the same
+
+```
+
+
+Sum of the number of VMS point per fish ticket, if map Mary and Owen data in x and y in a plot, it should run as a 1-to-1 line.
+```{r}
+
+VMSpoints_owen <- owendat %>% group_by(Rec_ID) %>% summarise(n_owen = n())
+VMSpoints_mary <- marydat %>% group_by(Rec_ID) %>% summarise(n_mary = n())
+
+joined <- left_join(VMSpoints_owen,VMSpoints_mary, by=c("Rec_ID"))
+
+joined %>% 
+  ggplot(aes(n_owen,n_mary))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  labs(x='VMS by tix_owen',y="VMS by tix_mary")
+#Almost all points fall on a 1-to-1 line, 10 points that don't - quite likely related to mary data not having point in Dec 2013
+```
+
+```{r}
+#QGIS mapping seems better
+
+owendat_sf <- owendat %>% st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+marydat_sf <- marydat %>% st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+jamealdat_sf <- jamealdat %>% st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+
+# Try with a subset of 100k points from the end of data frame
+owendat_sf_sample <- owendat_sf %>% 
+  slice_tail(n = 100000)
+
+marydat_sf_sample <- marydat_sf %>% 
+  slice_tail(n = 100000) 
+
+jamealdat_sf_sample <- jamealdat_sf %>% 
+  slice_tail(n = 100000) 
+  
+
+# coastline
+coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington')) %>% 
+  st_transform(st_crs(owendat_sf))
+
+map1 <- ggplot()+
+  geom_sf(data=coaststates,fill='gray50',col=NA)+
+  geom_sf(data=owendat_sf_sample,size=0.5,col='blue')+
+  geom_sf(data=marydat_sf_sample,size=0.5,col='red')+
+  labs(x='Longitude',y='Latitude',title=paste0(process_year," VMS records"))
+
+map2 <- ggplot()+
+  geom_sf(data=coaststates,fill='gray50',col=NA)+
+  geom_sf(data=marydat_sf_sample,size=0.5,col='red')+
+  geom_sf(data=owendat_sf_sample,size=0.5,col='blue')+
+  labs(x='Longitude',y='Latitude',title=paste0(process_year," VMS records"))
+
+map3 <- ggplot()+
+  geom_sf(data=coaststates,fill='gray50',col=NA)+
+  geom_sf(data=marydat_sf_sample,size=0.5,col='red')+
+  geom_sf(data=jamealdat_sf_sample,size=0.5,col='green')+
+  labs(x='Longitude',y='Latitude',title=paste0(process_year," VMS records"))
+
+
+
+map1
+map2
+map3
+
+#maps between marydat and jamealdat seem the same
+#owendat is missing some points that exists in marydat & jamealdat
+```
+
+```{r}
+#Tried one vessel in one month
+#Not familiar with sf and mapping in R so these weren't great PLUS mapping was better/more informative on QGIS
+
+#Add extra column for month
+#owendat_sf %<>% mutate(Month = month(UTCDATETIM))
+#owendat_may <- owendat_sf %>% 
+ # filter(Month == 5)
+#owendat_may_580792 <- owendat_may %>% 
+ # filter(drvid == 580792)
+
+#marydat_sf %<>% mutate(Month = month(UTCDATETIM))
+#marydat_may <- marydat_sf %>% 
+ # filter(Month == 5)
+#marydat_may_580792 <- marydat_may %>% 
+ # filter(drvid == 580792)
+
+#jamealdat_sf %<>% mutate(Month = month(UTCDATETIM))
+#jamealdat_may <- jamealdat_sf %>% 
+ # filter(Month == 5)
+#jamealdat_may_580792 <- jamealdat_may %>% 
+ # filter(drvid == 580792)
+
+#coaststates2 <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+#  filter(name %in% c('Oregon','Washington')) %>% 
+#  st_transform(st_crs(owendat_sf))
+#coaststatescropped <- st_crop(coaststates2, xmin = -126, xmax = 122, ymin = 40, ymax = 45)
+
+#may_580792_map <- ggplot()+
+# geom_sf(data=coaststatescropped,fill='gray50',col=NA)+
+#  geom_sf(data=owendat_may_580792,size=0.8,col='blue')+
+#  geom_sf(data=marydat_may_580792,size=0.7,color=alpha("red",0.3))+
+  #coord_sf(datum = 9001)+
+  #coord_sf(ylim = c(4500000, 5000000), xlim = c(400000, 600000)) +
+#  labs(x='Longitude',y='Latitude',title=paste0(process_year,"Vessel 580792 in May")) 
+
+#Trying to figure out how to zoom - coaststates and the samples have crs
+#issues with ylim and xlim part
+#geom_sf by default changes things to lat longs from UTM
+
+#may_580792_map <- ggplot()+
+#  geom_sf(data=coaststatescropped,fill='gray50',col=NA)+
+#  geom_sf(data=jamealdat_may_580792,size=0.8,col='green')+
+#  geom_sf(data=marydat_may_580792,size=0.7,color=alpha("red",0.3))+
+  #coord_sf(datum = 9001)+
+  #coord_sf(ylim = c(4500000, 5000000), xlim = c(400000, 600000)) +
+#  labs(x='Longitude',y='Latitude',title=paste0(process_year,"Vessel 580792 in May")) 
+
+
+```
+
+
+
+
+```{r}
+#Sample of one vessel in one month
+#write_csv(owendat_may_580792,here::here('data','processed','matched','interpolation','owendat_may_580792.csv'))
+#write_csv(marydat_may_580792,here::here('data','processed','matched','interpolation','marydat_may_580792.csv'))
+#write_csv(jamealdat_may_580792,here::here('data','processed','matched','interpolation','jamealdat_may_580792.csv'))
+```
+
+
+```{r}
+#Add column for month, save entire datasets as csv for QGIS
+owendat %<>% mutate(month = month(UTCDATETIM))
+marydat %<>% mutate(month = month(UTCDATETIM))
+jamealdat %<>% mutate(month = month(UTCDATETIM))
+
+write_csv(owendat,here::here('data','processed','matched','interpolation','owendat.csv'))
+write_csv(marydat,here::here('data','processed','matched','interpolation','marydat.csv'))
+write_csv(jamealdat,here::here('data','processed','matched','interpolation','jamealdat.csv'))
+```
+
+Comparing 2018 VMS pipeline output at each step
+
+Step 1
+
+
+```{r}
+#2018 step 1 from Owens pipeline run
+owendat2018_step1 <- read_rds(here::here('data','processed','fish tickets','2018fishtix_Owen.rds'))
+
+#2018 step 1 from my pipeline run
+Leenadat2018_step1 <- read_rds(here::here('data','processed','fish tickets','2018fishtix.rds'))
+
+```
+
+```{r}
+identical(owendat2018_step1, Leenadat2018_step1) #True
+
+all.equal(owendat2018_step1, Leenadat2018_step1) #True
+
+identical(colnames(owendat2018_step1), colnames(Leenadat2018_step1)) #TRUE
+
+```
+```{r}
+summary(owendat2018_step1)
+summary(Leenadat2018_step1)
+```
+
+```{r}
+
+```
+Step 2
+
+```{r}
+#2018 step 2 from Owens pipeline run
+owendat2018_step2 <- read_rds(here::here('data','processed','fish tickets','2018fishtix_vlengths_Owen.rds'))
+
+#2018 step 2 from my pipeline run
+Leenadat2018_step2 <- read_rds(here::here('data','processed','fish tickets','2018fishtix_vlengths.rds'))
+```
+
+```{r}
+identical(owendat2018_step2, Leenadat2018_step2) #True
+
+all.equal(owendat2018_step2, Leenadat2018_step2) #True
+
+identical(colnames(owendat2018_step2), colnames(Leenadat2018_step2)) #TRUE
+```
+```{r}
+summary(owendat2018_step2)
+summary(Leenadat2018_step2)
+```
+```{r}
+
+```
+Step 3
+
+```{r}
+#2018 step 3 from Owens pipeline run
+owendat2018_step3 <- read_rds(here::here('data','processed','vms','2018_vms_clean_Owen.rds'))
+
+#2018 step 3 from my pipeline run
+Leenadat2018_step3 <- read_rds(here::here('data','processed','vms','2018_vms_clean.rds'))
+```
+
+```{r}
+identical(owendat2018_step3, Leenadat2018_step3) #False
+
+all.equal(owendat2018_step3, Leenadat2018_step3) #gives list of discrepancies
+
+identical(colnames(owendat2018_step3), colnames(Leenadat2018_step3)) #TRUE
+
+nrow(owendat2018_step3)
+nrow(Leenadat2018_step3) #same number of rows
+```
+```{r}
+summary(owendat2018_step3)
+summary(Leenadat2018_step3)
+```
+```{r}
+#points_owen2018 <- owendat2018_step3 %>% group_by(Rec_ID) %>% summarise(n_owen = n())
+#points_Leena2018 <- Leenadat2018_step3 %>% group_by(Rec_ID) %>% summarise(n_leena = n())
+points_owen2018 <- owendat2018_step3 %>% group_by(VESSEL_NAM) %>% summarise(n_owen = n())
+points_Leena2018 <- Leenadat2018_step3 %>% group_by(VESSEL_NAM) %>% summarise(n_leena = n())
+
+#joined <- left_join(points_owen2018,points_Leena2018, by=c("Rec_ID"))
+joined <- left_join(points_owen2018,points_Leena2018, by=c("VESSEL_NAM"))
+
+joined %>% 
+  ggplot(aes(n_owen,n_leena))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  labs(x='points by tix_owen',y="points by tix_leena")
+```
+Step 3
+
+```{r}
+#2018 step 4 from Owens pipeline run
+owendat2018_step4_vmstixonly <- read_rds(here::here('data','processed','matched','matching','2018matched_vmstix_only_Owen.rds'))
+
+#2018 step 4 from my pipeline run
+Leenadat2018_step4_vmstixonly <- read_rds(here::here('data','processed','matched','matching','2018matched_vmstix_only.rds'))
+```
+
+```{r}
+identical(owendat2018_step4_vmstixonly, Leenadat2018_step4_vmstixonly) #False
+
+all.equal(owendat2018_step4_vmstixonly, Leenadat2018_step4_vmstixonly) #"Component “X_COORD”: names for current but not for target"
+
+identical(colnames(owendat2018_step4_vmstixonly), colnames(Leenadat2018_step4_vmstixonly)) #TRUE
+
+nrow(owendat2018_step4_vmstixonly)
+nrow(Leenadat2018_step4_vmstixonly) #same number of rows
+```
+```{r}
+summary(owendat2018_step4_vmstixonly)
+summary(Leenadat2018_step4_vmstixonly)
+```
+```{r}
+
+```
+Step 5
+
+```{r}
+#2018 step 5 from Owens pipeline run
+owendat2018_step5 <- read_rds(here::here('data','processed','matched','filtering','2018matched_filtered_Owen.rds'))
+
+#2018 step 5 from my pipeline run
+Leenadat2018_step5 <- read_rds(here::here('data','processed','matched','filtering','2018matched_filtered.rds'))
+```
+
+```{r}
+identical(owendat2018_step5, Leenadat2018_step5) #False
+
+all.equal(owendat2018_step5, Leenadat2018_step5) #gives list of discrepancies
+
+identical(colnames(owendat2018_step5), colnames(Leenadat2018_step5)) #TRUE
+
+nrow(owendat2018_step5)
+nrow(Leenadat2018_step5) #same number of rows
+```
+```{r}
+summary(owendat2018_step5)
+summary(Leenadat2018_step5)
+```
+```{r}
+points_owen2018 <- owendat2018_step5 %>% group_by(Rec_ID) %>% summarise(n_owen = n())
+points_Leena2018 <- Leenadat2018_step5 %>% group_by(Rec_ID) %>% summarise(n_leena = n())
+#points_owen2018 <- owendat2018_step3 %>% group_by(VESSEL_NAM) %>% summarise(n_owen = n())
+#points_Leena2018 <- Leenadat2018_step3 %>% group_by(VESSEL_NAM) %>% summarise(n_leena = n())
+
+joined <- left_join(points_owen2018,points_Leena2018, by=c("Rec_ID"))
+#joined <- left_join(points_owen2018,points_Leena2018, by=c("VESSEL_NAM"))
+
+joined %>% 
+  ggplot(aes(n_owen,n_leena))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  labs(x='points by tix_owen',y="points by tix_leena")
+```
+Step 6
+
+```{r}
+#2018 step 6 from Owens pipeline run
+owendat2018_step6 <- read_rds(here::here('data','processed','matched','interpolation','2018interpolated_Owen.rds'))
+
+#2018 step 6 from my pipeline run
+Leenadat2018_step6 <- read_rds(here::here('data','processed','matched','interpolation','2018interpolated.rds'))
+```
+
+```{r}
+identical(owendat2018_step6, Leenadat2018_step6) #False
+
+all.equal(owendat2018_step6, Leenadat2018_step6) #True
+
+identical(colnames(owendat2018_step6), colnames(Leenadat2018_step6)) #TRUE
+
+nrow(owendat2018_step6)
+nrow(Leenadat2018_step6) #same number of rows
+```
+```{r}
+summary(owendat2018_step6)
+summary(Leenadat2018_step6)
+```
+```{r}
+points_owen2018 <- owendat2018_step6 %>% group_by(Rec_ID) %>% summarise(n_owen = n())
+points_Leena2018 <- Leenadat2018_step6 %>% group_by(Rec_ID) %>% summarise(n_leena = n())
+#points_owen2018 <- owendat2018_step3 %>% group_by(VESSEL_NAM) %>% summarise(n_owen = n())
+#points_Leena2018 <- Leenadat2018_step3 %>% group_by(VESSEL_NAM) %>% summarise(n_leena = n())
+
+joined <- left_join(points_owen2018,points_Leena2018, by=c("Rec_ID"))
+#joined <- left_join(points_owen2018,points_Leena2018, by=c("VESSEL_NAM"))
+
+joined %>% 
+  ggplot(aes(n_owen,n_leena))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  labs(x='points by tix_owen',y="points by tix_leena")
+```
+

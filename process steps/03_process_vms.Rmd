@@ -224,14 +224,14 @@ Read in the bathymetry SpatialGridDataFrame object
 bathy.grid <- read_rds(here::here('data','raw','vms_composite_bath_spGrid.RDS'))
 ```
 
-Get bathymetry at VMS data points
+Get bathymetry at VMS data points. Note that the bathymetry layer is in decimeters, so we need to divide by 10 to get depth in meters.
 
 ```{r}
 # tm <- proc.time()
 vms_sp <- vms_nodup
 coordinates(vms_sp) <- c("LONGITUDE", "LATITUDE") 
 proj4string(vms_sp)<-proj4string(bathy.grid) <- CRS("+init=epsg:4326") # WGS 84
-bathy.points <- over(vms_sp, bathy.grid)$vms_composite_bath
+bathy.points <- over(vms_sp, bathy.grid)$vms_composite_bath/10
 # proc.time()-tm
 
 vms_nodup <- mutate(vms_nodup, NGDC_M = bathy.points)

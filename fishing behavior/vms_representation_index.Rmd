@@ -171,6 +171,16 @@ landings_by_year %>%
   labs(x="Year",y="DCRB Landings (Million Lbs)",title="DCRB Landings by Year, all Tickets")+
   theme(legend.position = c(0.8,0.9))
 ```
+As a percentage
+
+```{r}
+prop <- landings_by_year %>% 
+  select(-DCRB_lbs) %>% 
+  group_by(year) %>% 
+  pivot_wider(names_from=has_vms,values_from=DCRB_mt,names_prefix="vms") %>% 
+  mutate(prop=vms1/sum(vms0,vms1))
+mean(prop$prop)
+```
 
 ## By State
 
