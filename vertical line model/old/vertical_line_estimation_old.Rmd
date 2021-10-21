@@ -37,13 +37,21 @@ The goal of the analysis is to get an idea of the density of crab pot lines in t
 
 Because we do not currently have string-level data of how many traps are fished by individual fishers, we must estimate the number of traps. According to previous studies (NMFS 2005), common spacing of Dungeness crab traps along a contour line is 10-25 pots per mile, with an average of 15. Soak times (unattended time spent in the water) of these traps varies from less than 1 day to 7 days or more. Moreover, both the number of pots fished and the soak time can vary throughout the crab season, depending on prevailing conditions and market conditions. Nevertheless, these previous estimates can serve as bounds on our analysis and provide a basis for sensitivity analysis of our results.
 
-We will be estimating the number of traps fished within the confines of each individual Dungeness crab fishing trip (with "trip" defined as above). To spatially assign crab pots, we first assign a total number of traps based on the distance traveled by each vessel over the course of the trip. Then, we assign traps along the general course of the VMS tracks, but with randomness or "jitter" applied such that not all the traps are directly placed in straight lines. This helps to account for the fact that we do not observe all of the movements of a fishing vessel within the ~1 hour gaps between successive VMS points
+We will be estimating the number of traps fished within the confines of each individual Dungeness crab fishing trip (with "trip" defined as above). In the example below, we try four different estimation methods and compare them visually. Each method involves a slightly different way of spatially distributing crab pots. For the first method, we assign a total number of traps based on the distance traveled by each vessel over the course of the trip, and then place the trips randomly within the overall footprint of the fishing trip. In the second method, we place the traps evenly along straight segments between actual VMS pings. The third and fourth methods fall somewhere between methods 1 and 2, by assigning traps along the general course of the VMS tracks, but with randomness or "jitter" applied such that not all the traps are directly placed in straight lines. 
 
 From a technical standpoint, we will:
 
 1. Remove the first and last VMS segment from each fishing trip, which are presumably spent mostly transiting to and from a port.
-2. Place the traps in even segments along straight lines between VMS points, at a rate of 15 traps/linear mile (this could be changed later)
-3. Add a uniform random displacement for each trap in both X and Y directions (the 'jitter').
+2. 
+3. For the first method:
+  i) Calculate the remaining distance traveled in each VMS segment within each trip
+  ii) Calculate a convex hull around all of the remaining VMS points for that trip
+  iii) Calculate the number of traps to deploy based on the distance traveled during the trip and a number of pots per mile
+  iv) Randomly place those traps within the convex hull of the fishing trip
+4. For the second method:
+  i) Place the traps in even segments along straight lines between VMS points, at a rate of 15 traps/linear mile (although this could be changed later)
+5. For the third method, create buffer or padding around each straight line, then assign the traps randomly within that footprint.
+6. Finally, for the fourth method, assign traps in segments along straight lines as in method 2, but then add a uniform random displacement for each trap in both X and Y directions.
 
 To see this visually, we start with an example from a single fishing trip.
 
@@ -61,7 +69,6 @@ library(magrittr)
 library(rnaturalearth)
 library(marmap)
 library(here)
-library(doParallel)
 
 # ggplot theme
 plot_theme <-   theme_minimal()+
@@ -95,10 +102,6 @@ vessel_lengths <- purrr::map_df(2009:2019, function(yr){
 # For CA, tier info (number of traps per permit)
 CAtier <- read_rds(here('data','raw','CAtier_drvid_matching_key.rds'))
 
-# For OR, tier info (number of traps per permit, organized in a separate script
-# 3 keys for matching Oregon VLM
-ORtier <- read_rds(here('vertical line model','oregon_tier_drvid_matching_key.rds'))
-
 # a coastline, for plotting
 # coastline for plotting
 coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
@@ -107,8 +110,6 @@ coastline <- ne_coastline(scale='medium',returnclass = 'sf') %>%
   st_crop(st_bbox(coaststates))
 
 ```
-
-# Example Crab Trip
 
 Let's extract a random Dungeness crab trip from December 2010, a busy and productive crab season. Haphazardly, I chose the 100th trip amongst all Dec 2010 crab trips.
 
@@ -121,11 +122,8 @@ trip1 <- vms_sf %>%
   slice(100) %>% 
   unnest(cols = c(data)) %>% 
   st_as_sf(crs=st_crs(vms_sf))
-```
 
-## Create line segments
 
-```{r}
 # create individual line segments
 # NOTE: This creates look-one-point-ahead line segments
 create_linesegs <- function(sf_df){
@@ -183,10 +181,93 @@ For the next step, we have to calculate the distance traveled by the vessel betw
 trip1_tot_dist <- sum(st_length(trip1_trunc)) %>% units::set_units(mi) %>% as.numeric()
 ```
 
-On this trip, based on our interpolated VMS data and *excluding* the first and last legs of the trip, this vessel traveled `r round(trip1_tot_dist,2)` miles. If we adopt an estimate of 15 crab pots per linear mile, then our estimate would be that this trip involved interacting with ~`r round(trip1_tot_dist*15)` traps.
+On this trip, based on our interpolated VMS data and *excluding* the first and last legs of the trip, this vessel traveled `r round(trip1_tot_dist,2)` miles. If we adopt the numbers from above that estimate a mean of 15 crab pots per linear mile, then our estimate would be that this trip involved interacting with ~`r round(trip1_tot_dist*15)` traps.
+
+## Option 1: Convex Hull
+
+Our first method is to draw a convex hull and then assign the appropriate number of traps randomly within that hull.
+
+```{r conv hull,warning=FALSE,message=FALSE}
+# calculate the convex hull
+trip1_hull <- trip1_trunc %>% ungroup() %>% st_combine() %>% st_convex_hull()
+
+# place random traps
+num_traps <- round(trip1_tot_dist*15)
+trip1_traps_opt1 <- st_sample(trip1_hull,num_traps)
+
+ggplot()+
+  geom_sf(data=trip1_hull,fill='darkblue',alpha=0.5)+
+  geom_sf(data=trip1_traps_opt1,col='black',size=0.5)+
+  geom_sf(data=coaststates,color='gray50')+
+  theme(axis.text.x = element_text(angle=45))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(x="Longitude",y="Latitude",title="A DCRB Trip\nDec 02, 2010\nRandom Trap Placement")
+```
+
+## Option 2: Points on Straight Lines
+
+For the second option, we retain the line segments from the vessel's trajectory, and assign our `r round(trip1_tot_dist*15)` traps along those lines.
+
+```{r}
+# create segments
+trip1_segmentize <- trip1_trunc %>% 
+  ungroup() %>% 
+  summarise(do_union=TRUE) %>% 
+  st_segmentize(units::set_units(1/15,miles))
+
+trip1_traps_opt2 <- trip1_segmentize %>% st_cast("POINT")
+
+ggplot()+
+  geom_sf(data=trip1_traps_opt2,col='blue',size=0.3)+
+  labs(x="Longitude",y="Latitude",title="A DCRB Trip\nDec 02, 2010\nLinear Trap Placement")
+```
+
+These two options produce quite different results.
+
+```{r}
+cols <- c("Random"="black","Linear"="blue","Convex Hull"="darkblue")
+shapes <- c("Random"=16,"Linear"=16)
+bbox=st_bbox(trip1_trunc)
+ggplot()+
+  geom_sf(data=trip1_hull,aes(fill="Convex Hull"),col=NA,alpha=0.5)+
+  geom_sf(data=trip1_traps_opt1,aes(colour="Random"),size=0.5,shape=16)+
+  geom_sf(data=coaststates,color='gray50')+
+  geom_sf(data=trip1_traps_opt2,aes(colour="Linear"),size=0.3,shape=16)+
+  scale_color_manual(name="Trap Placement Type",values=cols,
+                     guide=guide_legend(override.aes = list(linetype=c('blank','blank'))))+
+  scale_fill_manual(name="",values=cols)+
+  theme(axis.text.x = element_text(angle=45))+
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+  labs(x="Longitude",y="Latitude",title="Random versus Linear Trap Placement")
+```
+
+## Option 3: Buffer
+
+As an intermediate option, we can assign traps randomly, but place them within a specified distance of the VMS track. Because we do not know precisely where the vessels went outside of their hourly pings, this may be a good compromise between the total randomness of Option 1 and the rigid definition of Option 2.
+
+```{r create buffer}
+# what should the buffer size be? (in meters)
+buffer_size <- 1000
+
+# buffer lines
+trip1_buffer <- trip1_segmentize %>% 
+  st_transform(st_crs(vms_sf)) %>% 
+  st_buffer(buffer_size) %>% 
+  st_union()
+
+# assign points
+trip1_traps_opt3 <- trip1_buffer %>% st_sample(num_traps)
+
+ggplot()+
+  geom_sf(data=trip1_buffer,col='blue',size=0.3)+
+  geom_sf(data=trip1_traps_opt3,col='black',size=0.3)+
+  labs(x="Longitude",y="Latitude",title="A DCRB Trip with 1km buffer")
+```
 
 
-## Assign Jittered Traps
+## Option 4: Jitter
+
+Buffering can be computationally expensive when dealing with millions of observations, especially for trips that have crossing lines. Another option is to retain the line segmentation, but add noise ("jitter") to the data. Let's see how it looks. This will be the same as Option 2, but with some noise added in.
 
 ```{r jitter traps}
 # create segments and jitter
@@ -201,12 +282,14 @@ trip1_jittered <- ggplot()+
 
 trip1_jittered
 
-ggsave(here::here('vertical line model','plots','sample_jittered_vms.png'),trip1_jittered,h=4,w=8)
+ggsave(here::here('plots','sample_jittered_vms.png'),trip1_jittered,h=4,w=8)
 ```
+
+We will go with this for now. Can we apply this method to a larger set of trips?
 
 # Assign Trap Locations to all Dungeness Trips
 
-Now we apply this trap simulation to all Dungeness trips (where Dungeness is the target species by revenue) in the data.
+We'll apply Option 4 above (segments plus jitter) to all Dungeness trips (where Dungeness is the target species by revenue) in the data.
 
 ## Speed, Depth, and Total Number of Traps Filters
 
@@ -219,28 +302,18 @@ We need to apply a few course filters to the data in order to get a more realist
 ```{r import depth}
 # import bathymetry layer (GEBCO 15 arc-second resolution)
 # bounding box for the layer (have to translate to lat/lon for bathymetry layer)
-bathy <- readGEBCO.bathy(file=here::here('vertical line model','gebco','GEBCO_2019_-132.3021_50.6549_-116.6354_31.2799.nc'))
+bathy <- readGEBCO.bathy(file=here::here('data','gebco','GEBCO_2019_-132.3021_50.6549_-116.6354_31.2799.nc'))
 ```
 
 ## Add Trap Tier Info
 
-Add trap tier info
+For CA, add tier info
 
 ```{r}
 vms_sf <- vms_sf %>% 
   # add crude season designation
   mutate(crabyr=ifelse(month(date)<=10,year(date)-1,year(date))) %>% 
-  # join CA tier info
   left_join(select(CAtier,year,drvid,ntraps),by=c("crabyr"="year","drvid"))
-
-# OR tier information
-ORtier <- ORtier %>% 
-  mutate(monthnum=match(month,month.name)) %>% 
-  select(-month)
-
-vms_sf <- vms_sf %>% 
-  mutate(monthnum=month(date),year=year(date)) %>% 
-  left_join(ORtier,by=c('year','monthnum','drvid'))
 ```
 
 ## Spatially Assign Traps
@@ -275,18 +348,14 @@ assign_traps <- function(trip,ntraps_per_mi=15,jitter_amount=1000) {
     mutate(seg=row_number()) %>% 
     # join line segments
     right_join(linesegs,by='seg') %>% 
-    
     # remove lines where estimated speed is too high  
     filter(avg_speed_recalc<4.4) %>%
-    
     # segment lines into number of traps
     st_as_sf() %>% 
     st_segmentize(units::set_units(1/ntraps_per_mi,miles)) %>% 
     st_cast("POINT") %>% 
-    
     # jitter the traps by a specified number of meters (i.e. draw a random displacement between -jitter and +jitter from a uniform distribution)
-    st_jitter(amount=jitter_amount) %>%
-    
+    st_jitter(amount=jitter_amount) %>% 
     # filter by depth
     st_transform(4326) %>% st_coordinates() %>% 
     get.depth(bathy,.,locator=FALSE) %>% 
@@ -383,10 +452,10 @@ nested_trips$traps <- simulated_traps
 x <- proc.time()-p
 ```
 
-It took `r round(x[3]/60,2)` minutes to calculate traps for all trips. (5.4 hrs on 4 cores)
+It took `r round(x[3]/60,2)` minutes to calculate traps for all trips. (4.2 hrs)
 
 ```{r}
-write_rds(nested_trips,here::here('vertical line model',"sim_traps_speed_depth_filters.rds"))
+write_rds(nested_trips,here::here('data','processed',"sim_traps_speed_depth_filters.rds"))
 ```
 
 # Visualize Results
@@ -397,7 +466,7 @@ Because here we are primarily interested in commercial crabbing, we filter the e
 
 ```{r}
 # Load if not already loaded
-traplocs <- read_rds(here::here('vertical line model',"sim_traps_speed_depth_filters.rds")) %>% ungroup()
+traplocs <- read_rds(here::here('data','processed',"sim_traps_speed_depth_filters.rds")) %>% ungroup()
 
 # traps locations only (discard VMS data for now), attached to fish ticket data
 traplocs <- traplocs %>% select(Rec_ID,traps) %>% 
