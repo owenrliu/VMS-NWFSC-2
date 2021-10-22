@@ -284,3 +284,50 @@ png(here::here(
   width = 4, height = 4, units = "in", res = 300)
 quarterly_ts_hump
 invisible(dev.off())
+
+# Nov-Dec vs May-Sep entanglements time series humpbacks only
+early_late_season_ts_hump <- ggplot(
+  df_dcc %>% 
+    filter (plotting_date >= "2009-02-01" & plotting_date <= "2018-10-01") %>% 
+    filter (species == "Humpback Whale") %>%
+    mutate(
+      time_of_year = case_when(
+        month(plotting_date) > 10 ~ "Fall (Nov-Dec)",
+        month(plotting_date) >= 5 & month(plotting_date) <= 9 ~ "Summer (May-Sep)", 
+        TRUE ~ "Middle (Jan-Apr)"),
+      plotting_year = as.Date(paste(year(plotting_date), 1, 1, sep = "-"))
+      ) %>%
+    group_by(plotting_year, time_of_year, species) %>%
+    summarise(
+      count_confirmed = sum(count_confirmed)
+    ),
+  aes(x=plotting_year, y=count_confirmed)) +
+  geom_point(size=1) +
+  geom_line() + 
+  facet_grid(rows = vars(time_of_year)) +
+  ylab("Number of entanglements") +
+  xlab("") +
+  ggtitle("Confirmed Humpback Whale Entanglements,\nUS West Coast Commercial Dungeness Crab Fishery") +
+  #scale_x_continuous(breaks=seq(2009, 2018 , 1),limits=c(2008.5,2018.5)) +
+  scale_x_date(date_breaks = "1 year",
+               date_labels = "%Y") +
+  scale_y_continuous(breaks=seq(0, 15, 3),limits=c(0, 15))+
+  theme_classic() +
+  #scale_fill_manual(values=c("lightskyblue", "coral")) +
+  theme(legend.title = element_blank(),
+        #title = element_text(size = 32),
+        #legend.text = element_text(size=11),
+        axis.text.x = element_text(hjust = 1, size = 11, angle = 60),
+        axis.text.y = element_text(size = 11),
+        axis.title = element_text(size = 11),
+        legend.position = "none"
+  )
+early_late_season_ts_hump 
+
+png(here::here(
+  "vertical line model",
+  "figures",
+  "entanglements_ts_3partsofseason_hump.png"), 
+  width = 4, height = 4, units = "in", res = 300)
+early_late_season_ts_hump
+invisible(dev.off())
