@@ -1,0 +1,75 @@
+---
+title: "Visualizing VLM"
+author: "Owen Liu"
+date: "10/22/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(raster)
+library(tidyverse)
+library(magrittr)
+library(sf)
+```
+
+# Purpose
+
+Take the outputs from the vertical line model, and produce visualizations/manuscript figures.
+```{r}
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+# Import Data
+
+```{r}
+
+```
+
+
+Gather x-y trap data
+```{r}
+# RasterStack to long form xy
+years_periods %<>% mutate(nm = paste(yr,per,sep = "_"))
+names(trap_density_all_periods_expanded) <- years_periods$nm
+names(trap_density_all_periods_no_expansion) <- years_periods$nm
+
+all_obs_xy_no_expansion <- purrr::map(as.list(trap_density_all_periods_no_expansion),function(x){
+  wk <- names(x)
+  y<-rasterToPoints(x) %>% as_tibble() %>% set_names(c('x','y','count'))
+  z <-y %>% mutate(wk=wk)
+  z
+}) %>% bind_rows()
+
+all_obs_xy_expanded <- purrr::map(as.list(trap_density_all_periods_expanded),function(x){
+  wk <- names(x)
+  y<-rasterToPoints(x) %>% as_tibble() %>% set_names(c('x','y','count'))
+  z <-y %>% mutate(wk=wk)
+  z
+}) %>% bind_rows()
+```
+
+Distribution
+
+```{r}
+all_obs_xy_no_expansion %>%  
+  filter(!is.na(count),count>0) %>% 
+  ggplot(aes(count/25))+
+  geom_density(fill='red',alpha=0.98,col=NA)+
+  scale_x_continuous(limits=c(0,150))+
+  labs(x="Density (Traps per sq. Km)",y="Kernel Density",title="Distribution of Positive Trap Densities\nall years and weeks (non-expanded)")
+
+all_obs_xy_expanded %>% 
+  filter(!is.na(count),count>0) %>% 
+  ggplot(aes(count/25))+
+  geom_density(fill='red',alpha=0.98,col=NA)+
+  scale_x_continuous(limits=c(0,150))+
+  labs(x="Density (Traps per sq. Km)",y="Kernel Density",title="Distribution of Positive Trap Densities\nall years and months (expanded)") 
+```
