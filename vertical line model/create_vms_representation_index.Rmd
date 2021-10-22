@@ -1,0 +1,246 @@
+---
+title: "Create VMS Representation Index"
+author: "Owen Liu"
+date: "10/21/2021"
+output: html_document
+---
+
+## Purpose
+
+Create a relative VMS representation index by year, month, state, vessel pot limit tier, and vessel length. This key will be used as a weighting factor in the vertical line model. NOTE: this is an update to a script that was used in exploration of the matched fish ticket-VMS data for the O. Liu's Dungenesss fishing behavioral types project.
+
+```{r pkgs, include=FALSE,message=F,warning=FALSE}
+library(tidyverse)
+library(knitr)
+library(extrafont)
+library(ggsci)
+library(lubridate)
+library(sf)
+library(geosphere)
+library(magrittr)
+library(here)
+
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=10,color="black"),
+        legend.text = element_text(size=10),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+We need fish ticket, VMS, and tier info
+
+```{r import data}
+# Load Rdata files
+
+fishtix <- read_rds(here::here('data','processed','fish tickets','fish_tickets_w_dayofseason.rds'))
+fishtix %<>% filter(ticket_day_of_season>=0)
+
+# vms_rep <- read_rds(here('fishing behavior','vms_proportional_landings_key.rds'))
+vms_tickets <- read_rds(here('fishing behavior','fish_tickets_with_vms.rds'))
+recid_crabseason <- fishtix %>% dplyr::select(Rec_ID,crab_season) %>% distinct()
+
+# combined tier information
+tier_key <- read_rds(here::here('vertical line model','tier_information_year_month_allstates.rds'))
+tier_key %<>% mutate(month=month.name[month]) %>% dplyr::select(-crabyr)
+```
+
+# Total Landings, Trips, and Number of Vessels over Time
+
+In this section, we summarize the data on broad scales to look at total landings over time and representation of the fleet through VMS records.
+
+For the tier level, WE ASSUME THAT IF NUMBER OF PERMITTED TRAPS IS NA, WE DEFAULT TO A LIMIT OF 500
+
+```{r}
+fishtix <- fishtix %>% 
+  left_join(vms_tickets) %>% 
+  mutate(has_vms=replace_na(has_vms,0)) %>% 
+  left_join(tier_key) %>% 
+  mutate(ntraps_permitted=coalesce(ntraps_permitted,500))
+glimpse(fishtix)
+```
+
+## Total Dungeness Vessels
+
+*  How many vessels recorded landings in each month in our data?
+*  What proportion of vessels have associated VMS data in each month?
+
+```{r count vessels}
+nvessels_by_month <- fishtix %>% 
+  group_by(year,month,has_vms) %>% 
+  summarise(nvessels=n_distinct(drvid)) %>% 
+  ungroup() %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles"))
+
+nvessels_by_month %>% 
+  ggplot(aes(date,nvessels,fill=factor(has_vms),col=factor(has_vms)))+
+  geom_bar(stat='identity')+
+  scale_fill_locuszoom(name="",labels=c("No VMS","VMS"))+
+  scale_color_locuszoom(name="",labels=c("No VMS","VMS"))+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Vessels Recording Landings",title="Number of Vessels by Month")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+```
+
+
+## Total Landings
+
+*  What are the total Dungeness landings represented in the fish ticket data over time?
+*  What proportion of those landings are represented in our VMS records?
+
+```{r}
+landings_by_month <- fishtix %>%
+  group_by(year,month,has_vms) %>% 
+  summarise(DCRB_lbs=sum(DCRB_lbs)) %>%
+  mutate(DCRB_mt=DCRB_lbs/2204.62) %>% 
+  ungroup() %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles"))
+
+landings_by_month %>% 
+  ggplot(aes(date,DCRB_lbs/1e6,fill=factor(has_vms),col=factor(has_vms)))+
+  geom_bar(stat='identity')+
+  scale_fill_locuszoom(labels=c("No VMS","VMS"),name="")+
+  scale_color_locuszoom(labels=c("No VMS","VMS"),name="")+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="DCRB Landings (Million Lbs)",title="DCRB Landings by Month, all Tickets")+
+  theme(legend.position = c(0.2,0.9))+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+
+landings_by_year <- fishtix %>%
+  group_by(year,has_vms) %>% 
+  summarise(DCRB_lbs=sum(DCRB_lbs)) %>%
+  mutate(DCRB_mt=DCRB_lbs/2204.62) %>% 
+  ungroup()
+
+landings_by_year %>% 
+  ggplot(aes(year,DCRB_lbs/1e6,fill=factor(has_vms),col=factor(has_vms)))+
+  geom_bar(stat='identity')+
+  scale_fill_locuszoom(labels=c("No VMS","VMS"),name="")+
+  scale_color_locuszoom(labels=c("No VMS","VMS"),name="")+
+  labs(x="Year",y="DCRB Landings (Million Lbs)",title="DCRB Landings by Year, all Tickets")+
+  theme(legend.position = c(0.2,0.9))
+```
+As a percentage
+
+```{r}
+prop <- landings_by_year %>% 
+  dplyr::select(-DCRB_lbs) %>% 
+  group_by(year) %>% 
+  pivot_wider(names_from=has_vms,values_from=DCRB_mt,names_prefix="vms") %>% 
+  mutate(prop=vms1/sum(vms0,vms1))
+mean(prop$prop)
+```
+
+## By State
+
+```{r}
+landings_by_month_state <- fishtix %>%
+  group_by(year,month,agency_code,has_vms) %>% 
+  summarise(DCRB_lbs=sum(DCRB_lbs)) %>%
+  mutate(DCRB_mt=DCRB_lbs/2204.62) %>% 
+  ungroup() %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles"))
+
+landings_by_month_state %>% 
+  ggplot(aes(date,DCRB_lbs/1e6,fill=factor(has_vms),col=factor(has_vms)))+
+  geom_bar(stat='identity')+
+  facet_wrap(~agency_code,nrow=3)+
+  scale_fill_locuszoom(labels=c("No VMS","VMS"),name="")+
+  scale_color_locuszoom(labels=c("No VMS","VMS"),name="")+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="DCRB Landings (Million Lbs)",title="DCRB Landings by Month, all Tickets")+
+  theme(legend.position = c(0.2,0.95))+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+
+revenue_by_month_state <- fishtix %>%
+  group_by(year,month,agency_code,has_vms) %>% 
+  summarise(DCRB_revenue=sum(DCRB_revenue)) %>%
+  mutate(DCRB_revenue=DCRB_revenue/1000) %>% 
+  ungroup() %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles"))
+
+revenue_by_month_state %>% 
+  ggplot(aes(date,DCRB_revenue,fill=factor(has_vms),col=factor(has_vms)))+
+  geom_bar(stat='identity')+
+  facet_wrap(~agency_code,nrow=3)+
+  scale_fill_locuszoom(labels=c("No VMS","VMS"),name="")+
+  scale_color_locuszoom(labels=c("No VMS","VMS"),name="")+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Revenue ($1000s)",title="DCRB Landings by Month, all Tickets")+
+  theme(legend.position = c(0.2,0.95))+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+
+relative_revenue <- revenue_by_month_state %>% 
+  mutate(has_vms=ifelse(has_vms==1,"VMS","nonVMS")) %>% 
+  pivot_wider(names_from=has_vms,values_from = DCRB_revenue) %>% 
+  drop_na() %>%
+  mutate(vms_relative=VMS/(VMS+nonVMS)) %>% 
+  filter(!(month(date) %in% c(7,8,9,10)))
+  
+```
+
+## By State and Vessel Length
+
+```{r}
+# calc landings of VMS vs. non-VMS tix
+vms_prop_landings <- fishtix %>% 
+  
+  # add vessel size designation
+  mutate(vessel_size_category=ifelse(FINAL_LENGTH<40,'small','large')) %>% 
+  # group and summarise
+  group_by(year,month,agency_code,ntraps_permitted,vessel_size_category,has_vms) %>% 
+  summarise(totland=sum(DCRB_lbs,na.rm=T),tottix=n()) %>% 
+  ungroup() %>% 
+  group_by(year,month,agency_code,ntraps_permitted,vessel_size_category) %>% 
+  mutate(sumland=sum(totland),
+         sumland_thousand_mt=sumland/1000/2204.64,
+         propland=totland/sumland,
+         sumtix=sum(tottix),
+         proptix=tottix/sumtix) %>% 
+  ungroup() %>% 
+  # only save the proportion of tickets and landings with VMS
+  filter(has_vms==1)
+```
+
+```{r}
+vms_representation_index <- vms_prop_landings %>% 
+  dplyr::select(year:vessel_size_category,propland)
+
+# California
+vms_representation_index %>%
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles")) %>% 
+  ggplot(aes(date,propland,col=factor(vessel_size_category)))+
+  # geom_bar(stat='identity',position = 'dodge')+
+  geom_line()+
+  facet_wrap(~ntraps_permitted,nrow=8)+
+  scale_fill_locuszoom(name="",na.value='black')+
+  scale_color_locuszoom(name="",na.value='black')+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Proportion of Landings Represented by VMS",title="Proportional Landings Represented in VMS, CA")+
+  theme(legend.position = c(0.1,0.95))+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+```
+
+## Save
+
+```{r}
+write_rds(vms_representation_index,here::here('vertical line model','vms_representation_index.rds'))
+```
+

@@ -62,6 +62,7 @@ library(rnaturalearth)
 library(marmap)
 library(here)
 library(doParallel)
+library(tictoc)
 
 # ggplot theme
 plot_theme <-   theme_minimal()+
@@ -227,20 +228,13 @@ bathy <- readGEBCO.bathy(file=here::here('vertical line model','gebco','GEBCO_20
 Add trap tier info
 
 ```{r}
-vms_sf <- vms_sf %>% 
-  # add crude season designation
-  mutate(crabyr=ifelse(month(date)<=10,year(date)-1,year(date))) %>% 
-  # join CA tier info
-  left_join(select(CAtier,year,drvid,ntraps),by=c("crabyr"="year","drvid"))
-
-# OR tier information
-ORtier <- ORtier %>% 
-  mutate(monthnum=match(month,month.name)) %>% 
-  select(-month)
+tier_key <- read_rds(here::here('vertical line model','tier_information_year_month_allstates.rds'))
+tier_key %<>% mutate(month=month.name[month]) %>% dplyr::select(-crabyr)
 
 vms_sf <- vms_sf %>% 
   mutate(monthnum=month(date),year=year(date)) %>% 
-  left_join(ORtier,by=c('year','monthnum','drvid'))
+  mutate(month=month.name[monthnum]) %>% 
+  left_join(tier_key,by=c('year','month','agency_code','drvid'))
 ```
 
 ## Spatially Assign Traps
@@ -268,7 +262,7 @@ assign_traps <- function(trip,ntraps_per_mi=15,jitter_amount=1000) {
   
   st_geometry(trip) <- NULL
   
-  maxtraps <- min(500,unique(trip$ntraps),na.rm=T)
+  maxtraps <- min(500,unique(trip$ntraps_permitted),na.rm=T)
   
   out <- trip %>% 
     # identifier for joining segments
@@ -302,335 +296,34 @@ assign_traps <- function(trip,ntraps_per_mi=15,jitter_amount=1000) {
 }
 ```
 
-For efficiency, we compare doing this with `purrr::map` versus with parallel processing (`foreach` and `%dopar%`)
-
-```{r, message=F,warning=F}
-# Check with 100 example trips
-p <- proc.time()
-trip_test <- vms_sf %>% 
-  filter(year(westcoastdate)==2017,month(westcoastdate)==12,agency_code=="C") %>% 
-  mutate(tripnum=group_indices(.,Rec_ID)) %>% 
-  filter(tripnum<150) %>%
-  group_by(Rec_ID) %>% 
-  nest()
-proc.time()-p
-
-p <- proc.time()
-test2 <- trip_test %>% mutate(traps=purrr::map(data,assign_traps))
-x <- proc.time()-p
-paste('With purrr::map, it took',round(x[3]/60,2),'minutes to calculate traps for 100 trips.')
-
-# Try with parallel processing
-library(doParallel)
-library(foreach)
-## set up parallelizaiton
-n_cores <- floor(parallel::detectCores()/2)
-doParallel::registerDoParallel(cores=n_cores)
-# calc traps
-p <- proc.time()
-test_traps_parallel <- foreach(i=1:nrow(trip_test),
-                               .packages=c('sf','tidyverse','marmap'),.verbose=TRUE) %dopar% {
-  temp_trip <- trip_test %>% pluck('data',i)
-  assign_traps(trip=temp_trip)
-  }
-x <- proc.time()-p
-paste('With parallel processsing, it took',round(x[3]/60,2),'minutes to calculate traps for 100 trips.')
-
-# example plot from map
-testplot <- test2 %>% pluck('traps',61)
-st_crs(testplot) <- 4326
-ggplot()+
-  geom_sf(data=coaststates)+
-  geom_sf(data=testplot,col='black',size=0.3)+
-  coord_sf(xlim=c(st_bbox(testplot)[1],st_bbox(testplot)[3]),ylim=c(st_bbox(testplot)[2],st_bbox(testplot)[4]))+
-  labs(x="Longitude",y="Latitude",title="Test of All-in-One Function")
-
-# same trip calculated through parallel processing
-testplot2 <- test_traps_parallel %>% pluck(9)
-st_crs(testplot2) <- 4326
-ggplot()+
-  geom_sf(data=coaststates)+
-  geom_sf(data=testplot2,col='black',size=0.3)+
-  coord_sf(xlim=c(st_bbox(testplot2)[1],st_bbox(testplot2)[3]),ylim=c(st_bbox(testplot2)[2],st_bbox(testplot2)[4]))+
-  labs(x="Longitude",y="Latitude",title="Test of All-in-One Function")
-```
-
-The outputs are the same, and parallel processing is about twice as fast.
-
 ## Apply to all Trips
 
 This will take some processing time. It takes about a 0.3s per trip, and if there are >50,000 trips...
 
 ```{r assign traps}
-p <- proc.time()
+tic('Simulating All Traps')
 nested_trips <- vms_sf %>%
   ungroup() %>% 
   group_by(Rec_ID) %>% 
   filter(n()>2,n_distinct(X_COORD)>2) %>% 
   nest()
-proc.time()-p
 
-n_cores <- floor(parallel::detectCores()/2)
-# n_cores <- 6
+# n_cores <- floor(parallel::detectCores()/2)
+n_cores <- 6
 doParallel::registerDoParallel(cores=n_cores)
 
-p <- proc.time()
 simulated_traps <- foreach(i=1:nrow(nested_trips),.packages=c('sf','tidyverse','marmap')) %dopar% {
   temp_trip <- nested_trips %>% pluck('data',i)
   assign_traps(trip=temp_trip)
   }
 nested_trips$traps <- simulated_traps
-x <- proc.time()-p
+toc()
 ```
 
-It took `r round(x[3]/60,2)` minutes to calculate traps for all trips. (5.4 hrs on 4 cores)
+It took `r round(x[3]/60,2)` minutes to calculate traps for all trips. (5 hrs on 6 cores)
+
+## Write to File
 
 ```{r}
 write_rds(nested_trips,here::here('vertical line model',"sim_traps_speed_depth_filters.rds"))
 ```
-
-# Visualize Results
-
-We have now simulated traps for every Dungeness crab trip for which we have VMS data. We now turn to the task of trying to summarize the numbers of traps across time and spatial domains. This will help us to validate whether the outputs from our simulation make any sense.
-
-Because here we are primarily interested in commercial crabbing, we filter the estimates to only trips with a `removal_type_code` indicating commercial catch.
-
-```{r}
-# Load if not already loaded
-traplocs <- read_rds(here::here('vertical line model',"sim_traps_speed_depth_filters.rds")) %>% ungroup()
-
-# traps locations only (discard VMS data for now), attached to fish ticket data
-traplocs <- traplocs %>% select(Rec_ID,traps) %>% 
-  left_join(fishtix_matched_all,by="Rec_ID") %>% 
-  select(Rec_ID,removal_type_code,date,year,month,pacfin_port_code,port_group_code,agency_code,drvid,FINAL_LENGTH,traps) %>% 
-  # pick out only commercial trips!
-  filter(removal_type_code %in% c('C','D')) %>% 
-  distinct(Rec_ID,.keep_all = T) %>% 
-  # count number of traps associated with each trip
-  mutate(ntraps=purrr::map_int(traps,nrow))
-```
-
-## Weighting Factors
-
-In order to produce overall counts for numbers of traps in the entire fishery (not just traps fished by VMS vessels), we need to account for two different weighting factors. First, we need to correct for the proportional representation of VMS vessels, relative to the overall fleet. We do this by utilizing a proportional representation index, which calculates weighting factors by vessel size class (<30ft, 30-40ft, 40-50ft, >50ft).
-
-### Account for Proportional Representation of VMS vessels
-```{r}
-vlengths_months <- fishtix_matched_all %>% 
-  mutate(year=year(date),month=month(date)) %>% 
-  distinct(drvid,year,month,FINAL_LENGTH)
-prop_vms_index <- vms %>% 
-  mutate(year=year(date),month=month(date)) %>% 
-  full_join(vlengths_months,by=c('drvid','year','month')) %>% 
-  mutate(has_vms=ifelse(is.na(has_vms),FALSE,TRUE)) %>% 
-  mutate(vessel_length_cat=case_when(
-    FINAL_LENGTH > 0 & FINAL_LENGTH<30 ~ 1,
-    FINAL_LENGTH >= 30 & FINAL_LENGTH<40 ~ 2,
-    FINAL_LENGTH >= 40 & FINAL_LENGTH<50 ~ 3,
-    FINAL_LENGTH >=50~ 4
-  )) %>% 
-  group_by(year,month,vessel_length_cat,has_vms) %>% 
-  summarise(nvessels=n_distinct(drvid)) %>% 
-  ungroup() %>% 
-  group_by(year,month,vessel_length_cat) %>% 
-  mutate(tot_vessels=sum(nvessels)) %>%
-  ungroup() %>% 
-  filter(has_vms==1) %>% 
-  mutate(prop_vms=nvessels/tot_vessels) %>% 
-  mutate(day=1) %>% 
-  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
-  mutate(date=as_date(date,format="%Y-%m-%d",tz="America/Los_Angeles"))
-```
-
-### Downscale Traps by Vessel
-
-We need to make sure we are not double-counting traps by vessel. In other words, if we are going to sum traps across months and trips and when a vessel makes more than one trip per month, we need to down-weight the number of traps per trip to account for that double-counting. We will do this simply by calculating the number of trips per vessel per month in the data, and then using that number as the weighting factor.
-
-```{r traps by vessel month}
-vessel_month_ntrap_weights <- traplocs %>% 
-  ungroup() %>% 
-  select(Rec_ID,date,agency_code,port_group_code,drvid,ntraps) %>% 
-  mutate(year=year(date),month=month(date)) %>% 
-  group_by(drvid,year,month) %>%
-  # count number of trips per vessel per month to use as weighting factor
-  mutate(ntrips_month=n_distinct(Rec_ID))
-```
-
-### Overall Weighting Factor
-
-The overall weighting factor $W$, combining the two weights above, will be at the scale of vessel/year/month, and is calculated for year $y$, month $m$, size class $s$, and vessel $i$ as
-
-$$W_{y,m,s} = \frac{1}{PropVMS_{y,m,s}}*\frac{1}{N_{i,y,m}}$$
-
-Where $W$ is the weighting factor, $PropVMS$ is the proportion of vessels covered by VMS data, and $N$ is the total number of trips taken by vessel $i$ in year $y$ and month $m$
-
-```{r produce overall weights}
-vessel_month_allweights <- traplocs %>% 
-# add the monthly weighting factor to the trap locations
-  mutate(vessel_length_cat=case_when(
-    FINAL_LENGTH > 0 & FINAL_LENGTH<30 ~ 1,
-    FINAL_LENGTH >= 30 & FINAL_LENGTH<40 ~ 2,
-    FINAL_LENGTH >= 40 & FINAL_LENGTH<50 ~ 3,
-    FINAL_LENGTH >=50~ 4
-  )) %>% 
-  rowwise() %>% 
-  mutate(month=which(month.name==month)) %>%
-  left_join(select(prop_vms_index,-date)) %>% 
-  ungroup() %>% 
-  left_join(vessel_month_ntrap_weights) %>% 
-  # calculate overall weight
-  mutate(combined_weight=(1/prop_vms)*(1/ntrips_month)) %>% 
-  select(Rec_ID,date,year,month,agency_code,port_group_code,drvid,ntraps,vessel_length_cat,prop_vms,ntrips_month,combined_weight)
-```
-
-
-```{r save weighting factors}
-write_rds(vessel_month_allweights,here::here("data","processed","vessel_month_all_weights.rds"))
-```
-
-## Traps by Vessel, Month, and Ports
-
-First we can look at simple metrics: how many traps are estimated to be fished per trip by each vessel, by month?
-
-```{r traps by vessel}
-mean_traps_per_trip <- traplocs %>% 
-  select(date,agency_code,port_group_code,drvid,ntraps) %>% 
-  mutate(year=year(date),month=month(date)) %>% 
-  group_by(year,month,drvid,agency_code,port_group_code) %>% 
-  # mean number of traps per trip per vessel per month
-  summarise(traps_per_trip=mean(ntraps)) %>% 
-  ungroup()
-
-traps_per_trip_plot <- mean_traps_per_trip %>% 
-  group_by(year,month) %>% 
-  summarise(mean_traps_per_trip=mean(traps_per_trip)) %>% 
-  mutate(day=1) %>% 
-  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
-  mutate(date=as_date(date,format="%Y-%m-%d",tz="America/Los_Angeles")) %>% 
-  ggplot(aes(date,mean_traps_per_trip))+
-  geom_line()+
-  scale_y_continuous(breaks=seq(0,500,by=100),labels=seq(0,500,by=100),limits=c(0,500))+
-  labs(x="Date",y="Mean Number of Traps per Dungeness Trip")
-traps_per_trip_plot
-```
-
-Total traps and vessels by month, calculated as mean traps per vessel-trip per month, summed over all the vessels recording trips in that month. Remember here that these numbers are only for VMS-equipped vessels.
-
-```{r}
-total_traps_by_month_state <- mean_traps_per_trip %>% 
-  group_by(year,month,agency_code) %>% 
-  summarise(tot_traps=sum(traps_per_trip),nvessels=n_distinct(drvid)) %>% 
-  ungroup() %>% 
-  complete(year,month,agency_code,fill=list(tot_traps=0L,nvessels=0L)) %>% 
-  mutate(day=15) %>% 
-  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
-  mutate(date=as_date(date,format="%Y-%m-%d",tz="America/Los_Angeles")) %>% 
-  mutate(nvessels=as.integer(nvessels)) %>% 
-  ungroup()
-
-vessels_by_month_plot <- total_traps_by_month_state %>% 
-  ggplot(aes(date,nvessels/100,color=agency_code,fill=agency_code))+
-  geom_bar(stat='identity',position='stack')+
-  scale_fill_nejm(name="State",labels=c("California","Oregon","Washington"))+
-  scale_color_nejm(name="State",labels=c("California","Oregon","Washington"))+
-  labs(x="Date",y="Hundreds of Vessels",title="Hundreds of VMS Vessels Recording Landings, by Month")+
-  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
-  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
-        panel.grid.minor = element_blank())
-
-sim_traps_by_month_plot<- total_traps_by_month_state %>% 
-  ggplot(aes(date,tot_traps/1000,color=agency_code,fill=agency_code))+
-  geom_bar(stat='identity',position='stack')+
-  scale_fill_nejm(name="State",labels=c("California","Oregon","Washington"))+
-  scale_color_nejm(name="State",labels=c("California","Oregon","Washington"))+
-  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
-  scale_y_continuous(breaks=seq(0,200,by=25))+
-  labs(x="Date",y="Thousands of Traps",title="Total Number of Estimated Traps, by Month\nVMS Vessels Only")+
-  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
-        panel.grid.minor = element_blank())
-
-vessels_by_month_plot
-sim_traps_by_month_plot
-
-#save
-ggsave(filename = here::here('plots',"vessels_by_month.png"),vessels_by_month_plot,w=8,h=6)
-ggsave(filename = here::here('plots',"traps_by_month.png"),sim_traps_by_month_plot,w=8,h=6)
-
-```
-
-What about broken down by port group within states?
-
-```{r cali traps}
-total_traps_by_month_port <- mean_traps_per_trip %>% 
-  group_by(year,month,agency_code,port_group_code) %>% 
-  summarise(tot_traps=sum(traps_per_trip),nvessels=n_distinct(drvid)) %>% 
-  mutate(day=15) %>% 
-  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
-  mutate(date=as_date(date,format="%Y-%m-%d",tz="America/Los_Angeles")) %>% 
-  ungroup()
-
-vessels_by_month_port_plot <-total_traps_by_month_port %>% 
-  filter(agency_code=="C") %>% 
-  ggplot(aes(date,nvessels/10,fill=port_group_code,col=port_group_code))+
-  geom_bar(stat='identity')+
-  scale_fill_nejm(name="Port Group")+
-  scale_color_nejm(name="Port Group")+
-  facet_wrap(~port_group_code)+
-  labs(x="Date",y="Tens of Vessels",title="Total Number of VMS Vessels Recording Landings, by Month\nCalifornia Ports")+
-  scale_x_date(date_breaks= "1 year",date_labels="%b-%Y",expand=c(0,0))+
-  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
-        panel.grid.minor = element_blank())
-
-traps_by_month_port_plot <- total_traps_by_month_port %>% 
-  filter(agency_code=="C") %>% 
-  ggplot(aes(date,tot_traps/1000,fill=port_group_code,col=port_group_code))+
-  geom_bar(stat='identity')+
-  scale_fill_nejm(name="Port Group")+
-  scale_color_nejm(name="Port Group")+
-  facet_wrap(~port_group_code)+
-  labs(x="Date",y="Thousands of Traps",title="Total Number of Estimated Traps, by Month\nCalifornia Ports, VMS Vessels")+
-  scale_x_date(date_breaks= "1 year",date_labels="%b-%Y",expand=c(0,0))+
-  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
-        panel.grid.minor = element_blank())
-
-vessels_by_month_port_plot
-traps_by_month_port_plot
-ggsave(filename = here::here('plots',"vessels_by_month_port.png"),vessels_by_month_port_plot,w=8,h=6)
-ggsave(filename = here::here('plots',"traps_by_month_port.png"),traps_by_month_port_plot,w=8,h=6)
-####
-
-mean_traps_per_trip_scaled <- vessel_month_allweights %>% 
-  select(date,agency_code,port_group_code,drvid,ntraps,combined_weight) %>% 
-  mutate(year=year(date),month=month(date),ntraps_scaled=ntraps*combined_weight) %>% 
-  group_by(year,month,drvid,agency_code,port_group_code) %>% 
-  # mean number of traps per trip per vessel per month
-  summarise(traps_per_trip=mean(ntraps_scaled)) %>% 
-  ungroup()
-total_traps_by_month_port_scaled <- mean_traps_per_trip_scaled %>% 
-  group_by(year,month,agency_code,port_group_code) %>% 
-  summarise(tot_traps=sum(traps_per_trip),nvessels=n_distinct(drvid)) %>% 
-  mutate(day=15) %>% 
-  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
-  mutate(date=as_date(date,format="%Y-%m-%d",tz="America/Los_Angeles")) %>% 
-  ungroup()
-
-traps_by_month_bigport_plot <- total_traps_by_month_port_scaled %>% 
-  filter(agency_code=="C") %>% 
-  filter(port_group_code %in% c('BDA','BGA','CCA','ERA')) %>% 
-  ggplot(aes(date,tot_traps/1000,fill=port_group_code,col=port_group_code))+
-  geom_bar(stat='identity')+
-  scale_fill_nejm(name="Port Group")+
-  scale_color_nejm(name="Port Group")+
-  facet_wrap(~port_group_code)+
-  labs(x="Date",y="Thousands of Traps",title="Total Number of Estimated Traps, by Month\nLarge California Ports")+
-  scale_x_date(date_breaks= "1 year",date_labels="%b-%Y",expand=c(0,0))+
-  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
-        panel.grid.minor = element_blank())
-
-
-traps_by_month_bigport_plot
-ggsave(filename = here::here('plots',"traps_by_month_CAports_scaled.png"),traps_by_month_bigport_plot,w=8,h=6)
-
-```
-
-
