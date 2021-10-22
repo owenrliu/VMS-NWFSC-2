@@ -145,6 +145,12 @@ traplocs_wts <- traplocs %>%
   dplyr::select(-propland)
 ```
 
+```{r}
+# write this to a file
+write_rds(traplocs_wts,here::here('vertical line model','trap_locations_with_weights.rds'))
+```
+
+
 
 Write the function to count traps, per grid cell, by period.
 
@@ -231,64 +237,5 @@ write_rds(trap_density_stack_expanded,here::here('vertical line model',"trap_den
 
 ```{r}
 future::plan(sequential)
-```
-
-# Visualize
-
-Gather x-y trap data
-```{r}
-# RasterStack to long form xy
-years_periods %<>% mutate(nm = paste(yr,per,sep = "_"))
-names(trap_density_all_periods_expanded) <- years_periods$nm
-names(trap_density_all_periods_no_expansion) <- years_periods$nm
-
-all_obs_xy_no_expansion <- purrr::map(as.list(trap_density_all_periods_no_expansion),function(x){
-  wk <- names(x)
-  y<-rasterToPoints(x) %>% as_tibble() %>% set_names(c('x','y','count'))
-  z <-y %>% mutate(wk=wk)
-  z
-}) %>% bind_rows()
-
-all_obs_xy_expanded <- purrr::map(as.list(trap_density_all_periods_expanded),function(x){
-  wk <- names(x)
-  y<-rasterToPoints(x) %>% as_tibble() %>% set_names(c('x','y','count'))
-  z <-y %>% mutate(wk=wk)
-  z
-}) %>% bind_rows()
-```
-
-Distribution
-
-```{r}
-all_obs_xy_no_expansion %>%  
-  filter(!is.na(count),count>0) %>% 
-  ggplot(aes(count/25))+
-  geom_density(fill='red',alpha=0.98,col=NA)+
-  scale_x_continuous(limits=c(0,150))+
-  labs(x="Density (Traps per sq. Km)",y="Kernel Density",title="Distribution of Positive Trap Densities\nall years and weeks (non-expanded)")
-
-all_obs_xy_expanded %>% 
-  filter(!is.na(count),count>0) %>% 
-  ggplot(aes(count/25))+
-  geom_density(fill='red',alpha=0.98,col=NA)+
-  scale_x_continuous(limits=c(0,150))+
-  labs(x="Density (Traps per sq. Km)",y="Kernel Density",title="Distribution of Positive Trap Densities\nall years and months (expanded)") 
-```
-
-Depth distribution
-```{r}
-trap_depths <- simtraps %>% 
-  mutate(depths=purrr::map(traps,pluck('depth'))) %>% 
-  select(Rec_ID,depths) %>% 
-  unnest(cols=c(depths)) %>% 
-  left_join(fishtix_matched_all %>% select(Rec_ID,drvid,year,month))
-
-trap_depth_p <- trap_depths %>% 
-  ungroup() %>% 
-  sample_n(1e6) %>% 
-  ggplot(aes(depths))+
-  geom_density(fill='darkred',alpha=0.8)+
-  labs(x="Depth (m)",y="Kernel Density")
-trap_depth_p
 ```
 
