@@ -1,6 +1,7 @@
 # make time series of entanglements
 
 library(tidyverse)
+library(lubridate)
 library(viridis)
 
 # from Lauren Saez
@@ -171,6 +172,7 @@ glimpse(df_all)
 
 # check for naming issues
 unique(df_all$`Common Name`) # Gray Whale, Gray whale, Humpback Whale, Humpback whale, Blue Whale, Blue whale, Unidentified Whale, Unidentified whale, Sperm Whale, Sperm whale, Minke Whale, Minke whale, Fin Whale, Fin whale
+unique(df_all$`Entanglement Fishery Code`)
 
 # grab columns we want, make columns we need, including adding zeroes
 df_all <- df_all %>%
@@ -216,9 +218,9 @@ monthly_ts_hump <- ggplot(
   xlab("") +
   ggtitle("Confirmed Entanglements, US West Coast\nCommercial Dungeness Crab Fishery") +
   #scale_x_continuous(breaks=seq(2009, 2018 , 1),limits=c(2008.5,2018.5)) +
-  scale_x_date(date_breaks = "1 year",
+  scale_x_date(date_breaks = "6 months",
                date_minor_breaks = "1 month",
-               date_labels = "%Y") +
+               date_labels = "%B %Y") +
   scale_y_continuous(breaks=seq(0, 5, 1),limits=c(0, 5))+
   theme_classic() +
   #scale_fill_manual(values=c("lightskyblue", "coral")) +
@@ -238,4 +240,47 @@ png(here::here(
   "entanglements_ts_monthly_hump.png"), 
   width = 4, height = 4, units = "in", res = 300)
 monthly_ts_hump
+invisible(dev.off())
+
+# quarterly entanglements time series humpbacks only
+quarterly_ts_hump <- ggplot(
+  df_dcc %>% 
+    filter (plotting_date >= "2009-02-01" & plotting_date <= "2018-10-01") %>% 
+    filter (species == "Humpback Whale") %>%
+    mutate(
+      plotting_quarter = lubridate::quarter(plotting_date, type = "date_first", fiscal_start = 11)
+    ) %>%
+    group_by(plotting_quarter, species) %>%
+    summarise(
+      count_confirmed = sum(count_confirmed)
+    ),
+  aes(x=plotting_quarter, y=count_confirmed)) +
+  geom_point(size=1) +
+  geom_line() + 
+  ylab("Number of entanglements") +
+  xlab("") +
+  ggtitle("Confirmed Humpback Whale Entanglements,\nUS West Coast Commercial Dungeness Crab Fishery") +
+  #scale_x_continuous(breaks=seq(2009, 2018 , 1),limits=c(2008.5,2018.5)) +
+  scale_x_date(date_breaks = "6 months",
+               date_minor_breaks = "1 month",
+               date_labels = "%B %Y") +
+  scale_y_continuous(breaks=seq(0, 10, 2),limits=c(0, 10))+
+  theme_classic() +
+  #scale_fill_manual(values=c("lightskyblue", "coral")) +
+  theme(legend.title = element_blank(),
+        #title = element_text(size = 32),
+        #legend.text = element_text(size=11),
+        axis.text.x = element_text(hjust = 1,size = 11, angle = 60),
+        axis.text.y = element_text(size = 11),
+        axis.title = element_text(size = 11),
+        legend.position = "none"
+  )
+quarterly_ts_hump 
+
+png(here::here(
+  "vertical line model",
+  "figures",
+  "entanglements_ts_quarterly_hump.png"), 
+  width = 4, height = 4, units = "in", res = 300)
+quarterly_ts_hump
 invisible(dev.off())
