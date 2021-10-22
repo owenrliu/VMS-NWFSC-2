@@ -217,7 +217,8 @@ monthly_ts_hump <- ggplot(
   ggtitle("Confirmed Entanglements, US West Coast\nCommercial Dungeness Crab Fishery") +
   #scale_x_continuous(breaks=seq(2009, 2018 , 1),limits=c(2008.5,2018.5)) +
   scale_x_date(date_breaks = "1 year",
-               date_minor_breaks = "1 month") +
+               date_minor_breaks = "1 month",
+               date_labels = "%Y") +
   scale_y_continuous(breaks=seq(0, 5, 1),limits=c(0, 5))+
   theme_classic() +
   #scale_fill_manual(values=c("lightskyblue", "coral")) +
