@@ -6,12 +6,16 @@ library(viridis)
 # from Lauren Saez
 # all data based on "entanglement reports from lauren 100920.xlsx"
 # focus on all confirmed commercial Dungeness crab entanglements by year
-path_entanglement_file <- "/Users/jameal.samhouri/Documents/RAIMBOWT/Processed Data/Samhouri et al. whales risk/Input_Data/Entanglement Data/2000_19/all_confirmed_dcrb_entanglements.csv" 
+path_entanglement_file_annual <- "/Users/jameal.samhouri/Documents/RAIMBOWT/Processed Data/Samhouri et al. whales risk/Input_Data/Entanglement Data/2000_19/all_confirmed_dcrb_entanglements.csv" 
 
-###Initial processing
+# all data based on "ForStates_WCR_Whale_entanglement_1982_2020_10.20.21.xlsx"
+# focus on all confirmed commercial Dungeness crab entanglements by year
+path_entanglement_file_all <- "/Users/jameal.samhouri/Documents/RAIMBOWT/Processed Data/Samhouri et al. whales risk/Input_Data/Entanglement Data/all_entanglements_102021.csv" 
+
+###Initial processing of annual data
 
 # most code from Make time series of entanglements.Rmd
-entanglement_df <- readr::read_csv(path_entanglement_file)
+entanglement_df <- readr::read_csv(path_entanglement_file_annual)
 glimpse(entanglement_df)
 
 entanglement_df_annual <- entanglement_df %>%
@@ -52,7 +56,7 @@ glimpse(entanglement_df_annual_complete)
 # )
 
 
-### make some figures
+### make some figures with annual data
 
 # annual entanglements time series by species group
 entanglements_ts <- ggplot(entanglement_df_annual_complete %>% filter (Year > 2009), 
@@ -85,6 +89,39 @@ png(here::here(
   "entanglements_ts_annual_byspecies.png"), 
   width = 4, height = 4, units = "in", res = 300)
 entanglements_ts
+invisible(dev.off())
+
+# annual entanglements time series humpbacks only
+entanglements_ts_hump <- ggplot(entanglement_df_annual_complete %>% filter (Year > 2009) %>% filter (species == "Humpback Whale"), 
+                           aes(x=Year, y=count)) + # group=1 tells ggplot that there is only 1 group
+  geom_point(size=2) +
+  geom_line() + 
+  #geom_vline(xintercept = c(2014.5, 2018.5), linetype=2) +
+  ylab("Number of humpback\nwhale entanglements") +
+  xlab("") + # "Year
+  #labs(subtitle = "Data from NMFS WRO") +
+  ggtitle("Confirmed Entanglements, US West Coast\nCommercial Dungeness Crab Fishery") +
+  #scale_colour_viridis_d(begin=0.1, end=0.9) + #, option = "plasma") +
+  scale_x_continuous(breaks=seq(2010, 2019 , 1),limits=c(2009.5,2019.5))+
+  scale_y_continuous(breaks=seq(0, 20, 5),limits=c(0,20))+
+  theme_classic() +
+  #scale_fill_manual(values=c("lightskyblue", "coral")) +
+  theme(legend.title = element_blank(),
+        #title = element_text(size = 32),
+        #legend.text = element_text(size=11),
+        axis.text.x = element_text(hjust = 1,size = 11, angle = 60),
+        axis.text.y = element_text(size = 11),
+        axis.title = element_text(size = 11),
+        legend.position = "none"
+  )
+entanglements_ts_hump 
+
+png(here::here(
+  "vertical line model",
+  "figures",
+  "entanglements_ts_annual_hump.png"), 
+  width = 4, height = 4, units = "in", res = 300)
+entanglements_ts_hump
 invisible(dev.off())
 
 # annual entanglements time series all species
@@ -125,4 +162,79 @@ png(here::here(
   "entanglements_ts_annual_allspecies.png"), 
   width = 4, height = 4, units = "in", res = 300)
 entanglements_ts_all
+invisible(dev.off())
+
+### Initial processing of full data frame
+
+df_all <- readr::read_csv(path_entanglement_file_all)
+glimpse(df_all)
+
+# check for naming issues
+unique(df_all$`Common Name`) # Gray Whale, Gray whale, Humpback Whale, Humpback whale, Blue Whale, Blue whale, Unidentified Whale, Unidentified whale, Sperm Whale, Sperm whale, Minke Whale, Minke whale, Fin Whale, Fin whale
+
+# grab columns we want, make columns we need, including adding zeroes
+df_all <- df_all %>%
+  mutate(
+    species = case_when(
+      `Common Name` == "Humpback Whale" | `Common Name` == "Humpback whale" ~ "Humpback Whale",
+      `Common Name` == "Blue Whale" | `Common Name` == "Blue whale" ~ "Blue Whale",
+      TRUE ~ "Other / Unidentified"),
+    plotting_date = as.Date(paste(Year, Month, 1, sep = "-")),
+    count_confirmed = ifelse(
+      `Entanglement Confirmation` == "C",1,0
+      )
+    ) %>%
+  select(Year, plotting_date, State, species, `Entanglement Fishery Code`, count_confirmed) %>%
+  complete(
+    plotting_date = seq.Date(min(plotting_date), max(plotting_date), by="month"), species, `Entanglement Fishery Code`,
+    fill = list(count_confirmed=0)
+    )
+glimpse(df_all)  
+
+# grab commercial Dungeness crab entanglements only, summarise by species and month
+df_dcc <- df_all %>%
+  filter(`Entanglement Fishery Code` == "Dcc") %>%
+  select(-`Entanglement Fishery Code`) %>%
+  group_by(plotting_date, species) %>%
+  summarise(
+    count_confirmed = sum(count_confirmed, na.rm=TRUE)
+  )
+glimpse(df_dcc)
+#unique(df_dcc$plotting_date)
+
+### make some plots
+
+# monthly entanglements time series humpbacks only
+monthly_ts_hump <- ggplot(
+  df_dcc %>% 
+    filter (plotting_date >= "2009-01-01" & plotting_date <= "2018-10-01") %>% 
+    filter (species == "Humpback Whale"),
+  aes(x=plotting_date, y=count_confirmed)) +
+  geom_point(size=1) +
+  geom_line() + 
+  ylab("Number of humpback\nwhale entanglements") +
+  xlab("") +
+  ggtitle("Confirmed Entanglements, US West Coast\nCommercial Dungeness Crab Fishery") +
+  #scale_x_continuous(breaks=seq(2009, 2018 , 1),limits=c(2008.5,2018.5)) +
+  scale_x_date(date_breaks = "1 year",
+               date_minor_breaks = "1 month") +
+  scale_y_continuous(breaks=seq(0, 5, 1),limits=c(0, 5))+
+  theme_classic() +
+  #scale_fill_manual(values=c("lightskyblue", "coral")) +
+  theme(legend.title = element_blank(),
+        #title = element_text(size = 32),
+        #legend.text = element_text(size=11),
+        axis.text.x = element_text(hjust = 1,size = 11, angle = 60),
+        axis.text.y = element_text(size = 11),
+        axis.title = element_text(size = 11),
+        legend.position = "none"
+  )
+monthly_ts_hump 
+
+png(here::here(
+  "vertical line model",
+  "figures",
+  "entanglements_ts_monthly_hump.png"), 
+  width = 4, height = 4, units = "in", res = 300)
+monthly_ts_hump
 invisible(dev.off())
