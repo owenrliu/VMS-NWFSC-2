@@ -1,0 +1,325 @@
+---
+title: "Visualizing VLM"
+author: "Owen Liu"
+date: "10/22/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(raster)
+library(tidyverse)
+library(magrittr)
+library(lubridate)
+library(sf)
+library(rnaturalearth)
+library(fasterize)
+library(here)
+options(dplyr.summarise.inform=FALSE)
+```
+
+# Purpose
+
+Take the outputs from the vertical line model, and produce visualizations/manuscript figures.
+
+```{r}
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+# Import Data
+
+Simulated traps
+
+```{r}
+# simulated traps with VMS data
+simtraps <- read_rds(here::here('vertical line model',"sim_traps_speed_depth_filters.rds"))
+
+# trap locations only, including fish ticket identifiers and weighting factors
+traplocs <- read_rds(here::here('vertical line model','trap_locations_with_weights.rds'))
+```
+
+5x5km grid
+```{r}
+grd <- read_sf(here::here("data","raw","grid","regions_master_final_lamb.shp"))
+names(grd)
+# raster representation of grid.
+# transform to a projection that uses meters instead of lat/long
+grd_rast <- fasterize(grd,raster = raster(grd,res=5000,crs=crs(grd)),field="GRID5KM_ID")
+# set -99999 to NA
+grd_rast[grd_rast==-99999] <- NA
+# overlap with BIAs
+bia_5kgrd <- read_csv(here::here('data','raw','grid','Grid5km_BIA_overlap.csv'))
+grd <- grd %>% left_join(dplyr::select(bia_5kgrd,GRID5KM_ID,BIA_mn,BIA_bm),by='GRID5KM_ID')
+```
+
+Raster grid xy attributes
+```{r}
+grdxy <- rasterToPoints(grd_rast) %>% as_tibble() %>% set_names(c('x','y','GRID5KM_ID')) %>% 
+  left_join(grd %>% st_set_geometry(NULL))
+```
+
+Fish tickets
+```{r}
+fishtix_matched_all <- read_rds(here::here('data','processed','fish tickets','fish_tickets_w_dayofseason.rds'))
+# filter for out of season
+fishtix_matched_all %<>% filter(ticket_day_of_season>=0)
+```
+
+Coastline (just for plotting)
+```{r}
+# a coastline, for plotting
+# coastline for plotting
+coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington','Nevada'))
+coastline <- ne_coastline(scale='medium',returnclass = 'sf') %>% 
+  st_crop(st_bbox(coaststates))
+```
+
+Raster stacks of trap counts
+```{r}
+# raster stacks of trap counts (expanded and non-expanded)
+traps_nonexpanded <- read_rds(here::here('vertical line model','trap_density_all_1week_periods_non_expanded.rds'))
+traps_expanded <- read_rds(here::here('vertical line model',"trap_density_all_1week_periods_expanded.rds"))
+```
+
+Port groups in Northern vs. Central CA
+```{r}
+cenCA_ports <- c("MRA","SBA","SFA","MNA")
+norCA_ports <- c("ERA","CCA","BGA","BDA","CA2")
+```
+
+
+## Trap Depth Distributions
+
+Look at the depth distributions of simulated traps. For these first plots, we use the non-rasterized version of the simulated traps.
+
+Pull out the mean trap depth for all individual fish tickets/trips
+
+```{r}
+trap_depths <- traplocs %>% 
+  mutate(coast_region=case_when(
+    port_group_code %in% cenCA_ports ~ "Central CA",
+    port_group_code %in% norCA_ports ~ "Northern CA",
+    agency_code=="O" ~ "Oregon",
+    agency_code=="W" ~ "Washington"
+  )) %>% 
+  mutate(mean_trap_depth=purrr::map_dbl(traps,function(df) mean(df$depth,na.rm=T))) %>% 
+  dplyr::select(-traps) %>% 
+  filter(month !="October") %>% 
+  # add an identifier for early, mid, or late season
+  mutate(season_segment=case_when(
+    month %in% c('November','December','January') ~ 'early',
+    month %in% c('February','March','April') ~ 'mid',
+    month %in% c('May','June','July','August','September') ~ 'late'
+  )) %>% 
+  mutate(season_segment=factor(season_segment,levels=c('early','mid','late')))
+```
+
+Depth distributions by state and season segment
+
+```{r,fig.width=8,fig.height=8}
+trap_depth_dist <- trap_depths %>% 
+  ggplot(aes(mean_trap_depth,fill=season_segment,col=season_segment))+
+  geom_density(alpha=0.5)+
+  labs(x="Mean Trap Depth per Trip (m)",y="Kernel Density",fill="Season Portion",col="Season Portion")+
+  facet_wrap(~coast_region,nrow=4,scales = 'free_y')+
+  geom_vline(xintercept=-40*1.829,col='red',linetype=2)+
+  theme(panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank())
+trap_depth_dist
+```
+
+Now, a timeseries of mean trap depth per trip across months
+
+```{r,fig.width=8,fig.height=8}
+trap_depths_months <- trap_depths %>% 
+  group_by(year,month,coast_region) %>% 
+  summarise(mean_depth=mean(mean_trap_depth,na.rm=T),se_depth=sd(mean_trap_depth,na.rm=T)/sqrt(n()))
+
+trap_depths_ts <- trap_depths_months %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d")) %>% 
+  mutate(depthpos=-mean_depth)
+
+trap_depths_ts_plot <- trap_depths_ts %>% 
+  ggplot(aes(date,depthpos,ymax=depthpos+se_depth,ymin=depthpos-se_depth))+
+  geom_line()+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  geom_ribbon(fill='red',alpha=0.7)+
+  labs(x="Date",y="Mean Trap Depth (m)")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())+
+  facet_wrap(~coast_region,nrow=4)
+trap_depths_ts_plot
+```
+
+## Timeseries of Total Trap Counts
+
+For total trap counts, we need to use the rasterized version of the VLM, because our corrections (weightings etc.) matter for accurate counts of total traps.
+
+Gather x-y trap data
+
+```{r}
+years_periods <- traplocs %>% 
+  ungroup() %>% 
+  filter(ntraps > 0) %>% 
+  distinct(year,period_1wk) %>% 
+  rename(yr=year,per=period_1wk) %>% 
+  mutate(per=per-1)
+years_periods %<>% mutate(nm = paste(yr,per,sep = "_"))
+names(traps_nonexpanded) <- years_periods$nm
+names(traps_expanded) <- years_periods$nm
+```
+
+
+```{r}
+# Rasterstack to long form xy data
+all_obs_xy_no_expansion <- purrr::map(as.list(traps_nonexpanded),function(x){
+  wk <- names(x)
+  y<-rasterToPoints(x) %>% as_tibble() %>% set_names(c('x','y','count'))
+  z <-y %>% mutate(wk=wk)
+  z
+}) %>% bind_rows() %>% 
+  # join grid data
+  left_join(grdxy,by=c('x','y')) %>% 
+  # add a density calc
+  mutate(traps_sqkm=count/25) %>% 
+  # add a better date
+  mutate(year=str_sub(wk,2,5)) %>% 
+  mutate(week=str_extract(wk,"\\d+$")) %>% 
+  mutate(day="1") %>% 
+  mutate(jan1=paste0(year,"-01-01") %>% as_date(format="%F")) %>% 
+  unite(date,year,week,day,sep="-") %>% 
+  mutate(date=as_date(date,format="%Y-%U-%u")) %>%
+  mutate(date=coalesce(date,jan1)) %>% 
+  dplyr::select(-jan1)
+
+all_obs_xy_expanded <- purrr::map(as.list(traps_expanded),function(x){
+  wk <- names(x)
+  y<-rasterToPoints(x) %>% as_tibble() %>% set_names(c('x','y','count'))
+  z <-y %>% mutate(wk=wk)
+  z
+}) %>% bind_rows() %>% 
+  # join grid data
+  left_join(grdxy,by=c('x','y')) %>% 
+  # add a density calc
+  mutate(traps_sqkm=count/25) %>% 
+  # add a better date
+  mutate(year=str_sub(wk,2,5)) %>% 
+  mutate(week=str_extract(wk,"\\d+$")) %>% 
+  mutate(day="1") %>% 
+  mutate(jan1=paste0(year,"-01-01") %>% as_date(format="%F")) %>% 
+  unite(date,year,week,day,sep="-") %>% 
+  mutate(date=as_date(date,format="%Y-%U-%u")) %>%
+  mutate(date=coalesce(date,jan1)) %>% 
+  dplyr::select(-jan1)
+
+glimpse(all_obs_xy_expanded)
+```
+
+Now we can take these non-expanded and expanded datasets and make timeseries of total traps.
+
+```{r}
+#
+trap_counts_state_month_nonexpanded <- all_obs_xy_no_expansion %>% 
+  filter(!is.na(GRID5KM_ID)) %>% 
+  # mean traps by cell by month
+  mutate(mth=month(date),yr=year(date)) %>% 
+  group_by(GRID5KM_ID,STATE,yr,mth) %>% 
+  summarise(trapcount=mean(count,na.rm=T)) %>% 
+  ungroup() %>% 
+  group_by(yr,mth,STATE) %>% 
+  summarise(tottraps=sum(trapcount,na.rm=T))
+
+trap_counts_state_week_expanded <- all_obs_xy_expanded %>% 
+  filter(!is.na(GRID5KM_ID)) %>% 
+  # mean traps by cell by month
+  mutate(mth=month(date),yr=year(date)) %>% 
+  group_by(GRID5KM_ID,STATE,yr,mth) %>% 
+  summarise(trapcount=mean(count,na.rm=T)) %>% 
+  ungroup() %>% 
+  group_by(yr,mth,STATE) %>% 
+  summarise(tottraps=sum(trapcount,na.rm=T))
+```
+
+```{r,fig.width=8,fig.height=8}
+trap_counts_nonexpanded_ts_plot <- trap_counts_state_week_nonexpanded %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d")) %>% 
+  ggplot(aes(date,tottraps/1000))+
+  geom_line()+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Thousand Traps (VMS Vessels Only)")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())+
+  facet_wrap(~STATE,nrow=3,scales='free_y')
+trap_counts_nonexpanded_ts_plot
+
+trap_counts_expanded_ts_plot <- trap_counts_state_week_expanded %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d")) %>%  
+  ggplot(aes(date,tottraps/1000))+
+  geom_line()+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Thousand Traps (Whole Fleet Estimate)")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())+
+  facet_wrap(~STATE,nrow=3,scales='free_y')
+trap_counts_expanded_ts_plot
+```
+
+
+Distribution
+
+```{r,fig.width=8,fig.height=8}
+# trap_density_dist_nonexpanded <- all_obs_xy_no_expansion %>%  
+#   # add an identifier for early, mid, or late season
+#   mutate(season_segment=case_when(
+#     month(date) %in% c(11,12,1) ~ 'early',
+#     month(date) %in% c(2,3,4) ~ 'mid',
+#     month(date) %in% c(5,6,7,8,9) ~ 'late'
+#   )) %>% 
+#   mutate(statename=case_when(
+#     STATE=="WA" ~ "Washington",
+#     STATE=="CA" ~ "California",
+#     STATE=="OR" ~ "Oregon"
+#   )) %>% 
+#   filter(month(date)!=10,!is.na(count),count>0,!is.na(statename)) %>% 
+#   ggplot(aes(count/25,fill=season_segment,col=season_segment))+
+#   geom_density(alpha=0.5,col=NA)+
+#   scale_x_continuous(limits=c(0,10))+
+#   labs(x="Density (Traps per sq. Km)",y="Kernel Density",title="Distribution of Positive Trap Densities\nall years and weeks (non-expanded)")+
+#   facet_wrap(~statename)
+# 
+# trap_density_dist_expanded <- all_obs_xy_expanded %>%  
+#   # add an identifier for early, mid, or late season
+#   mutate(season_segment=case_when(
+#     month(date) %in% c(11,12,1) ~ 'early',
+#     month(date) %in% c(2,3,4) ~ 'mid',
+#     month(date) %in% c(5,6,7,8,9) ~ 'late'
+#   )) %>% 
+#   mutate(statename=case_when(
+#     STATE=="WA" ~ "Washington",
+#     STATE=="CA" ~ "California",
+#     STATE=="OR" ~ "Oregon"
+#   )) %>% 
+#   filter(month(date)!=10,!is.na(count),count>0,!is.na(statename)) %>% 
+#   ggplot(aes(count/25,fill=season_segment,col=season_segment))+
+#   geom_density(fill='red',alpha=0.98,col=NA)+
+#   scale_x_continuous(limits=c(0,150))+
+#   labs(x="Density (Traps per sq. Km)",y="Kernel Density",title="Distribution of Positive Trap Densities\nall years and weeks (expanded)")+
+#   facet_wrap(~statename)
+# trap_density_dist_nonexpanded
+# trap_density_dist_expanded
+```
+

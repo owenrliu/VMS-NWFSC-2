@@ -1,0 +1,108 @@
+---
+title: "Untitled"
+author: "cbn"
+date: "8/28/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(DBI)
+library(dplyr)
+library(dbplyr)
+```
+
+```{r}
+con <- dbConnect(odbc::odbc(), 
+                 driver = "SQL Server", 
+                 server = "busprod.dfw.wa.lcl\\busprod",
+                 database = "FishTicket")
+```
+
+```{r}
+waft <- con %>% tbl(in_schema("Reporting", "vFishTicketFlat"))
+```
+
+Pivot so that all fish ticket numbers are in a single column.
+
+```{r}
+check_setdate_tix <- check_setdate[, melt(.SD, 
+                      id.var = c("IDsets",
+                                 "SetDate",
+                                 "LandingDate"),
+                     measure.var = c("FishTicket1",
+                                     "FishTicket2",
+                                     "FishTicket3",
+                                     "FishTicket4"),
+                     value.name = "FishTicketNumber")
+              ][!is.na(FishTicketNumber), ]
+
+
+setnames(check_setdate_tix, "LandingDate", "LandingDateLog")
+
+check_setdate_tix
+```
+
+Query WAFT by the ticket numbers from the logbooks. The Set Dates are all one year after the date on the fish ticket.
+
+```{r}
+waft_check_setdate <- waft %>% 
+  inner_join(check_setdate_tix, by = "FishTicketNumber", 
+             copy = TRUE) %>% 
+  select(BatchYear,
+         LandingDate, 
+         FishTicketNumber,
+         IDsets,
+         SetDate,
+         LandingDateLog) %>% 
+  collect()
+
+setDT(waft_check_setdate)
+
+waft_check_setdate[, LandingDate := as.Date(LandingDate)]
+
+waft_check_setdate[, year_discrep := year(SetDate) - year(LandingDate)
+                   ][, .(IDsets, SetDate, LandingDate, year_discrep)]
+```
+```{r}
+check_land_date_tix <- check_land_date[, melt(.SD, 
+                      id.var = c("IDheader",
+                                 "SetDate",
+                                 "LandingDate"),
+                     measure.var = c("FishTicket1",
+                                     "FishTicket2",
+                                     "FishTicket3",
+                                     "FishTicket4"),
+                     value.name = "FishTicketNumber")
+              ][!is.na(FishTicketNumber), ]
+
+setnames(check_land_date_tix, "LandingDate", "LandingDateLog")
+
+check_land_date_tix
+```
+
+The years are all off by one in the same direction here too.
+
+```{r}
+waft_check_landdate <- waft %>% 
+  inner_join(check_land_date_tix, by = "FishTicketNumber", 
+             copy = TRUE) %>% 
+  select(BatchYear,
+         LandingDate, 
+         FishTicketNumber,
+         IDheader,
+         SetDate,
+         LandingDateLog) %>% 
+  collect()
+
+setDT(waft_check_landdate)
+
+waft_check_landdate[, LandingDate := as.Date(LandingDate)]
+
+waft_check_landdate[, year_discrep := year(LandingDateLog) - year(LandingDate)
+                   ][, .(IDheader, LandingDateLog, LandingDate, year_discrep)]
+```
+
