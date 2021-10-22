@@ -216,23 +216,61 @@ vms_prop_landings <- fishtix %>%
   filter(has_vms==1)
 ```
 
-```{r}
+```{r,fig.width=8,fig.height=8}
 vms_representation_index <- vms_prop_landings %>% 
+  filter(!is.na(vessel_size_category)) %>% 
   dplyr::select(year:vessel_size_category,propland)
 
 # California
 vms_representation_index %>%
+  filter(agency_code=="C") %>% 
   mutate(day=1) %>% 
   unite(date,year,month,day,sep="-",remove = FALSE) %>% 
   mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles")) %>% 
-  ggplot(aes(date,propland,col=factor(vessel_size_category)))+
+  ggplot(aes(date,1/propland,col=factor(vessel_size_category)))+
   # geom_bar(stat='identity',position = 'dodge')+
   geom_line()+
-  facet_wrap(~ntraps_permitted,nrow=8)+
+  facet_wrap(~ntraps_permitted,nrow=7,scales='free_y')+
   scale_fill_locuszoom(name="",na.value='black')+
   scale_color_locuszoom(name="",na.value='black')+
   scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
-  labs(x="Date",y="Proportion of Landings Represented by VMS",title="Proportional Landings Represented in VMS, CA")+
+  labs(x="Date",y="Landings Weight",title="Inverse of Proportional Landings Represented in VMS\nCalifornia")+
+  theme(legend.position = c(0.1,0.95))+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+
+# Oregon
+vms_representation_index %>%
+  filter(agency_code=="O") %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles")) %>% 
+  ggplot(aes(date,1/propland,col=factor(vessel_size_category)))+
+  # geom_bar(stat='identity',position = 'dodge')+
+  geom_line()+
+  facet_wrap(~ntraps_permitted,nrow=7,scales='free_y')+
+  scale_fill_locuszoom(name="",na.value='black')+
+  scale_color_locuszoom(name="",na.value='black')+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Landings Weight",title="Inverse of Proportional Landings Represented in VMS\nOregon")+
+  theme(legend.position = c(0.1,0.95))+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+
+# Washington
+vms_representation_index %>%
+  filter(agency_code=="W") %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles")) %>% 
+  ggplot(aes(date,1/propland,col=factor(vessel_size_category)))+
+  # geom_bar(stat='identity',position = 'dodge')+
+  geom_line()+
+  facet_wrap(~ntraps_permitted,nrow=7,scales='free_y')+
+  scale_fill_locuszoom(name="",na.value='black')+
+  scale_color_locuszoom(name="",na.value='black')+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Landings Weight",title="Inverse of Proportional Landings Represented in VMS\nWashington")+
   theme(legend.position = c(0.1,0.95))+
   theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
         panel.grid.minor = element_blank())

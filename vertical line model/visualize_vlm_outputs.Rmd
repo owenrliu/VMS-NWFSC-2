@@ -95,6 +95,10 @@ cenCA_ports <- c("MRA","SBA","SFA","MNA")
 norCA_ports <- c("ERA","CCA","BGA","BDA","CA2")
 ```
 
+VMS representation index that went into simulation and rasterization calculations
+```{r}
+vms_representation_index <- read_rds(here::here('vertical line model','vms_representation_index.rds'))
+```
 
 ## Trap Depth Distributions
 
@@ -239,7 +243,7 @@ trap_counts_state_month_nonexpanded <- all_obs_xy_no_expansion %>%
   group_by(yr,mth,STATE) %>% 
   summarise(tottraps=sum(trapcount,na.rm=T))
 
-trap_counts_state_week_expanded <- all_obs_xy_expanded %>% 
+trap_counts_state_month_expanded <- all_obs_xy_expanded %>% 
   filter(!is.na(GRID5KM_ID)) %>% 
   # mean traps by cell by month
   mutate(mth=month(date),yr=year(date)) %>% 
@@ -251,10 +255,10 @@ trap_counts_state_week_expanded <- all_obs_xy_expanded %>%
 ```
 
 ```{r,fig.width=8,fig.height=8}
-trap_counts_nonexpanded_ts_plot <- trap_counts_state_week_nonexpanded %>% 
+trap_counts_nonexpanded_ts_plot <- trap_counts_state_month_nonexpanded %>% 
   mutate(day=1) %>% 
-  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
-  mutate(date=as_date(date,format="%Y-%B-%d")) %>% 
+  unite(date,yr,mth,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%m-%d")) %>% 
   ggplot(aes(date,tottraps/1000))+
   geom_line()+
   scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
@@ -264,10 +268,10 @@ trap_counts_nonexpanded_ts_plot <- trap_counts_state_week_nonexpanded %>%
   facet_wrap(~STATE,nrow=3,scales='free_y')
 trap_counts_nonexpanded_ts_plot
 
-trap_counts_expanded_ts_plot <- trap_counts_state_week_expanded %>% 
+trap_counts_expanded_ts_plot <- trap_counts_state_month_expanded %>% 
   mutate(day=1) %>% 
-  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
-  mutate(date=as_date(date,format="%Y-%B-%d")) %>%  
+  unite(date,yr,mth,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%m-%d")) %>%  
   ggplot(aes(date,tottraps/1000))+
   geom_line()+
   scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
@@ -278,8 +282,37 @@ trap_counts_expanded_ts_plot <- trap_counts_state_week_expanded %>%
 trap_counts_expanded_ts_plot
 ```
 
+Zoom in on 2014-2017
 
-Distribution
+```{r}
+trap_counts_nonexpanded_ts_zoom_plot <- trap_counts_state_month_nonexpanded %>%
+  filter(yr>2013,yr<2018) %>% 
+  mutate(day=1) %>% 
+  unite(date,yr,mth,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%m-%d")) %>% 
+  ggplot(aes(date,tottraps/1000))+
+  geom_line()+
+  scale_x_date(date_breaks= "3 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Thousand Traps (VMS Vessels Only)")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())+
+  facet_wrap(~STATE,nrow=3,scales='free_y')
+trap_counts_nonexpanded_ts_zoom_plot
+
+trap_counts_expanded_ts_zoom_plot <- trap_counts_state_month_expanded %>%
+  filter(yr>2013,yr<2018) %>% 
+  mutate(day=1) %>% 
+  unite(date,yr,mth,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%m-%d")) %>%  
+  ggplot(aes(date,tottraps/1000))+
+  geom_line()+
+  scale_x_date(date_breaks= "3 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Thousand Traps (Whole Fleet Estimate)")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())+
+  facet_wrap(~STATE,nrow=3,scales='free_y')
+trap_counts_expanded_ts_zoom_plot
+```
 
 ```{r,fig.width=8,fig.height=8}
 # trap_density_dist_nonexpanded <- all_obs_xy_no_expansion %>%  
@@ -322,4 +355,102 @@ Distribution
 # trap_density_dist_nonexpanded
 # trap_density_dist_expanded
 ```
+
+## Within BIAs
+
+Trap Density within Biologically Important Areas for humpback whales
+
+```{r}
+trap_counts_BIAs_month_nonexpanded <- all_obs_xy_no_expansion %>% 
+  filter(!is.na(GRID5KM_ID)) %>% 
+  # mean traps by cell by month
+  mutate(mth=month(date),yr=year(date)) %>% 
+  group_by(GRID5KM_ID,BIA_mn,yr,mth) %>% 
+  summarise(trapcount=mean(count,na.rm=T)) %>% 
+  ungroup() %>% 
+  group_by(yr,mth,BIA_mn) %>% 
+  summarise(tottraps=sum(trapcount,na.rm=T))
+
+trap_counts_BIAs_month_expanded <- all_obs_xy_expanded %>% 
+  filter(!is.na(GRID5KM_ID)) %>% 
+  # mean traps by cell by month
+  mutate(mth=month(date),yr=year(date)) %>% 
+  group_by(GRID5KM_ID,BIA_mn,yr,mth) %>% 
+  summarise(trapcount=mean(count,na.rm=T)) %>% 
+  ungroup() %>% 
+  group_by(yr,mth,BIA_mn) %>% 
+  summarise(tottraps=sum(trapcount,na.rm=T))
+```
+
+```{r}
+trap_counts_nonexpanded_BIAs_ts_plot <- trap_counts_BIAs_month_nonexpanded %>% 
+  filter(BIA_mn==1) %>% 
+  ungroup() %>% 
+  complete(yr,mth,fill=list(tottraps=NA)) %>% 
+  mutate(day=1) %>% 
+  unite(date,yr,mth,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%m-%d")) %>% 
+  ggplot(aes(date,tottraps/1000))+
+  geom_point()+
+  geom_line()+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Thousand Traps (VMS Vessels Only)",title="VMS Traps in BIAs")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+trap_counts_nonexpanded_BIAs_ts_plot
+
+trap_counts_expanded_BIAs_ts_plot <- trap_counts_BIAs_month_expanded %>% 
+  filter(BIA_mn==1) %>% 
+  ungroup() %>% 
+  complete(yr,mth,fill=list(tottraps=NA)) %>% 
+  filter(BIA_mn==1) %>% 
+  mutate(day=1) %>% 
+  unite(date,yr,mth,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%m-%d")) %>%  
+  ggplot(aes(date,tottraps/1000))+
+  geom_point()+
+  geom_line()+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Thousand Traps (Whole Fleet Estimate)",title="Total Traps in BIAs")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+trap_counts_expanded_BIAs_ts_plot
+```
+
+Zoom
+```{r}
+trap_counts_nonexpanded_BIAs_ts_zoom_plot <- trap_counts_BIAs_month_nonexpanded %>% 
+  filter(BIA_mn==1,yr>2013,yr<2018) %>% 
+  ungroup() %>% 
+  complete(yr,mth,fill=list(tottraps=NA)) %>% 
+  mutate(day=1) %>% 
+  unite(date,yr,mth,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%m-%d")) %>% 
+  ggplot(aes(date,tottraps/1000))+
+  geom_point()+
+  geom_line()+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Thousand Traps (VMS Vessels Only)",title="VMS Traps in BIAs")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+trap_counts_nonexpanded_BIAs_ts_zoom_plot
+
+trap_counts_expanded_BIAs_ts_zoom_plot <- trap_counts_BIAs_month_expanded %>% 
+  filter(BIA_mn==1,yr>2013,yr<2018) %>% 
+  ungroup() %>% 
+  complete(yr,mth,fill=list(tottraps=NA)) %>% 
+  filter(BIA_mn==1) %>% 
+  mutate(day=1) %>% 
+  unite(date,yr,mth,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%m-%d")) %>%  
+  ggplot(aes(date,tottraps/1000))+
+  geom_point()+
+  geom_line()+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Thousand Traps (Whole Fleet Estimate)",title="Total Traps in BIAs")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+trap_counts_expanded_BIAs_ts_zoom_plot
+```
+
 
