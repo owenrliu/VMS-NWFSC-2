@@ -47,7 +47,7 @@ simtraps <- read_rds(here::here('vertical line model',"sim_traps_speed_depth_fil
 
 5x5km grid
 ```{r}
-grd <- read_sf(here::here("data","raw","grid","regions_master_final_lamb.shp"))
+grd <- read_sf(here::here("data","raw","grid","fivekm_grid_polys_shore_lamb.shp"))
 names(grd)
 # raster representation of grid.
 # transform to a projection that uses meters instead of lat/long
@@ -150,6 +150,9 @@ traplocs_wts <- traplocs %>%
 write_rds(traplocs_wts,here::here('vertical line model','trap_locations_with_weights.rds'))
 ```
 
+```{r}
+# traplocs_wts <- read_rds(here::here('vertical line model','trap_locations_with_weights.rds'))
+```
 
 
 Write the function to count traps, per grid cell, by period.
@@ -195,15 +198,73 @@ count_traps <- function(yr,per,expand=F){
 ```
 
 ```{r}
+# TOO BIG
+# all_traps_unnested <- traplocs_wts %>% 
+#   mutate(trapwt_expand=ntraps_wt*vms_representation_wt) %>% 
+#   unnest(cols=c(traps))
+
+  
+count_traps_vctr <- function(yr,per,expand=F){
+  samp <- traplocs_wts %>%
+    ungroup() %>%
+    filter(year==yr,period_1wk==per)
+  
+  if(nrow(samp)==0){
+    print(paste('Week',per,'in',yr,"had zero observations."))
+    return(tibble(GRID5KM_ID = NA,tottraps=NA))
+  } else{
+    
+  # expand with VMS representation weight or no?
+  samp <- samp %>% 
+    mutate(trapwt=ifelse(expand,ntraps_wt*vms_representation_wt,ntraps_wt))
+  
+  # add as a "weight" for density calcs
+  samp <- samp %>% 
+    mutate(traps=purrr::map2(traps,trapwt,function(df,wt) mutate(df,wt=wt))) %>% 
+    unnest(cols=c(traps))
+
+
+  samp_sf<- samp %>%
+    sf::st_as_sf(crs=4326) %>% 
+    # transform to match the grid
+    st_transform(st_crs(grd)) 
+  
+  out <- samp_sf %>% 
+    # join the grid
+    st_join(grd) %>% 
+    # remove spatial
+    st_set_geometry(NULL) %>% 
+    # count traps
+    group_by(GRID5KM_ID) %>% 
+    summarise(tottraps=sum(wt)) %>% 
+    mutate(expanded=expand)
+
+  print(paste0('week'," ",per," ",yr," done."))
+  return(out)
+  }
+
+}
+```
+
+
+```{r}
 # sample map
-tic()
+tic('raster')
 week35_2013 <- count_traps(2013,35)
 week35_2013_expanded <- count_traps(2013,35,expand=T)
 toc()
-week35_2013
-week35_2013_expanded
-plot(week35_2013)
-plot(week35_2013_expanded)
+
+tic('vector')
+week35_2013_vctr <- count_traps_vctr(2013,35)
+week35_2013_expanded_vctr <- count_traps_vctr(2013,35,expand=T)
+toc()
+
+# rasterizing seems faster 
+
+# week35_2013
+# week35_2013_expanded
+# plot(week35_2013)
+# plot(week35_2013_expanded)
 
 ```
 
@@ -213,7 +274,7 @@ Non-expanded
 
 ```{r apply fxn}
 tic("1 Week Interval Pot Counts, non-Expanded")
-years_periods <- traplocs %>% 
+years_periods <- traplocs_wts %>% 
   ungroup() %>% 
   filter(ntraps > 0) %>% 
   distinct(year,period_1wk) %>% 
