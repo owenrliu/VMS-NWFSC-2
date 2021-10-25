@@ -138,11 +138,11 @@ traplocs_wts <- traplocs %>%
   # add vessel size designation
   mutate(vessel_size_category=ifelse(FINAL_LENGTH<40,'small','large')) %>% 
   # join vms representation key
-  left_join(vms_representation_index,by=c('year','month','agency_code','ntraps_permitted','vessel_size_category')) %>% 
+  left_join(vms_representation_index,by=c('year','month','agency_code','vessel_size_category')) %>% 
   # relative vms representation weighting
-  mutate(vms_representation_wt=1/propland) %>% 
+  mutate(vms_representation_wt=1/prop_permitted_traps) %>% 
   ungroup() %>% 
-  dplyr::select(-propland)
+  dplyr::select(-prop_permitted_traps)
 ```
 
 ```{r}

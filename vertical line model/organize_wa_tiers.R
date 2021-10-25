@@ -27,3 +27,14 @@ wa_tier_drvid <- watier %>% left_join(ids,by=c('License_ID'='License'))
 glimpse(wa_tier_drvid)
 
 write_rds(wa_tier_drvid,here::here('vertical line model','wa_tier_drvid_key.rds'))
+
+# check total permitted pots per year
+x<-fishtix_matched_all %>% 
+  filter(agency_code=="W") %>% 
+  distinct(crab_season,drvid) %>% 
+  left_join(wa_tier_drvid) %>%   
+  # assume 500 if NA? or 0?
+  mutate(pots_est=coalesce(Pot_Limit,0))
+y<-x %>% 
+  group_by(crab_season) %>% 
+  summarise(totpots=sum(pots_est))

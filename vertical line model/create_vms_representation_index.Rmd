@@ -57,10 +57,22 @@ For the tier level, WE ASSUME THAT IF NUMBER OF PERMITTED TRAPS IS NA, WE DEFAUL
 fishtix <- fishtix %>% 
   left_join(vms_tickets) %>% 
   mutate(has_vms=replace_na(has_vms,0)) %>% 
-  left_join(tier_key) %>% 
-  mutate(ntraps_permitted=coalesce(ntraps_permitted,500))
+  left_join(tier_key) 
+  # mutate(ntraps_permitted=coalesce(ntraps_permitted,500))
 glimpse(fishtix)
 ```
+
+## Total Permitted Traps in Each State by Season
+
+```{r}
+total_traps_permitted <- fishtix %>% 
+  # mutate(ntraps_permitted=coalesce(ntraps_permitted,500)) %>%
+  distinct(crab_season,agency_code,drvid,has_vms,ntraps_permitted) %>% 
+  group_by(crab_season,agency_code,has_vms) %>% 
+  summarise(traps_permitted=sum(ntraps_permitted,na.rm=T),
+            unknown_limit=sum(is.na(ntraps_permitted)))
+```
+
 
 ## Total Dungeness Vessels
 
@@ -198,28 +210,36 @@ relative_revenue <- revenue_by_month_state %>%
 ```{r}
 # calc landings of VMS vs. non-VMS tix
 vms_prop_landings <- fishtix %>% 
-  
+  #HERE IS WHERE WE MAKE A CHOICE ABOUT NUMBER OF PERMITTED TRAPS---LETS ASSUME 500 FOR UNOBSERVED/UNREGISTERED VESSELS
+  mutate(ntraps_permitted=coalesce(ntraps_permitted,500)) %>%
   # add vessel size designation
   mutate(vessel_size_category=ifelse(FINAL_LENGTH<40,'small','large')) %>% 
   # group and summarise
-  group_by(year,month,agency_code,ntraps_permitted,vessel_size_category,has_vms) %>% 
-  summarise(totland=sum(DCRB_lbs,na.rm=T),tottix=n()) %>% 
+  group_by(year,month,agency_code,vessel_size_category,has_vms) %>% 
+  summarise(totland=sum(DCRB_lbs,na.rm=T),tottix=n(),
+         traps_observed=sum(ntraps_permitted,na.rm=T)) %>% 
   ungroup() %>% 
-  group_by(year,month,agency_code,ntraps_permitted,vessel_size_category) %>% 
+  group_by(year,month,agency_code,vessel_size_category) %>% 
   mutate(sumland=sum(totland),
          sumland_thousand_mt=sumland/1000/2204.64,
          propland=totland/sumland,
          sumtix=sum(tottix),
-         proptix=tottix/sumtix) %>% 
+         proptix=tottix/sumtix,
+         prop_permitted_traps=traps_observed/sum(traps_observed,na.rm=T)) %>% 
   ungroup() %>% 
   # only save the proportion of tickets and landings with VMS
   filter(has_vms==1)
 ```
 
-```{r,fig.width=8,fig.height=8}
+## Final VMS Representation Index
+
+What if we also weight by just the ratio of observed vs. permitted traps??
+
+
+```{r,fig.width=8,fig.height=4}
 vms_representation_index <- vms_prop_landings %>% 
   filter(!is.na(vessel_size_category)) %>% 
-  dplyr::select(year:vessel_size_category,propland)
+  dplyr::select(year:vessel_size_category,prop_permitted_traps)
 
 # California
 vms_representation_index %>%
@@ -227,10 +247,10 @@ vms_representation_index %>%
   mutate(day=1) %>% 
   unite(date,year,month,day,sep="-",remove = FALSE) %>% 
   mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles")) %>% 
-  ggplot(aes(date,1/propland,col=factor(vessel_size_category)))+
+  ggplot(aes(date,1/prop_permitted_traps,col=factor(vessel_size_category)))+
   # geom_bar(stat='identity',position = 'dodge')+
   geom_line()+
-  facet_wrap(~ntraps_permitted,nrow=7,scales='free_y')+
+  # facet_wrap(~ntraps_permitted,nrow=7,scales='free_y')+
   scale_fill_locuszoom(name="",na.value='black')+
   scale_color_locuszoom(name="",na.value='black')+
   scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
@@ -245,10 +265,10 @@ vms_representation_index %>%
   mutate(day=1) %>% 
   unite(date,year,month,day,sep="-",remove = FALSE) %>% 
   mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles")) %>% 
-  ggplot(aes(date,1/propland,col=factor(vessel_size_category)))+
+  ggplot(aes(date,1/prop_permitted_traps,col=factor(vessel_size_category)))+
   # geom_bar(stat='identity',position = 'dodge')+
   geom_line()+
-  facet_wrap(~ntraps_permitted,nrow=7,scales='free_y')+
+  # facet_wrap(~ntraps_permitted,nrow=7,scales='free_y')+
   scale_fill_locuszoom(name="",na.value='black')+
   scale_color_locuszoom(name="",na.value='black')+
   scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
@@ -263,20 +283,22 @@ vms_representation_index %>%
   mutate(day=1) %>% 
   unite(date,year,month,day,sep="-",remove = FALSE) %>% 
   mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles")) %>% 
-  ggplot(aes(date,1/propland,col=factor(vessel_size_category)))+
+  ggplot(aes(date,1/prop_permitted_traps,col=factor(vessel_size_category)))+
   # geom_bar(stat='identity',position = 'dodge')+
   geom_line()+
-  facet_wrap(~ntraps_permitted,nrow=7,scales='free_y')+
+  # facet_wrap(~ntraps_permitted,nrow=7,scales='free_y')+
   scale_fill_locuszoom(name="",na.value='black')+
   scale_color_locuszoom(name="",na.value='black')+
   scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
-  labs(x="Date",y="Landings Weight",title="Inverse of Proportional Landings Represented in VMS\nWashington")+
+  labs(x="Date",y="Landings Weight",title="Inverse of Proportional Trap Limit Represented in VMS\nWashington")+
   theme(legend.position = c(0.1,0.95))+
   theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
         panel.grid.minor = element_blank())
 ```
 
 ## Save
+
+Updated 10/25/2021
 
 ```{r}
 write_rds(vms_representation_index,here::here('vertical line model','vms_representation_index.rds'))
