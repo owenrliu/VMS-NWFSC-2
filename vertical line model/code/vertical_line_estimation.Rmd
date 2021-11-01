@@ -162,7 +162,7 @@ ggplot()+
 
 ## Remove Transit Segments
 
-The first step in processing is to remove the first and last segments of the trip, as they are likely associated with transiting into and out of port.
+The first step in processing is to remove the first and last segments of the trip, as they are likely associated with transiting into and out of port. NOTE: 10/29/2021: Removing this stipulation for now
 
 ```{r remove segs}
 trip1_trunc <- trip1_lines %>% slice(2:(n()-1))
@@ -243,7 +243,7 @@ vms_sf <- vms_sf %>%
 # Function to apply the steps above
 # the function takes a set of trip coordinates, a jitter amount in meters, and a number of traps/mile as input and returns a list of trap locations as output
 
-assign_traps <- function(trip,ntraps_per_mi=15,jitter_amount=1000) {
+assign_traps <- function(trip,ntraps_per_mi=20,jitter_amount=1000) {
   
   #convert to latlon for depth comparison
   if(nrow(trip)<3) return(NA)
@@ -256,9 +256,10 @@ assign_traps <- function(trip,ntraps_per_mi=15,jitter_amount=1000) {
   
   if(nrow(linesegs)==0) return(NA)
   
-  linesegs <- linesegs %>% 
-    # remove first and last segments
-    slice(2:(n()-1))
+  # REMOVE FIRST AND LAST LINE SEGMENTS??
+  # linesegs <- linesegs %>% 
+  #   # remove first and last segments
+  #   slice(2:(n()-1))
   
   st_geometry(trip) <- NULL
   

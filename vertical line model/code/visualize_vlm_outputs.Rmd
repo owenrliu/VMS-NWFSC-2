@@ -141,8 +141,14 @@ VMS representation index that went into simulation and rasterization calculation
 vms_representation_index <- read_rds(here::here('vertical line model','vms_representation_index.rds'))
 ```
 
+Combined tier info
+```{r}
+tier_key <- read_rds(here::here('vertical line model','tier_information_year_month_allstates.rds'))
+tier_key %<>% mutate(month=month.name[month]) %>% dplyr::select(-crabyr)
+```
 
-## Trap Depth Distributions
+
+# Trap Depth Distributions
 
 Look at the depth distributions of simulated traps. For these first plots, we use the non-rasterized version of the simulated traps.
 
@@ -207,7 +213,7 @@ trap_depths_ts_plot <- trap_depths_ts %>%
 trap_depths_ts_plot
 ```
 
-## Timeseries of Total Trap Counts
+# Timeseries of Total Trap Counts
 
 For total trap counts, we need to use the rasterized version of the VLM, because our corrections (weightings etc.) matter for accurate counts of total traps.
 
@@ -278,21 +284,21 @@ trap_counts_state_month_nonexpanded <- all_obs_xy_no_expansion %>%
   filter(!is.na(GRID5KM_ID)) %>% 
   # mean traps by cell by month
   mutate(mth=month(date),yr=year(date)) %>% 
-  group_by(GRID5KM_ID,STATE,yr,mth) %>% 
-  summarise(trapcount=mean(count,na.rm=T)) %>% 
+  group_by(STATE,date,yr,mth) %>% 
+  summarise(trapcount=sum(count,na.rm=T)) %>% 
   ungroup() %>% 
   group_by(yr,mth,STATE) %>% 
-  summarise(tottraps=sum(trapcount,na.rm=T))
+  summarise(tottraps=mean(trapcount,na.rm=T))
 
 trap_counts_state_month_expanded <- all_obs_xy_expanded %>% 
   filter(!is.na(GRID5KM_ID)) %>% 
   # mean traps by cell by month
   mutate(mth=month(date),yr=year(date)) %>% 
-  group_by(GRID5KM_ID,STATE,yr,mth) %>% 
-  summarise(trapcount=mean(count,na.rm=T)) %>% 
+  group_by(STATE,date,yr,mth) %>% 
+  summarise(trapcount=sum(count,na.rm=T)) %>% 
   ungroup() %>% 
   group_by(yr,mth,STATE) %>% 
-  summarise(tottraps=sum(trapcount,na.rm=T))
+  summarise(tottraps=mean(trapcount,na.rm=T))
 ```
 
 ```{r,fig.width=8,fig.height=8}
@@ -397,7 +403,7 @@ trap_counts_expanded_ts_zoom_plot
 # trap_density_dist_expanded
 ```
 
-## Within BIAs
+# Within BIAs
 
 Trap Density within Biologically Important Areas for humpback whales
 
@@ -592,5 +598,86 @@ traps_inside_BIAs_seasons %>%
         panel.grid.minor = element_blank())
 ```
 
+# Simulated vs. Permitted Traps
 
+Try to do some validation by looking at unweighted and weighted traps per trip, including the relationship between simulated and permitted traps per trip in the data.
+
+```{r}
+sim_vs_permit <- traplocs %>% 
+  dplyr::select(Rec_ID,date,year,month,agency_code,FINAL_LENGTH,ntraps,ntraps_permitted,vms_representation_wt)
+```
+
+What is the relationship between number of permitted and number of simulated traps, per trip, by state?
+
+```{r}
+sim_vs_permit_p <- sim_vs_permit %>% 
+  ggplot(aes(ntraps,ntraps_permitted))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  geom_abline(slope=1,intercept=0)+
+  labs(x="Simulated Traps",y="Permitted Traps")+
+  facet_wrap(~agency_code,nrow=2)
+sim_vs_permit_p
+```
+
+Histogram of simulated pots per trip
+
+```{r}
+sim_vs_permit_hist <- sim_vs_permit %>% 
+  ggplot(aes(ntraps))+
+  geom_histogram(fill='darkblue',alpha=0.5,col=NA,binwidth = 50)+
+  labs(x="Simulated Traps",y="")+
+  facet_wrap(~agency_code,nrow=2)
+sim_vs_permit_hist
+```
+
+Percent of trap limit fished, by month and state
+
+```{r}
+sim_vs_permit_months <- sim_vs_permit %>% 
+  group_by(agency_code,year,month) %>% 
+  summarise(perc_utilization=sum(ntraps,na.rm=T)/sum(ntraps_permitted,na.rm=T)) %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d")) %>% 
+  ggplot(aes(date,perc_utilization))+
+  geom_point()+
+  geom_line()+
+  facet_wrap(~agency_code,nrow=3)+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Month",y="Percent Utilization of Trap Limit")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+sim_vs_permit_months
+```
+
+Utilization is pretty high. How does this compare to TOTAL possible traps, based on all registered vessels?
+
+Look at the sum of all traps for all registered vessels per season, and compare to the number of vessels/traps actually fished.
+
+```{r}
+max_traps_season <- fishtix_matched_all %>% 
+  distinct(year,month,drvid) %>% 
+  left_join(tier_key) %>% 
+  distinct(year,month,drvid,agency_code,ntraps_permitted) %>% 
+  group_by(year,month,agency_code,drvid) %>% 
+  slice_max(ntraps_permitted,n=1) %>% 
+  group_by(agency_code,year,month) %>% 
+  summarise(max_potential_traps=sum(ntraps_permitted)) %>% 
+  ungroup() %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d"))
+
+max_traps_season %>% 
+  ggplot(aes(date,max_potential_traps))+
+  geom_point()+
+  geom_line()+
+  facet_wrap(~agency_code,nrow=3)+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Month",y="Total Potential Traps")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+
+```
 
