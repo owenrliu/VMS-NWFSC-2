@@ -8,6 +8,7 @@ library(viridis)
 # all data based on "entanglement reports from lauren 100920.xlsx"
 # focus on all confirmed commercial Dungeness crab entanglements by year
 path_entanglement_file_annual <- "/Users/jameal.samhouri/Documents/RAIMBOWT/Processed Data/Samhouri et al. whales risk/Input_Data/Entanglement Data/2000_19/all_confirmed_dcrb_entanglements.csv" 
+path_entanglement_file_all <- here::here('vertical line model','entanglements','all_entanglements_102021.csv')
 
 # all data based on "ForStates_WCR_Whale_entanglement_1982_2020_10.20.21.xlsx"
 # focus on all confirmed commercial Dungeness crab entanglements by year
@@ -204,6 +205,22 @@ df_dcc <- df_all %>%
 glimpse(df_dcc)
 #unique(df_dcc$plotting_date)
 
+basic_ts <- df_dcc %>% 
+  ungroup() %>% 
+  mutate(yr=year(plotting_date)) %>% 
+  filter(yr>2010) %>% 
+  mutate(species=factor(species,levels=c("Humpback Whale","Blue Whale","Other / Unidentified"))) %>% 
+  group_by(yr,species) %>% 
+  summarise(tot=sum(count_confirmed)) %>% 
+  ggplot(aes(yr,tot,fill=species))+
+  geom_col()+
+  labs(x="Year",y="Total Confirmed Entanglements",title="Confirmed Entanglements in\nDungeness Crab Fishing Gear")+
+  scale_fill_nejm(name="Species")+
+  theme(panel.grid.major = element_blank(),panel.grid.minor=element_blank(),
+        legend.position = c(0.2,0.8),
+        axis.text=element_text(size=14))
+  
+
 ### make some plots
 
 # monthly entanglements time series humpbacks only
@@ -248,7 +265,7 @@ quarterly_ts_hump <- ggplot(
     filter (plotting_date >= "2009-02-01" & plotting_date <= "2018-10-01") %>% 
     filter (species == "Humpback Whale") %>%
     mutate(
-      plotting_quarter = lubridate::quarter(plotting_date, type = "date_first", fiscal_start = 11)
+      plotting_quarter = lubridate::quarter(plotting_date, with_year = T, fiscal_start = 11)
     ) %>%
     group_by(plotting_quarter, species) %>%
     summarise(
