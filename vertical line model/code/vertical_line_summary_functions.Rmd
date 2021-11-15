@@ -1,0 +1,302 @@
+---
+title: "Summarise VLM Outputs"
+author: "Owen Liu"
+date: "10/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(raster)
+library(data.table)
+library(tidyverse)
+library(lubridate)
+library(magrittr)
+library(sf)
+library(rnaturalearth)
+library(fasterize)
+library(tictoc)
+
+library(furrr)
+library(future)
+```
+
+```{r}
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+
+# Purpose
+
+The goal of this script is to take the output of the vertical line model simulation and apply functions that can summarise the total number and/or density of simulated crab pots by 1, 2, or month-long intervals, either expanded (accounting for relative VMS representation by vessel size class, tier level, and month) or unexpanded.
+
+# Import Data
+
+Simulated traps
+
+```{r}
+simtraps <- read_rds(here::here('vertical line model',"sim_traps_speed_depth_filters.rds"))
+```
+
+5x5km grid
+```{r}
+grd <- read_sf(here::here("data","raw","grid","fivekm_grid_polys_shore_lamb.shp"))
+names(grd)
+# raster representation of grid.
+# transform to a projection that uses meters instead of lat/long
+grd_rast <- fasterize(grd,raster = raster(grd,res=5000,crs=crs(grd)),field="GRID5KM_ID")
+# set -99999 to NA
+grd_rast[grd_rast==-99999] <- NA
+```
+
+Fish tickets
+```{r}
+fishtix_matched_all <- read_rds(here::here('data','processed','fish tickets','fish_tickets_w_dayofseason.rds'))
+# filter for out of season
+fishtix_matched_all %<>% filter(ticket_day_of_season>=0)
+```
+
+Coastline (just for plotting)
+```{r}
+# a coastline, for plotting
+# coastline for plotting
+coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington','Nevada'))
+coastline <- ne_coastline(scale='medium',returnclass = 'sf') %>% 
+  st_crop(st_bbox(coaststates))
+```
+
+Trap locations, discarding VMS data
+```{r}
+# traps locations only (discard VMS data for now), attached to fish ticket data
+traplocs <- simtraps %>% dplyr::select(Rec_ID,traps) %>% 
+  left_join(fishtix_matched_all,by="Rec_ID") %>% 
+  dplyr::select(Rec_ID,date,year,month,ticket_day_of_season,pacfin_port_code,port_group_code,agency_code,drvid,FINAL_LENGTH,traps) %>% 
+  distinct(Rec_ID,.keep_all = T) %>% 
+  # count number of traps associated with each trip
+  mutate(ntraps=purrr::map_int(traps,nrow))
+```
+
+Vessel tier info
+
+```{r}
+tier_key <- read_rds(here::here('vertical line model','tier_information_year_month_allstates.rds'))
+tier_key %<>% mutate(month=month.name[month]) %>% dplyr::select(-crabyr)
+```
+
+VMS representation index, for weighting of simulated traps
+```{r}
+vms_representation_index <- read_rds(here::here('vertical line model','vms_representation_index.rds'))
+```
+
+
+# Summarising Traps on the 5km Grid
+
+We want to write a function that takes the full simulated traps dataset, filters it by 1 week, 2 week, or 1 month intervals, then gets counts of total traps per 5km grid cell
+
+## Create Periods
+
+First, we need to create identifiers for 1 week, 2 week, and 1 month periods.
+
+```{r}
+traplocs <- traplocs %>% 
+  filter(!is.na(date)) %>% 
+  # week of year
+  mutate(period_1wk=week(date)) %>% 
+  # 2-week segment of year
+  mutate(period_2wk=round(period_1wk/2)+1)
+```
+
+## Add Tier Info to Each Fish Ticket
+
+Using the 3 states' tier info, add a pot limit to the trap locations. IF POT LIMIT IS NA, ASSUME 500!
+
+```{r}
+traplocs <- traplocs %>% 
+  left_join(tier_key,by=c('year','month','agency_code','drvid'))
+```
+
+Add the 2 different weighting factors- one for the total number of allowable traps, and one for relative VMS representation
+
+```{r}
+traplocs_wts <- traplocs %>% 
+
+  group_by(drvid,period_1wk) %>% 
+  mutate(total_traps_period1wk=sum(ntraps)) %>%
+  
+  # total traps weighting
+  mutate(ntraps_permitted=coalesce(ntraps_permitted,500)) %>% 
+  mutate(ntraps_wt=ifelse(total_traps_period1wk<ntraps_permitted,1,ntraps_permitted/total_traps_period1wk)) %>% 
+
+  # add vessel size designation
+  mutate(vessel_size_category=ifelse(FINAL_LENGTH<40,'small','large')) %>% 
+  # join vms representation key
+  left_join(vms_representation_index,by=c('year','month','agency_code','vessel_size_category')) %>% 
+  # relative vms representation weighting
+  mutate(vms_representation_wt=1/prop_permitted_traps) %>% 
+  ungroup() %>% 
+  dplyr::select(-prop_permitted_traps)
+```
+
+```{r}
+# write this to a file
+write_rds(traplocs_wts,here::here('vertical line model','trap_locations_with_weights.rds'))
+```
+
+```{r}
+# traplocs_wts <- read_rds(here::here('vertical line model','trap_locations_with_weights.rds'))
+```
+
+
+Write the function to count traps, per grid cell, by period.
+
+The `expand` option determines whether traps are up-weighted by the relative representation in VMS of each vessel's length/tier level in each year/month in the fish ticket data.
+
+```{r}
+count_traps <- function(yr,per,expand=F){
+  samp <- traplocs_wts %>%
+    ungroup() %>%
+    filter(year==yr,period_1wk==per)
+  
+  # expand with VMS representation weight or no?
+  samp <- samp %>% 
+    mutate(trapwt=ifelse(expand,ntraps_wt*vms_representation_wt,ntraps_wt))
+  
+  # add as a "weight" for density calcs
+  samp <- samp %>% 
+    mutate(traps=purrr::map2(traps,trapwt,function(df,wt) mutate(df,wt=wt)))
+
+  if(nrow(samp)==0){
+    print(paste('Week',per,'in',yr,"had zero observations."))
+    zero_rast <- setValues(grd_rast,NA)
+    names(zero_rast) <- paste0('week'," ",per," ",yr)
+    return(zero_rast)
+  } else{
+    samp_sf<-setDT( samp )[, rbindlist( traps ) ] %>%
+    sf::st_as_sf(crs=4326) %>% 
+    # transform to match the grid
+    st_transform(st_crs(grd)) %>% 
+    dplyr::select(wt) %>% 
+    as_Spatial()
+    
+    # use raster::rasterize() to count the number of traps in each cell
+  out_rast <- raster::rasterize(samp_sf,grd_rast,field='wt',fun='sum')
+  names(out_rast) <- paste0('week'," ",per," ",yr)
+
+  print(paste0('week'," ",per," ",yr," done."))
+  return(out_rast)
+  }
+
+}
+```
+
+```{r}
+# TOO BIG
+# all_traps_unnested <- traplocs_wts %>% 
+#   mutate(trapwt_expand=ntraps_wt*vms_representation_wt) %>% 
+#   unnest(cols=c(traps))
+
+  
+count_traps_vctr <- function(yr,per,expand=F){
+  samp <- traplocs_wts %>%
+    ungroup() %>%
+    filter(year==yr,period_1wk==per)
+  
+  if(nrow(samp)==0){
+    print(paste('Week',per,'in',yr,"had zero observations."))
+    return(tibble(GRID5KM_ID = NA,tottraps=NA))
+  } else{
+    
+  # expand with VMS representation weight or no?
+  samp <- samp %>% 
+    mutate(trapwt=ifelse(expand,ntraps_wt*vms_representation_wt,ntraps_wt))
+  
+  # add as a "weight" for density calcs
+  samp <- samp %>% 
+    mutate(traps=purrr::map2(traps,trapwt,function(df,wt) mutate(df,wt=wt))) %>% 
+    unnest(cols=c(traps))
+
+
+  samp_sf<- samp %>%
+    sf::st_as_sf(crs=4326) %>% 
+    # transform to match the grid
+    st_transform(st_crs(grd)) 
+  
+  out <- samp_sf %>% 
+    # join the grid
+    st_join(grd) %>% 
+    # remove spatial
+    st_set_geometry(NULL) %>% 
+    # count traps
+    group_by(GRID5KM_ID) %>% 
+    summarise(tottraps=sum(wt)) %>% 
+    mutate(expanded=expand)
+
+  print(paste0('week'," ",per," ",yr," done."))
+  return(out)
+  }
+
+}
+```
+
+
+```{r}
+# sample map
+tic('raster')
+week35_2013 <- count_traps(2013,35)
+week35_2013_expanded <- count_traps(2013,35,expand=T)
+toc()
+
+tic('vector')
+week35_2013_vctr <- count_traps_vctr(2013,35)
+week35_2013_expanded_vctr <- count_traps_vctr(2013,35,expand=T)
+toc()
+
+# rasterizing seems faster 
+
+# week35_2013
+# week35_2013_expanded
+# plot(week35_2013)
+# plot(week35_2013_expanded)
+
+```
+
+Apply to all years/months' data.
+
+Non-expanded
+
+```{r apply fxn}
+tic("1 Week Interval Pot Counts, non-Expanded")
+years_periods <- traplocs_wts %>% 
+  ungroup() %>% 
+  filter(ntraps > 0) %>% 
+  distinct(year,period_1wk) %>% 
+  rename(yr=year,per=period_1wk)
+future::plan(multisession)
+trap_density_all_periods_no_expansion <- furrr::future_map2(years_periods$yr,years_periods$per,count_traps,expand=F)
+toc()
+trap_density_stack_no_expansion <- raster::stack(trap_density_all_periods_no_expansion)
+write_rds(trap_density_stack_no_expansion,here::here('vertical line model',"trap_density_all_1week_periods_non_expanded.rds"))
+
+```
+
+Expanded
+```{r}
+tic("1 Week Interval Pot Counts, Expanded")
+trap_density_all_periods_expanded <- furrr::future_map2(years_periods$yr,years_periods$per,count_traps,expand=T)
+toc()
+trap_density_stack_expanded <- raster::stack(trap_density_all_periods_expanded)
+write_rds(trap_density_stack_expanded,here::here('vertical line model',"trap_density_all_1week_periods_expanded.rds"))
+```
+
+```{r}
+future::plan(sequential)
+```
+

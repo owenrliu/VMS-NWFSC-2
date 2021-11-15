@@ -52,7 +52,8 @@ First, the full vms data set for `r process_year`.
 
 ```{r data}
 # Owen note: using read_csv here to ensure the data types of different variables are read in correctly
-vms <- read_rds(here::here('data','processed','matched','matching',paste0(process_year,'matched_vmstix_only.rds')))
+#Edit - Read in file that has FTID
+vms <- read_rds(here::here('data','processed','matched','matching',paste0(process_year,'matched_vmstix_only_withFTID.rds')))
 ```
 
 ***
@@ -609,6 +610,7 @@ vms_filtered <- vms_dataloss %>%
 Save the output and the full, non-filtered data set
 
 ```{r}
-write_rds(vms_filtered,here::here('data','processed','matched','filtering',paste0(process_year,'matched_filtered.rds')))
+#Save version with FTID and length
+write_rds(vms_filtered,here::here('data','processed','matched','filtering',paste0(process_year,'matched_filtered_withFTID_length.rds')))
 write_rds(vms_wfilters,here::here('data','processed','matched','filtering',paste0(process_year,'matched_unfiltered.rds')))
 ```

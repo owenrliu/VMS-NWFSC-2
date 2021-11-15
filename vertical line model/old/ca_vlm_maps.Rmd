@@ -1,0 +1,741 @@
+---
+title: "Spatiotemporal Patterns in California Vertical Lines"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r pkgs, include=FALSE,message=F,warning=FALSE}
+library(raster)
+library(tidyverse)
+library(knitr)
+library(extrafont)
+library(ggsci)
+library(lubridate)
+library(sf)
+library(geosphere)
+library(magrittr)
+library(rnaturalearth)
+library(gstat)
+# library(data.table)
+library(fasterize)
+library(gganimate)
+library(here)
+library(RANN)
+
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+# Introduction
+
+The purpose of this document is to use the outputs from a vertical line/crab pot simulation estimation to investigate preliminary spatial and temporal patterns in the estimated number of traps in the water. We will do this by using a spatial grid to aggregate total crab traps across space and time.
+
+```{r import data}
+# fp <- "C:/Users/Owen.Liu/Documents/NWFSC Research/Dungeness Fleet Dynamics/VMS DATA CONFIDENTIAL/Processed Data/VMS/"
+# fp_tix <- "C:/Users/Owen.Liu/Documents/NWFSC Research/Dungeness Fleet Dynamics/VMS DATA CONFIDENTIAL/Processed Data/Fish tickets/"
+
+# fish tickets
+# load(file=paste0(fp_tix,"FishTix_all_2009_2018.RData"))
+fishtix_matched_all <- read_rds("C:/Users/Owen.Liu/Documents/github/VMS-NWFSC-2/data/processed/fish tickets/fish_tickets_w_dayofseason.rds")
+# filter for out of season?
+fishtix_matched_all %<>% filter(ticket_day_of_season>=0)
+
+# a coastline, for plotting
+# coastline for plotting
+coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington','Nevada'))
+coastline <- ne_coastline(scale='medium',returnclass = 'sf') %>% 
+  st_crop(st_bbox(coaststates))
+
+# Load if not already loaded
+simulated_traps <- read_rds(here::here('data','processed',"sim_traps_speed_depth_filters.rds")) %>% ungroup()
+
+# traps locations only (discard VMS data for now), attached to fish ticket data
+traplocs <- simulated_traps %>% dplyr::select(Rec_ID,traps) %>% 
+  left_join(fishtix_matched_all,by="Rec_ID") %>% 
+  dplyr::select(Rec_ID,date,year,month,ticket_day_of_season,pacfin_port_code,port_group_code,agency_code,drvid,FINAL_LENGTH,traps) %>% 
+  distinct(Rec_ID,.keep_all = T) %>% 
+  # count number of traps associated with each trip
+  mutate(ntraps=purrr::map_int(traps,nrow))
+
+# 5x5 grid shapefile
+# grd <- read_sf(here::here("Input_Data","5x5 Grid","five_km_grid_polys_geo.shp"))
+grd <- read_sf(here::here("data","grid","regions_master_final_lamb.shp"))
+names(grd)
+
+meta <- readxl::read_xlsx(here::here("data","grid","regions_master_final_lamb_metadata.xlsx")) 
+
+meta %>% kable()
+```
+
+# Vessel Sizes by Tier
+
+For the CA data, we have tier information- that is, we have data on how many traps each vessel is permitted to fish. Let's use these data to look at the breakdown of vessel sizes within these tiers.
+
+```{r}
+ca_tier <- read_rds(here::here('data','CAtier_drvid_matching_key.rds'))
+glimpse(ca_tier)
+ca_tier %<>% rename(ntraps_permitted=ntraps)
+
+# assign crab season to tier info
+CA_traplocs <- traplocs %>% filter(agency_code=="C") %>% left_join(ca_tier,by=c('year','drvid'))
+
+library(viridis)
+# vessel size histograms (vms boats)
+CA_vessel_size_tier_vms <- CA_traplocs %>% 
+  distinct(drvid,tier,ntraps_permitted,FINAL_LENGTH) %>% 
+  drop_na() %>% 
+  ggplot(aes(FINAL_LENGTH,fill=factor(ntraps_permitted)))+
+  geom_density(alpha=0.5)+
+  scale_fill_manual(values=viridis_pal()(7))+
+  labs(x='Vessel Length',y='Kernel Density',fill="Tier",title="Vessel Size by Tier, VMS vessels")
+CA_vessel_size_tier_vms
+ggsave(here('plots','vessel_size_histogram_by_tier_vms.png'),CA_vessel_size_tier_vms,w=6,h=5)
+
+# vessel size histogram (all CA vessels)
+fishtix_tier <- fishtix_matched_all %>% filter(agency_code=="C") %>% left_join(ca_tier,by=c('year','drvid')) %>% 
+  distinct(Rec_ID,.keep_all = T)
+CA_vessel_size_tier_all <- fishtix_tier %>% 
+  distinct(drvid,tier,ntraps_permitted,FINAL_LENGTH) %>% 
+  drop_na() %>% 
+  ggplot(aes(FINAL_LENGTH,fill=factor(ntraps_permitted)))+
+  geom_density(alpha=0.5)+
+  scale_fill_manual(values=viridis_pal()(7))+
+  labs(x='Vessel Length',y='Kernel Density',fill="Tier",title="Vessel Size by Tier, all Vessels")
+CA_vessel_size_tier_all
+ggsave(here('plots','vessel_size_histogram_by_tier_all.png'),CA_vessel_size_tier_all,w=6,h=5)
+```
+
+## Create Tier Representation by Month
+
+We want to use the tier information to make a scaling key by measuring the relative representation of VMS vessels relative to overall DCRB vessels, by tier, year, month, and CA region.
+
+```{r}
+# include regional indicator for each port group
+cenCA_ports <- c("MRA","SBA","SFA","MNA")
+norCA_ports <- c("ERA","CCA","BGA","BDA","CA2")
+CA_traplocs %<>%
+  mutate(CA_region=case_when(
+    port_group_code %in% cenCA_ports ~ "cenCA",
+    port_group_code %in% norCA_ports ~ "norCA"
+  ))
+CA_vms_vessels <- CA_traplocs %>% 
+  distinct(Rec_ID,year,month,drvid,CA_region,tier,ntraps_permitted) %>% 
+  drop_na() %>% 
+  mutate(has_vms=1)
+CA_vms_prop_tier <- fishtix_tier %>% 
+  left_join(CA_vms_vessels) %>% 
+  mutate(CA_region=case_when(
+    port_group_code %in% cenCA_ports ~ "cenCA",
+    port_group_code %in% norCA_ports ~ "norCA"
+  )) %>% 
+  filter(!is.na(CA_region)) %>% 
+  mutate(has_vms=replace_na(has_vms,0)) %>%
+  distinct(crab_season,year,month,CA_region,drvid,.keep_all = T) %>% 
+  group_by(crab_season,year,month,CA_region,tier,ntraps_permitted) %>% 
+  summarise(tot_vessels=n_distinct(drvid),tot_vms=sum(has_vms)) %>% 
+  ungroup() %>% 
+  mutate(prop_vms=tot_vms/tot_vessels,tier_wt=1/prop_vms) %>% 
+  # This is a very important line- IF NO TIER INFO, WE DO NOT ASSIGN WEIGHTS, AND EVERY TRAP HAS JUST A WEIGHT OF 1
+  mutate(tier_wt=ifelse(is.infinite(tier_wt),0,tier_wt))
+RecID_tier_weights <- fishtix_tier %>%
+  mutate(CA_region=case_when(
+    port_group_code %in% cenCA_ports ~ "cenCA",
+    port_group_code %in% norCA_ports ~ "norCA"
+  )) %>% 
+  left_join(CA_vms_prop_tier) %>% 
+  select(Rec_ID,date,year,month,drvid,CA_region,tier,ntraps_permitted,tot_vessels,tot_vms,prop_vms,tier_wt)
+```
+
+The last thing we need is a key to determine total traps permitted in each port group and month. We will use the fish tickets and CA tier info to create this key.
+
+```{r}
+traps_region_month <- fishtix_tier %>% 
+  mutate(CA_region=case_when(
+    port_group_code %in% cenCA_ports ~ "cenCA",
+    port_group_code %in% norCA_ports ~ "norCA"
+  )) %>% 
+  filter(!is.na(CA_region),!is.na(ntraps_permitted),!is.na(tier)) %>% 
+  distinct(crab_season,year,month,CA_region,drvid,ntraps_permitted,tier) %>% 
+  group_by(crab_season,year,month,CA_region) %>% 
+  summarise(max_traps_region=sum(ntraps_permitted)) %>% 
+  ungroup()
+```
+
+# Join Grid
+
+We make a grid representation of the simulated traps data, assigning a 5km grid cell to each observation. Then, we produce both an unweighted (no correction for tier weights) and weighted (tier-representation-adjusted) version of monthly rasters.
+
+First, attach the appropriate grid cell to each simulated trap
+
+```{r grid fxn,warning=FALSE,fig.height=8,fig.width=4}
+# Function to build a grid from a given year/month's simulated traps data
+
+# raster representation of grid.
+# transform to a projection that uses meters
+grd_rast <- fasterize(grd,raster = raster(grd,res=5000,crs=crs(grd)),field="GRID5KM_ID")
+# set -99999 to NA
+grd_rast[grd_rast==-99999] <- NA
+
+grd_xy <- rasterToPoints(grd_rast) %>% as_tibble() %>% set_colnames(c("x","y","GRID5KM_ID")) %>%
+  st_as_sf(coords=c('x','y'),crs=st_crs(grd)) %>% st_transform(4326)
+grd_xy <- grd_xy %>% st_coordinates() %>% as_tibble() %>% mutate(GRID5KM_ID=grd_xy$GRID5KM_ID) %>% 
+  set_colnames(c("grd_x","grd_y","GRID5KM_ID"))
+
+# unlist the traps and attach grid cells using nearest neighbors
+CA_traps_long <- CA_traplocs %>% 
+  mutate(traps_xy=purrr::map(traps,function(x)st_coordinates(x) %>% set_colnames(c('x','y')) %>% as_tibble())) %>%
+  select(-traps) %>% 
+  unnest(c(traps_xy))
+
+# nearest neighbors
+traps_nn <- RANN::nn2(grd_xy[,1:2],CA_traps_long[,c('x','y')],k=1)[[1]]
+# attach to observations
+CA_traps_long <- CA_traps_long %>% mutate(GRID5KM_ID = grd_xy$GRID5KM_ID[traps_nn])
+# clean up variable names
+CA_traps_long %<>%
+  rename(ntraps_trip=ntraps)
+```
+
+Make weighted and unweighted rasters of trap density. The 
+
+```{r}
+# add tier weights to traps list-column
+RecID_tier_weights %>% ungroup() %>%  select(Rec_ID,tot_vessels:tier_wt) %>% right_join(CA_traps_long)->CA_traps_long
+
+CA_traps_long <- CA_traps_long %>% left_join(grd_xy,by="GRID5KM_ID")
+
+# add regional trap numbers by month
+CA_traps_long <- CA_traps_long %>% 
+  left_join(traps_region_month) %>% 
+  group_by(year,month,CA_region) %>% 
+  # if no recorded trap limits, the number of traps is just the sum of all simulated traps
+  mutate(max_traps_region=replace_na(max_traps_region,n()))
+```
+
+```{r}
+count_traps <- function(yr,mth,use_weights=F,norm_index=F){
+  mth_name <- month.name[mth]
+  samp <- CA_traps_long %>%
+    ungroup() %>%
+    filter(year==yr,month==mth_name,!is.na(GRID5KM_ID))
+  if(nrow(samp)==0){
+    print(paste(mth_name,yr,"had zero observations."))
+    zero_rast <- setValues(grd_rast,NA)
+    names(zero_rast) <- paste0(mth_name,yr)
+    return(zero_rast)
+  } else {
+    samp_sf <- samp %>% 
+      mutate(norm=norm_index) %>% 
+      group_by(norm,CA_region,GRID5KM_ID,grd_x,grd_y,max_traps_region) %>% 
+      # if using weights, the counted trap value is equal to the sum of the relative tier weights
+      summarise(tot_traps=ifelse(use_weights,sum(tier_wt),n())) %>%
+      ungroup() %>% 
+      group_by(CA_region) %>%
+      # the relative index is the total traps in each grid cell, divided by the sum of all simulated traps in the region
+      mutate(traps_relative=tot_traps/sum(tot_traps)) %>% 
+      ungroup() %>% 
+      # if normalizing by region, leave it as is. If looking for total traps, multiply by total regional traps (from fish tickets)
+      mutate(ntraps_calc=traps_relative*max_traps_region) %>% 
+      mutate(ntraps=ifelse(norm,traps_relative,ntraps_calc)) %>% 
+      ungroup() %>% 
+      sf::st_as_sf(coords=c('grd_x','grd_y'),crs=4326) %>% 
+      st_transform(st_crs(grd)) %>%
+      dplyr::select(ntraps) %>% 
+      as_Spatial()
+  out_rast <- raster::rasterize(samp_sf,grd_rast,field='ntraps',fun='first')
+  names(out_rast) <- paste0(mth_name,yr)
+  }
+  
+  print(paste(mth_name,yr,"done."))
+
+  return(out_rast)
+}
+
+
+# sample map
+p <- proc.time()
+dec2013 <- count_traps(2013,12,use_weights = T,norm_index=F)
+proc.time()-p
+dec2013
+plot(dec2013)
+# data.table version (dunno why i can't get something like this to work in tidy) 
+#   traps_sf<-setDT( samp )[, rbindlist( traps ) ] %>% 
+#     sf::st_as_sf()
+```
+
+Apply to all years/months' data.
+
+```{r apply fxn}
+
+p <- proc.time()
+years_months <- crossing(yr=2009:2018,mth=1:12)
+trap_density_unweighted_norm <- purrr::map2(years_months$yr,years_months$mth,count_traps,use_weights=F,norm_index=T)
+trap_density_weighted_norm <- purrr::map2(years_months$yr,years_months$mth,count_traps,use_weights=T,norm_index=T)
+trap_density_unweighted <- purrr::map2(years_months$yr,years_months$mth,count_traps,use_weights=F,norm_index=F)
+trap_density_weighted <- purrr::map2(years_months$yr,years_months$mth,count_traps,use_weights=T,norm_index=F)
+proc.time()-p
+
+trap_density_unweighted_stack <- raster::stack(trap_density_unweighted)
+trap_density_weighted_stack <- raster::stack(trap_density_weighted)
+trap_density_unweighted_norm_stack <- raster::stack(trap_density_unweighted_norm)
+trap_density_weighted_norm_stack <- raster::stack(trap_density_weighted_norm)
+
+write_rds(trap_density_unweighted_stack,here::here('data','processed',"CA_trap_counts_unweighted.rds"))
+write_rds(trap_density_weighted_stack,here::here('data','processed',"CA_trap_counts_weighted.rds"))
+write_rds(trap_density_unweighted_norm_stack,here::here('data','processed',"CA_trap_counts_unweighted_norm.rds"))
+write_rds(trap_density_weighted_norm_stack,here::here('data','processed',"CA_trap_counts_weighted_norm.rds"))
+```
+
+
+# Animate output
+
+We can then represent the output in an animation
+
+```{r interpolate output,warning=FALSE,fig.height=8,fig.width=4}
+# RasterStack to long form xy
+all_obs_xy_weighted_norm <- purrr::map(as.list(trap_density_weighted_norm_stack),function(x){
+  mth <- names(x)
+  y<-rasterToPoints(x) %>% as_tibble() %>% set_names(c('x','y','value'))
+  z <-y %>% mutate(month=mth)
+  z
+}) %>% bind_rows()
+
+all_obs_xy_unweighted <- purrr::map(as.list(trap_density_unweighted_stack),function(x){
+  mth <- names(x)
+  y<-rasterToPoints(x) %>% as_tibble() %>% set_names(c('x','y','value'))
+  z <-y %>% mutate(month=mth)
+  z
+}) %>% bind_rows()
+
+#bounding box for animation
+bbox=c(825064,444947,1186239,2016996)
+
+# test plot
+library(viridis)
+coaststates %<>% st_transform(st_crs(grd))
+test<-all_obs_xy_unweighted %>% 
+  filter(month=="December2013")
+
+test %>% ggplot()+
+    geom_tile(aes(x,y,fill=value),na.rm=T,alpha=0.8,interpolate=FALSE)+
+    geom_sf(data=coaststates,col=NA,fill='gray50')+
+    scale_fill_viridis(na.value=NA,option="C",name="Relative Density\nIndex")+
+    coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+    labs(x='',y='',fill='Traps per\nsq. km',title='{current_frame}')+
+    theme(axis.text.x.bottom = element_text(angle=45),
+          legend.position = c(0.7,0.6),
+          title=element_text(size=16))
+
+# ordering factor for frames of the animation
+# all_obs_xy %<>% mutate(labeler=factor(month,levels=unique(month))) 
+# # produce the animation
+# library(viridis)
+# library(gifski)
+# traps.gif <- all_obs_xy %>%
+#   filter(density>0) %>% 
+#   ggplot()+
+#     geom_tile(aes(x,y,fill=density),na.rm=T,alpha=0.8,interpolate=TRUE)+
+#     geom_sf(data=coaststates,col=NA,fill='gray50')+
+#     scale_fill_viridis(na.value=NA,option="C",name="Traps per\nsq. km")+
+#     coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4]))+
+#     labs(x='',y='',fill='Traps per\nsq. km',title='{current_frame}')+
+#     theme(axis.text.x.bottom = element_text(angle=45),
+#           legend.position = c(0.7,0.6),
+#           title=element_text(size=16))+
+#     transition_manual(labeler)
+# animate(traps.gif,fps=1,width=500,height=1000,renderer = gifski_renderer())
+# 
+# #save the animation
+# # fp_plots <- "C:/Users/Owen.Liu/Documents/NWFSC Research/Dungeness Fleet Dynamics/VMS DATA CONFIDENTIAL/Processed Data/owen processed/plots/"
+# anim_save(here::here('plots',"trap_density_all_years_combined_weights.gif"))
+
+```
+
+```{r distribution of trap densities}
+all_obs_xy_unweighted %>% 
+  filter(!is.na(value),value>0) %>% 
+  ggplot(aes(value/25))+
+  geom_density(fill='red',alpha=0.98,col=NA)+
+  scale_x_continuous(limits=c(0,50))+
+  labs(x="Density (Traps per sq. Km)",y="Kernel Density",title="Distribution of Positive Trap Densities\nall years and months")
+```
+
+```{r comparison to Blake}
+# read in Blake's estimated data
+blake<-readxl::read_xlsx(here::here('data',"Monthly DCRB VMS pings per 5km grid cell 4Owen 101019.xlsx"))
+grd_match <- tibble(GRID5KM_ID=getValues(grd_rast)) %>% left_join(blake,by="GRID5KM_ID")
+
+# an example raster: for December, 2013
+blake_rast <- raster(grd_rast)
+values(blake_rast) <- grd_match$DUN2013_12
+# reclassify zeroes to NA to match vertical line model
+blake_rast <- reclassify(blake_rast,rcl=c(0,0,NA),right=NA)
+
+test <- stack(blake_rast,trap_density_unweighted_stack$December2013)
+plot(test)
+# do a correlation
+cor(getValues(blake_rast),getValues(trap_density_unweighted_stack$December2013),use="na.or.complete")
+
+```
+
+Correlation is not super high. Let's try with all the months in the data
+
+```{r corr all months}
+# Tibble to hold outputs of correlation
+cor_table <- crossing(year=2009:2016,month=1:12,correlation=NA)
+# Blake's analysis only goes through 06/2016
+cor_table %<>% slice(-((nrow(cor_table)-5):nrow(cor_table)))
+
+get_cor <- function(yr,mth){
+  
+  #parse correct blake year/month
+  blake_var <- paste0("DUN",yr,"_",ifelse(mth>9,mth,paste0(0,mth)))
+  # make raster and assign values
+  blake_rast <- raster(grd_rast)
+  values(blake_rast) <- grd_match[[blake_var]]
+  # reclassify zeroes to NA to match vertical line model
+  blake_rast <- reclassify(blake_rast,rcl=c(0,0,NA),right=NA)
+  # grab correct owen year/month
+  owen_var <- paste0(month.name[[mth]],yr)
+  owen_rast <- trap_density_unweightedstack[[owen_var]]
+  # do the correlation
+  out <- cor(getValues(blake_rast),getValues(owen_rast),use="na.or.complete")
+  # print(paste(month.name[mth],yr,"done."))
+  out
+}
+
+cor_table %<>% mutate(correlation=map2_dbl(year,month,get_cor))
+
+cor_table %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%m-%d",tz="America/Los_Angeles")) %>% 
+  ggplot(aes(date,correlation))+
+  geom_point()+
+  geom_line()+
+  labs(x="Date",y="Correlation",title="Correlation between vertical line model\nand Feist et al.")
+
+head(arrange(cor_table,desc(correlation)))
+
+## NOTE: ANOTHER OPTION?
+#https://statnmap.com/2018-01-27-spatial-correlation-between-rasters/
+```
+
+
+Look at all values
+
+```{r}
+grd_xy <- rasterToPoints(grd_rast) %>% as_tibble() %>% set_names(c('x','y','GRID5KM_ID'))
+
+vlm_blake <- all_obs_xy_unweighted %>% left_join(grd_xy)
+
+vlm_blake <- vlm_blake %>%
+  mutate(year=str_sub(month,-4,-1) %>% as.numeric(),month=str_remove_all(month,"[:digit:]"),
+         month=match(month,month.name))
+
+blake_long <- blake %>%
+  pivot_longer(contains("DUN"),names_to="year_month",values_to = "pings") %>% 
+  mutate(year= str_sub(year_month,4,7) %>% as.numeric(),month=str_sub(year_month,9,10) %>% as.numeric()) %>% 
+  select(-year_month,-contains("BAND"))
+
+vlm_blake %<>%
+  left_join(blake_long)
+
+trap_density_comparison <- vlm_blake %>% 
+  ggplot(aes(pings,value/25))+
+  geom_point(size=0.25)+geom_smooth(method='lm',se=F)+
+  labs(x="Number of VMS pings",y="Trap Density per sq. km (VLM)")+
+  coord_cartesian(xlim=c(0,500),ylim=c(0,100))
+trap_density_comparison
+ggsave(here('plots','trap_density_vs_pings.png'),trap_density_comparison,w=8,h=6)
+
+# what about for just the highest-density areas/times
+vlm_blake_top5 <- vlm_blake %>% 
+  filter(value>=quantile(value,0.95))
+
+vlm_blake_top5 %>% 
+  ggplot(aes(pings,value))+
+  geom_point(size=0.25)+geom_smooth(method="lm",se=F)+
+  labs(x="Number of VMS pings",y="Density per sq. km (VLM)")
+  
+```
+
+
+# Aggregation at Larger Spatial Scales
+
+Now that we have traps on the 5km grid scale, we can aggregate over larger spatial scales (counties, marine regions).
+
+```{r}
+subregion_grd <- grd %>% dplyr::select(SUBREGION) %>% 
+  group_by(SUBREGION) %>% 
+  summarise()
+
+ggplot(subregion_grd)+
+  geom_sf(aes(fill=SUBREGION))
+# for each month, convert raster to points and then aggregate
+```
+
+```{r}
+all_obs_xy_unweighted %>%
+  mutate(date=parse_date(month,format="%B%Y")) %>% 
+  group_by(date) %>% 
+  summarise(mn=mean(value/25,na.rm=T)) %>% 
+  ggplot(aes(date,mn))+
+  geom_col(stat='identity',col='black',fill='black')+
+  labs(y="pots/sq km",x="month")+
+  theme(axis.text.x = element_text(angle=90))
+```
+
+Let's make a plot for average March number of traps by these blocks.
+
+IMPORTANT: The measurements in our `trap_density_stack` RasterStack are in traps per square kilometer. However, to sum the total number across aggregated blocks, we have to multiply these densities by 25 (1 trap per square kilometer equals 25 traps per 5kmx5km grid square). Then we can sum across 5x5 blocks.
+
+```{r}
+marchtraps <- subset(trap_density_unweighted_stack,which(grepl("March",names(trap_density_unweighted_stack)))) %>% 
+  mean(na.rm=T)
+
+plot(marchtraps)
+
+march_traps_points <- marchtraps %>% 
+  rasterToPoints(spatial = TRUE) %>% 
+  st_as_sf()
+
+march_traps_regions <- subregion_grd %>% 
+  st_join(march_traps_points) %>% 
+  group_by(SUBREGION) %>% 
+  summarise(tot_traps=sum(layer))
+
+ggplot(march_traps_regions)+
+  geom_sf(aes(fill=tot_traps))+
+  labs(fill="Total Traps")
+
+```
+
+What about California macro blocks?
+
+```{r}
+grd_macro_match <- grd %>% 
+  st_drop_geometry() %>% 
+  select(GRID5KM_ID,CA_OFFSHOR) %>% 
+  distinct() %>% 
+  rename(mb=CA_OFFSHOR)
+  
+ca_macro <- grd %>% dplyr::select(CA_OFFSHOR) %>% 
+  group_by(CA_OFFSHOR) %>% 
+  summarise() %>% 
+  filter(CA_OFFSHOR!=-999) %>% 
+  mutate(mb=as.character(CA_OFFSHOR))
+
+ggplot(ca_macro)+
+  geom_sf(aes(fill=mb))
+
+march_traps_mb <- ca_macro %>% 
+  st_join(march_traps_points) %>% 
+  group_by(mb) %>% 
+  summarise(tot_traps=sum(layer)) %>% 
+  filter(!is.na(tot_traps))
+
+bbox_ca=st_bbox(march_traps_mb)
+
+march_total_traps_plot <-ggplot(march_traps_mb)+
+  geom_sf(aes(fill=tot_traps))+
+  geom_sf_label(aes(label=round(tot_traps)))+
+  geom_sf(data=coaststates,fill='gray50')+
+  scale_fill_viridis(breaks=seq(0,30000,by=10000),labels=seq(0,30000,by=10000),limits=c(0,30000))+
+  coord_sf(xlim=c(bbox_ca[1],bbox_ca[3]),ylim=c(bbox_ca[2],bbox_ca[4]))+
+  labs(fill="Total Traps",title="Average Total Traps by Macroblock\nMarch, all years",x="",y="")+
+  theme(legend.position = c(0.8,0.7),
+        legend.background = element_rect(fill='white'))
+
+march_total_traps_plot
+
+ggsave(filename=here::here('plots',"march_traps_CA_macroblocks.png"),march_total_traps_plot,h=6,w=6)
+```
+
+All years/months traps
+
+```{r}
+all_obs_sf <- vlm_blake %>% st_as_sf(coords=c('x','y'),crs=crs(grd))
+
+all_traps_mb <- ca_macro %>% 
+  st_join(all_obs_sf) %>% 
+  group_by(year,month,mb) %>% 
+  summarise(tot_traps=sum(value,na.rm=T),tot_pings=sum(pings,na.rm=T))
+
+all_traps_mb %<>%
+  mutate(day=1,date=paste(year,month,day,sep="-"),date=ymd(date))
+# time series of trap density
+mb1038_ts_traps<-all_traps_mb %>% 
+  ungroup() %>% 
+  filter(mb=="1038") %>% 
+  st_as_sf() %>% st_drop_geometry() %>% 
+  complete(mb,year,month=1:12,fill=list(tot_traps=NA,tot_pings=NA)) %>% 
+  mutate(tot_traps=ifelse(month %in% c(7:10),NA,tot_traps)) %>%
+  filter(year>=2013) %>% 
+  ggplot(aes(date,tot_traps/1000))+
+  geom_point()+geom_path()+
+  scale_x_date(date_breaks = "1 year")+
+  scale_y_continuous(limits=c(0,80),breaks=seq(0,80,by=20))+
+  labs(x="Date",y="Thousands of Traps\nHalf Moon Bay to Point Arena")
+mb1038_ts_traps
+ggsave(here('plots','macro_block_1038_timeseries.png'),mb1038_ts_traps,w=8,h=3)
+
+# time series of pings
+# mb1038_ts_pings <- all_traps_mb %>%
+#   ungroup() %>% 
+#   filter(mb=="1038") %>% 
+#   st_as_sf() %>% st_drop_geometry() %>% 
+#   complete(mb,year,month=1:12,fill=list(tot_traps=NA,tot_pings=NA)) %>% 
+#   mutate(tot_traps=ifelse(month %in% c(7:10),NA,tot_traps)) %>%
+#   ggplot(aes(date,tot_pings/1000))+
+#   geom_point()+geom_path()+
+#   labs(x="Date",y="Thousands of Pings\nHalf Moon Bay to Point Arena")
+# mb1038_ts_pings
+
+mb1038_2013_2014 <- vlm_blake %>%
+  ungroup() %>% 
+  mutate(day=1,date=paste(year,month,day,sep="-"),date=ymd(date)) %>% 
+  left_join(grd_macro_match) %>% 
+  mutate(keep=case_when(
+    month%in%c(11,12)&year==2013~TRUE,
+    month %in% c(1:4)&year==2014~TRUE,
+    TRUE ~ FALSE)) %>% 
+  filter(keep,mb=='1038') %>% 
+  mutate(monthname=month.name[month]) %>% 
+  mutate(monthname=factor(monthname,levels=c("November","December","January","February","March","April")))
+
+bbox_mb1038 <- mb1038_2013_2014 %>% st_as_sf(coords=c('x','y')) %>% st_bbox()
+bbox_mb1038 <-bbox_mb1038+30000*c(-1,0,1,0)
+
+mb1038_2013_2014_plot <- mb1038_2013_2014 %>% 
+  ggplot()+
+  geom_tile(aes(x,y,fill=value/25),na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col='black',fill='gray50',size=0.25)+
+  scale_fill_viridis(na.value=NA,option="C",name="Traps per\nsq. km",breaks=seq(0,80,by=20),limits=c(0,80))+
+  coord_sf(xlim=c(bbox_mb1038[1],bbox_mb1038[3]),ylim=c(bbox_mb1038[2],bbox_mb1038[4]),datum=NA)+
+  labs(x='',y='',fill='Traps per\nsq. km',title='Trap Density, 2013-14 Season')+
+  facet_wrap(~monthname)+
+  theme(axis.text.x.bottom = element_text(angle=45),
+        title=element_text(size=14),
+        legend.title = element_text(size=10),
+        panel.background = element_rect(fill='lightblue'))
+mb1038_2013_2014_plot
+ggsave(here('plots','trap_density_mb1038.png'),mb1038_2013_2014_plot,w=10,h=6)
+```
+
+Focal spatial correlation
+
+```{r}
+# Focal (moving-window) spatial correlation with rasters, for MB 1038
+mb1038_r <- grd %>% filter(CA_OFFSHOR==1038) %>% summarise() %>% fasterize(grd_rast)
+traps_dec2014 <- trap_density_unweighted_stack[["December2014"]]*mb1038_r %>% trim() %>% calc(fun=function(x)x/25)
+
+# make raster and assign values
+pings_dec2014 <- raster(grd_rast)
+values(pings_dec2014) <- grd_match[["DUN2014_12"]]
+# reclassify zeroes to NA to match vertical line model
+pings_dec2014 <- reclassify(pings_dec2014,rcl=c(0,0,NA),right=NA)
+pings_dec2014 <- pings_dec2014*mb1038_r %>% trim()
+plot(traps_dec2014)
+plot(pings_dec2014)
+traps_pings_s <- stack(traps_dec2014,pings_dec2014) %>% values()
+
+# do focal correlation in 3x3 window
+cellnum_r <- raster(traps_dec2014)
+values(cellnum_r) <- 1:ncell(traps_dec2014)
+
+focal_cor <- focal(
+  x = cellnum_r,
+  w = matrix(1, 3, 3),
+  fun = function(x, y = traps_pings_s){ # [MW]
+    cor(y[x, 1], y[x, 2], # [MW]
+        use = "pairwise.complete.obs")
+  }
+)
+corr_plot <-focal_cor %>% 
+  rasterToPoints() %>% as_tibble() %>% set_names(c('x','y','corr')) %>%
+  ggplot()+
+  geom_tile(aes(x,y,fill=corr),na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col='black',fill='gray50',size=0.25)+
+  scale_fill_gradient2(midpoint = 0,low="blue",high="red")+
+  coord_sf(xlim=c(bbox_mb1038[1]+50000,bbox_mb1038[3]),ylim=c(bbox_mb1038[2],bbox_mb1038[4]),datum=NA)+
+  labs(x="",y="",fill="Correlation")+
+  theme(panel.background = element_rect(fill='lightblue'))
+
+# 3 panel plot
+traps_dec2014_plot <-traps_dec2014 %>% 
+  rasterToPoints() %>% as_tibble() %>% set_names(c('x','y','density')) %>%
+  ggplot()+
+  geom_tile(aes(x,y,fill=density),na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col='black',fill='gray50',size=0.25)+
+  scale_fill_viridis(na.value=NA,option="C",name="Traps per\nsq. km",breaks=seq(0,80,by=20),limits=c(0,80))+
+  coord_sf(xlim=c(bbox_mb1038[1]+50000,bbox_mb1038[3]),ylim=c(bbox_mb1038[2],bbox_mb1038[4]),datum=NA)+
+  labs(x="",y="",title="Dec 2014 Trap Density\nUnweighted")+
+  theme(panel.background = element_rect(fill='lightblue'))
+# traps_dec2014_plot
+
+pings_dec2014_plot <-pings_dec2014 %>% 
+  rasterToPoints() %>% as_tibble() %>% set_names(c('x','y','pings')) %>%
+  ggplot()+
+  geom_tile(aes(x,y,fill=pings),na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col='black',fill='gray50',size=0.25)+
+  scale_fill_viridis(na.value=NA,option="C",name="Pings",limits=c(0,150),breaks=seq(0,150,by=50))+
+  coord_sf(xlim=c(bbox_mb1038[1]+50000,bbox_mb1038[3]),ylim=c(bbox_mb1038[2],bbox_mb1038[4]),datum=NA)+
+  labs(x="",y="",title="Dec 2014 VMS Pings")+
+  theme(panel.background = element_rect(fill='lightblue'))
+# pings_dec2014_plot
+library(cowplot)
+pings_traps_comp <- plot_grid(pings_dec2014_plot,traps_dec2014_plot,corr_plot,nrow=1)
+ggsave(here('plots','pings_traps_comparison.png'),pings_traps_comp,w=10,h=5)
+```
+
+# Depth Distribution of Pots
+
+```{r}
+trap_depths <- simulated_traps %>% 
+  mutate(depths=purrr::map(traps,pluck('depth'))) %>% 
+  select(Rec_ID,depths) %>% 
+  unnest(cols=c(depths)) %>% 
+  left_join(fishtix_matched_all %>% select(Rec_ID,drvid,year,month))
+
+trap_depth_p <- trap_depths %>% 
+  sample_n(1e6) %>% 
+  ggplot(aes(depths))+
+  geom_density(fill='darkred',alpha=0.8)+
+  labs(x="Depth (m)",y="Kernel Density")
+trap_depth_p
+```
+
+# Compare Weighted and Unweighted Maps
+
+Let's compare the different ways we've calculated vertical lines- relative indices vs. total traps/trap density and weighted (by relative VMS representation) or unweighted
+
+```{r}
+traps_weighted_dec2014 <- trap_density_weighted_stack[["December2014"]]*mb1038_r %>% calc(fun=function(x)x/25)
+traps_weighted_dec2014_plot <-traps_weighted_dec2014 %>% 
+  rasterToPoints() %>% as_tibble() %>% set_names(c('x','y','density')) %>%
+  ggplot()+
+  geom_tile(aes(x,y,fill=density),na.rm=T,alpha=0.8)+
+  geom_sf(data=coaststates,col='black',fill='gray50',size=0.25)+
+  scale_fill_viridis(na.value=NA,option="C",name="Traps per\nsq. km",breaks=seq(0,80,by=20),limits=c(0,80))+
+  coord_sf(xlim=c(bbox_mb1038[1]+50000,bbox_mb1038[3]),ylim=c(bbox_mb1038[2],bbox_mb1038[4]),datum=NA)+
+  labs(x="",y="",title="Dec 2014 Trap Density\nVMS-weighted")+
+  theme(panel.background = element_rect(fill='lightblue'))
+pings_weights_comp <- plot_grid(pings_dec2014_plot,traps_dec2014_plot,traps_weighted_dec2014_plot,nrow=1)
+ggsave(here('plots','pings_weights_comparison.png'),pings_weights_comp,w=10,h=5)
+
+```
+
