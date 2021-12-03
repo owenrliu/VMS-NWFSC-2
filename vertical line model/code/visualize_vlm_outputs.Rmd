@@ -15,6 +15,9 @@ library(sf)
 library(rnaturalearth)
 library(fasterize)
 library(here)
+library(ggsci)
+library(viridis)
+library(stars)
 options(dplyr.summarise.inform=FALSE)
 ```
 
@@ -28,7 +31,7 @@ plot_theme <-   theme_minimal()+
   theme(text=element_text(family="sans",size=12,color="black"),
         legend.text = element_text(size=14),
         axis.title=element_text(family="sans",size=14,color="black"),
-        axis.text=element_text(family="sans",size=8,color="black"),
+        axis.text=element_text(family="sans",size=12,color="black"),
         panel.grid.major = element_line(color="gray50",linetype=3))
 theme_set(plot_theme)
 ```
@@ -118,8 +121,10 @@ Coastline (just for plotting)
 # a coastline, for plotting
 # coastline for plotting
 coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
-  filter(name %in% c('California','Oregon','Washington','Nevada'))
+  filter(name %in% c('California','Oregon','Washington','Nevada')) %>% 
+  st_transform(st_crs(grd))
 coastline <- ne_coastline(scale='medium',returnclass = 'sf') %>% 
+  st_transform(st_crs(grd)) %>% 
   st_crop(st_bbox(coaststates))
 ```
 
@@ -148,72 +153,93 @@ tier_key %<>% mutate(month=month.name[month]) %>% dplyr::select(-crabyr)
 ```
 
 
-# Trap Depth Distributions
-
-Look at the depth distributions of simulated traps. For these first plots, we use the non-rasterized version of the simulated traps.
-
-Pull out the mean trap depth for all individual fish tickets/trips
+Whale entanglements
 
 ```{r}
-trap_depths <- traplocs %>% 
-  mutate(coast_region=case_when(
-    port_group_code %in% cenCA_ports ~ "Central CA",
-    port_group_code %in% norCA_ports ~ "Northern CA",
-    agency_code=="O" ~ "Oregon",
-    agency_code=="W" ~ "Washington"
-  )) %>% 
-  mutate(mean_trap_depth=purrr::map_dbl(traps,function(df) mean(df$depth,na.rm=T))) %>% 
-  dplyr::select(-traps) %>% 
-  filter(month !="October") %>% 
-  # add an identifier for early, mid, or late season
-  mutate(season_segment=case_when(
-    month %in% c('November','December','January') ~ 'early',
-    month %in% c('February','March','April') ~ 'mid',
-    month %in% c('May','June','July','August','September') ~ 'late'
-  )) %>% 
-  mutate(season_segment=factor(season_segment,levels=c('early','mid','late')))
+entanglements <- read_csv(here('vertical line model','entanglements','all_entanglements_102021.csv'))
 ```
 
-Depth distributions by state and season segment
+# Fig 1 Landings Time Series
 
-```{r,fig.width=8,fig.height=8}
-trap_depth_dist <- trap_depths %>% 
-  ggplot(aes(mean_trap_depth,fill=season_segment,col=season_segment))+
-  geom_density(alpha=0.5)+
-  labs(x="Mean Trap Depth per Trip (m)",y="Kernel Density",fill="Season Portion",col="Season Portion")+
-  facet_wrap(~coast_region,nrow=4,scales = 'free_y')+
-  geom_vline(xintercept=-40*1.829,col='red',linetype=2)+
-  theme(panel.grid.major=element_blank(),
-        panel.grid.minor=element_blank())
-trap_depth_dist
+Figure 1 could be a timeseries of crab landings by state.
+
+```{r}
+# approx timing of whale presence in the Cal Current
+rects <- tibble(xmin=as_date("2008-04-01")+years(1:11),
+                xmax=as_date("2008-11-01")+years(1:11),
+                ymin=-Inf,ymax=Inf)
 ```
 
-Now, a timeseries of mean trap depth per trip across months
+```{r,fig.height=4,fig.width=8}
+landings_by_state <- fishtix_matched_all %>% 
+  group_by(year,month,agency_code) %>% 
+  summarise(tot_land =sum(DCRB_lbs)/2204.62)
 
-```{r,fig.width=8,fig.height=8}
-trap_depths_months <- trap_depths %>% 
-  group_by(year,month,coast_region) %>% 
-  summarise(mean_depth=mean(mean_trap_depth,na.rm=T),se_depth=sd(mean_trap_depth,na.rm=T)/sqrt(n()))
+landings_by_state_plot <- landings_by_state %>% 
+  mutate(day=1,month=match(month,month.name)) %>% 
+  unite(date,year,month,day,sep="-") %>% 
+  mutate(date=as_date(date)) %>% 
+  ggplot()+
+  geom_line(aes(date,tot_land,color=agency_code),size=1)+
+  geom_rect(data=rects,aes(xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax),fill="red",alpha=0.3)+
+  labs(y="Monthly Landings (MT)",x="Date",color="State")+
+  scale_color_uchicago()+
+  scale_x_date(breaks="4 months",date_labels ="%b-%y",expand=c(0,0))+
+  theme(axis.text.x=element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
 
-trap_depths_ts <- trap_depths_months %>% 
-  mutate(day=1) %>% 
-  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
-  mutate(date=as_date(date,format="%Y-%B-%d")) %>% 
-  mutate(depthpos=-mean_depth)
+landings_by_state_plot
+```
+# Fig 2 Simulated Pots Timeseries
 
-trap_depths_ts_plot <- trap_depths_ts %>% 
-  ggplot(aes(date,depthpos,ymax=depthpos+se_depth,ymin=depthpos-se_depth))+
-  geom_line()+
-  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
-  geom_ribbon(fill='red',alpha=0.7)+
-  labs(x="Date",y="Mean Trap Depth (m)")+
-  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
-        panel.grid.minor = element_blank())+
-  facet_wrap(~coast_region,nrow=4)
-trap_depths_ts_plot
+A. example vessel track with pot.
+B. timeseries of total trap counts.
+C. confirmed entanglements.
+
+## Example Vessel Track
+
+```{r}
+create_linesegs <- function(sf_df){
+  linesegs <- sf_df %>% 
+    mutate(pt=row_number()) %>% 
+    # create start and end points for each segment by duplicating rows (so that, e.g., the first segment will connect point 1 to 2, the second segment will connect point 2 to 3, etc.)
+    slice(1,rep(2:(n()-1),each=2),n()) %>% 
+    # line segment identifier, such that the segment for each VMS point is composed of its own point and the next point
+    mutate(seg=lag(pt,1)) %>% replace_na(list(seg=1)) %>% 
+    # build the lines
+    group_by(seg) %>% 
+    summarise() %>% 
+    filter(st_geometry_type(.) == "MULTIPOINT") %>% 
+    st_cast("LINESTRING") %>% 
+    ungroup()
+  return(linesegs)
+}
 ```
 
-# Timeseries of Total Trap Counts
+```{r}
+set.seed(2003)
+sample_trip <- simtraps %>%
+  ungroup() %>% 
+  mutate(ntraps=purrr::map(traps,nrow)) %>% 
+  filter(ntraps>=400) %>%  
+  slice_sample(n=1)
+sample_lines <- create_linesegs(sample_trip %>% pluck("data",1)) %>% st_transform(st_crs(grd))
+sample_traps <- sample_trip %>% pluck("traps",1) %>% st_set_crs(4326) %>% st_transform(st_crs(grd))
+bbox <- st_bbox(sample_traps)
+
+sample_trip_plot <- ggplot()+
+  geom_sf(data=sample_traps,size=0.75,color='blue')+
+  geom_sf(data=sample_lines)+
+  geom_sf(data=coaststates)+
+  coord_sf(datum=NA)+
+  lims(x=c(bbox[1],bbox[3]),y=c(bbox[2],bbox[4]))
+
+sample_trip_plot
+```
+
+
+## Total Trap Counts
 
 For total trap counts, we need to use the rasterized version of the VLM, because our corrections (weightings etc.) matter for accurate counts of total traps.
 
@@ -305,10 +331,11 @@ trap_counts_state_month_expanded <- all_obs_xy_expanded %>%
 trap_counts_nonexpanded_ts_plot <- trap_counts_state_month_nonexpanded %>% 
   mutate(day=1) %>% 
   unite(date,yr,mth,day,sep="-",remove = FALSE) %>% 
-  mutate(date=as_date(date,format="%Y-%m-%d")) %>% 
-  ggplot(aes(date,tottraps/1000))+
-  geom_line()+
-  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  mutate(date=as_date(date,format="%Y-%m-%d")) %>%  
+  ggplot()+
+  geom_line(aes(date,tottraps/1000))+
+  geom_rect(data=rects,aes(xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax),fill="red",alpha=0.3)+
+  scale_x_date(date_breaks= "4 months",date_labels="%b-%y",expand=c(0,0))+
   labs(x="Date",y="Thousand Traps (VMS Vessels Only)")+
   theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
         panel.grid.minor = element_blank())+
@@ -319,15 +346,33 @@ trap_counts_expanded_ts_plot <- trap_counts_state_month_expanded %>%
   mutate(day=1) %>% 
   unite(date,yr,mth,day,sep="-",remove = FALSE) %>% 
   mutate(date=as_date(date,format="%Y-%m-%d")) %>%  
-  ggplot(aes(date,tottraps/1000))+
-  geom_line()+
-  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  ggplot()+
+  geom_line(aes(date,tottraps/1000))+
+  geom_rect(data=rects,aes(xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax),fill="red",alpha=0.3)+
+  scale_x_date(date_breaks= "4 months",date_labels="%b-%y",expand=c(0,0))+
   labs(x="Date",y="Thousand Traps (Whole Fleet Estimate)")+
   theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
         panel.grid.minor = element_blank())+
   facet_wrap(~STATE,nrow=3,scales='free_y')
 trap_counts_expanded_ts_plot
 ```
+```{r}
+trap_counts_3states_expanded <- trap_counts_state_month_expanded %>% 
+  mutate(day=1) %>% 
+  unite(date,yr,mth,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%m-%d")) %>%  
+  ggplot()+
+  geom_line(aes(date,tottraps/1000,color=STATE),size=1)+
+  geom_rect(data=rects,aes(xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax),fill="red",alpha=0.3)+
+  labs(y="Simulated Traps (Thousands)",x="Date",color="State")+
+  scale_color_uchicago()+
+  scale_x_date(breaks="4 months",date_labels ="%b-%y",expand=c(0,0))+
+  theme(axis.text.x=element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+trap_counts_3states_expanded
+```
+
 
 Zoom in on 2014-2017
 
@@ -361,51 +406,57 @@ trap_counts_expanded_ts_zoom_plot <- trap_counts_state_month_expanded %>%
 trap_counts_expanded_ts_zoom_plot
 ```
 
-```{r,fig.width=8,fig.height=8}
-# trap_density_dist_nonexpanded <- all_obs_xy_no_expansion %>%  
-#   # add an identifier for early, mid, or late season
-#   mutate(season_segment=case_when(
-#     month(date) %in% c(11,12,1) ~ 'early',
-#     month(date) %in% c(2,3,4) ~ 'mid',
-#     month(date) %in% c(5,6,7,8,9) ~ 'late'
-#   )) %>% 
-#   mutate(statename=case_when(
-#     STATE=="WA" ~ "Washington",
-#     STATE=="CA" ~ "California",
-#     STATE=="OR" ~ "Oregon"
-#   )) %>% 
-#   filter(month(date)!=10,!is.na(count),count>0,!is.na(statename)) %>% 
-#   ggplot(aes(count/25,fill=season_segment,col=season_segment))+
-#   geom_density(alpha=0.5,col=NA)+
-#   scale_x_continuous(limits=c(0,10))+
-#   labs(x="Density (Traps per sq. Km)",y="Kernel Density",title="Distribution of Positive Trap Densities\nall years and weeks (non-expanded)")+
-#   facet_wrap(~statename)
-# 
-# trap_density_dist_expanded <- all_obs_xy_expanded %>%  
-#   # add an identifier for early, mid, or late season
-#   mutate(season_segment=case_when(
-#     month(date) %in% c(11,12,1) ~ 'early',
-#     month(date) %in% c(2,3,4) ~ 'mid',
-#     month(date) %in% c(5,6,7,8,9) ~ 'late'
-#   )) %>% 
-#   mutate(statename=case_when(
-#     STATE=="WA" ~ "Washington",
-#     STATE=="CA" ~ "California",
-#     STATE=="OR" ~ "Oregon"
-#   )) %>% 
-#   filter(month(date)!=10,!is.na(count),count>0,!is.na(statename)) %>% 
-#   ggplot(aes(count/25,fill=season_segment,col=season_segment))+
-#   geom_density(fill='red',alpha=0.98,col=NA)+
-#   scale_x_continuous(limits=c(0,150))+
-#   labs(x="Density (Traps per sq. Km)",y="Kernel Density",title="Distribution of Positive Trap Densities\nall years and weeks (expanded)")+
-#   facet_wrap(~statename)
-# trap_density_dist_nonexpanded
-# trap_density_dist_expanded
+## Confirmed Entanglements Timeseries
+
+```{r}
+# See Jameal's workup of this for comparison
+
+entanglements_ts <- entanglements %>% 
+  mutate(spp=tolower(`Common Name`)) %>% 
+  filter(grepl("Dungeness",Entanglement_Fishery),
+         Year>2007,Year<=max(traplocs$year),
+         spp %in% c("humpback whale","blue whale"),
+         State %in% c("WA","CA","OR")) %>% 
+  dplyr::select(Year,Month,spp,State) %>% 
+  add_row(Year=2009,Month=1,spp="humpback whale") %>% 
+  filter(Year>2008) %>% 
+  # organize by quarter of year
+  mutate(day=1) %>% 
+  unite(date,Year,Month,day,sep="-",remove=F) %>% 
+  mutate(date=as_date(date,format="%Y-%m-%d")) %>% 
+  mutate(qtr=quarter(date)) %>% 
+  # summarize
+  group_by(spp,Year,qtr) %>% 
+  summarise(ent=n()) %>% 
+  ungroup() %>% 
+  complete(Year,spp,qtr,fill=list(ent=0)) %>% 
+  unite(year_qtr,Year,qtr,sep="-")
+  # re-do dates
+  # mutate(month=c('January','April','July','October')[qtr]) %>% 
+  # mutate(day=1) %>% 
+  # unite(date,Year,month,day,sep="-",remove=F) %>% 
+  # mutate(date=as_date(date,format="%Y-%B-%d"))
+
+entanglements_ts_plot <- entanglements_ts %>% 
+  ggplot(aes(year_qtr,ent,fill=spp))+
+  geom_bar(stat='identity',position="dodge")+
+  # geom_point()+
+  # geom_line()+
+  labs(x="Quarter",y="Confirmed Entanglements",fill="Species")+
+  # scale_x_date(date_breaks="6 months",date_labels = "%b-%y")+
+  scale_y_continuous(breaks=seq(0,10,by=2))+
+  scale_fill_aaas()+
+  theme(axis.text.x=element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = c(0.2,0.8))
+entanglements_ts_plot
 ```
+# Fig 3 Traps Within BIAs
 
-# Within BIAs
+## Trap Numbers
 
-Trap Density within Biologically Important Areas for humpback whales
+Trap numbers within Biologically Important Areas for humpback whales
 
 ```{r}
 trap_counts_BIAs_month_nonexpanded <- all_obs_xy_no_expansion %>% 
@@ -471,25 +522,70 @@ trap_counts_expanded_BIAs_ts_plot <- trap_counts_BIAs_month_expanded %>%
         panel.grid.minor = element_blank())
 trap_counts_expanded_BIAs_ts_plot
 
-# STACKED BARS
-# trap_counts_expanded_BIAs_ts_plot <- trap_counts_BIAs_month_expanded %>% 
-#   ungroup() %>% 
-#   complete(yr,mth,is_BIA,fill=list(tottraps=NA)) %>% 
-#   mutate(day=1) %>% 
-#   unite(date,yr,mth,day,sep="-",remove = FALSE) %>% 
-#   mutate(date=as_date(date,format="%Y-%m-%d")) %>% 
-#   mutate(BIA_label=ifelse(is_BIA,"Inside","Outside")) %>% 
-#   ggplot(aes(date,tottraps/1000,fill=BIA_label,col=BIA_label))+
-#   geom_bar(stat='identity',position='stack')+
-#   # geom_line()+
-#   scale_fill_locuszoom(name="")+
-#   scale_color_locuszoom(name="")+
-#   scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
-#   labs(x="Date",y="Thousand Traps (Whole Fleet Estimate)",title="VMS Traps inside/outside BIAs")+
-#   theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
-#         panel.grid.minor = element_blank())
-# trap_counts_expanded_BIAs_ts_plot
+# STACKED BARS with quarters (to match entanglements)
+trap_counts_expanded_BIAs_ts_barplot <- trap_counts_BIAs_month_expanded %>%
+  ungroup() %>%
+  complete(yr,mth,is_BIA,fill=list(tottraps=NA)) %>%
+  mutate(day=1) %>%
+  filter(!is.na(STATE)) %>% 
+  unite(date,yr,mth,day,sep="-",remove = FALSE) %>%
+  mutate(date=as_date(date,format="%Y-%m-%d")) %>%
+  mutate(qtr=quarter(date)) %>% 
+  group_by(yr,qtr,is_BIA,STATE) %>% 
+  # Mean traps over the quarter
+  summarise(tottraps=mean(tottraps,na.rm=T)) %>% 
+  ungroup() %>% 
+  unite(year_qtr,yr,qtr,sep="-") %>% 
+  mutate(BIA_label=ifelse(is_BIA,"Inside","Outside")) %>%
+  ggplot(aes(year_qtr,tottraps/1000,fill=BIA_label,col=BIA_label))+
+  geom_bar(stat='identity',position='stack')+
+  # geom_line()+
+  scale_fill_locuszoom(name="")+
+  scale_color_locuszoom(name="")+
+  facet_wrap(~STATE,nrow=3,scales="free_y")+
+  # scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  labs(x="Date",y="Thousand Traps (Whole Fleet Estimate)",title="VMS Traps inside/outside BIAs")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),)
+trap_counts_expanded_BIAs_ts_barplot
 ```
+
+What about a monthly mean/anomaly time series for California?
+
+```{r}
+# have to expand with zeroes
+trap_counts_expanded_BIAs_anomaly <- trap_counts_BIAs_month_expanded %>% 
+  filter(STATE=='California',is_BIA) %>% 
+  complete(yr,mth=full_seq(1:12,1),STATE,fill=list(tottraps=0)) %>% 
+  group_by(mth) %>% 
+  mutate(mean_traps=mean(tottraps)) %>% 
+  ungroup() %>% 
+  mutate(anom=tottraps-mean_traps)
+
+# mean by month
+trap_counts_CA_BIAS_mean <- trap_counts_expanded_BIAs_anomaly %>% 
+  ggplot(aes(mth,mean_traps/1000))+
+  geom_line(size=1.5)+
+  scale_x_continuous(limits=c(1,12),breaks=seq(1,12,by=1))+
+  labs(x="Month",y="Mean Traps in CA BIAs (x1000)")
+trap_counts_CA_BIAS_mean
+
+# monthly anomalies
+trap_counts_CA_BIAs_anom_ts <- trap_counts_expanded_BIAs_anomaly %>% 
+  mutate(day=1) %>% 
+  unite(date,yr,mth,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%m-%d")) %>% 
+  ggplot(aes(date,anom/1000))+
+  geom_line()+
+  geom_hline(yintercept=0,linetype=2)+
+  scale_x_date(breaks="4 months",date_labels ="%b-%y",expand=c(0,0))+
+  labs(x="Month",y="BIA Trap Count Anomaly (1000s traps)")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+trap_counts_CA_BIAs_anom_ts
+```
+
 
 Zoom
 
@@ -535,6 +631,29 @@ trap_counts_expanded_BIAs_ts_zoom_plot <- trap_counts_BIAs_month_expanded %>%
   theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
         panel.grid.minor = element_blank())
 trap_counts_expanded_BIAs_ts_zoom_plot
+
+## bar plot?
+trap_counts_expanded_BIAs_ts_zoom_barplot <- trap_counts_BIAs_month_expanded %>% 
+  ungroup() %>% 
+  filter(yr %in% 2014:2017) %>% 
+  complete(yr,mth,is_BIA,fill=list(tottraps=NA)) %>% 
+  mutate(day=1) %>% 
+  unite(date,yr,mth,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%m-%d")) %>% 
+  mutate(BIA_label=ifelse(is_BIA,"Inside","Outside")) %>% 
+  filter(!is.na(STATE)) %>% 
+  ggplot(aes(date,tottraps/1000,fill=BIA_label))+
+  geom_bar(stat='identity',position='stack')+
+  # geom_line()+
+  # geom_point()+
+  # scale_fill_locuszoom(name="")+
+  scale_fill_locuszoom(name="")+
+  scale_x_date(date_breaks= "4 months",date_labels="%b-%Y",expand=c(0,0))+
+  facet_wrap(~STATE,nrow=3,scales="free_y")+
+  labs(x="Date",y="Thousand Traps (Whole Fleet Estimate)",title="VMS Traps inside/outside BIAs")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())
+trap_counts_expanded_BIAs_ts_zoom_barplot
 ```
 
 Proportion of traps inside/outside BIAs for expanded data.
@@ -556,11 +675,11 @@ prop_traps_BIAs <- trap_counts_BIAs_month_expanded %>%
   mutate(propinside=tottraps[is_BIA]/sum(tottraps)) %>% 
   ungroup() %>% 
   ggplot()+
-  geom_rect(data=rects,aes(xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax),fill="red",alpha=0.5)+
+  geom_rect(data=rects,aes(xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax),fill="red",alpha=0.3)+
   # geom_bar(stat='identity',position='stack')+
   geom_line(aes(date,propinside))+
   geom_point(aes(date,propinside))+
-  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  scale_x_date(date_breaks= "4 months",date_labels="%b-%y",expand=c(0,0))+
   labs(x="Date",y="Proportion of Traps",title="VMS Traps Inside BIAs")+
   facet_wrap(~STATE,nrow=3) + 
   theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
@@ -597,6 +716,244 @@ traps_inside_BIAs_seasons %>%
   theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
         panel.grid.minor = element_blank())
 ```
+
+## Maps
+
+A couple of representative maps for the large BIA around San Fran Bay.
+
+```{r,fig.height=6,fig.width=10}
+years_periods %<>% mutate(lyr=row_number()) %>% 
+  mutate(day=1) %>% 
+  unite(date,yr,per,day,sep="-",remove=F) %>% 
+  mutate(date=as_date(date,format="%Y-%U-%u")) %>% 
+  mutate(mth=month(date)) %>%
+  mutate(mth=coalesce(mth,1)) %>% 
+  dplyr::select(-day)
+bia_fara <- bia_mn %>% filter(BIA_name=="Gulf of the Farallones - Monterey Bay")
+bbox_bias <- st_bbox(bia_fara)
+
+# VLM estimates
+traps_expanded_stars <- traps_expanded %>% st_as_stars() %>% setNames('traps')
+
+traps_fara <- traps_expanded_stars %>% st_crop(bbox_bias)
+  # filter for the first 3 months of 2016 (right before huge entanglement spike)
+spr2016 <- years_periods %>% filter(yr==2016,mth %in% c(3,4,5,6)) %>% pull(lyr)
+traps_fara_2016 <- traps_fara["traps",,,spr2016] %>% 
+  # and get a mean
+  st_apply(1:2,function(x)mean(x,na.rm=T))
+
+spr <- years_periods %>% filter(mth %in% c(3,4,5,6)) %>% pull(lyr)
+traps_fara_allyr <- traps_fara["traps",,,spr] %>% 
+  # and get a mean
+  st_apply(1:2,function(x)mean(x,na.rm=T))
+
+fara_2016 <- ggplot()+
+  geom_stars(data=traps_fara_2016,na.rm=T)+
+  geom_sf(data=bia_mn,col="black",fill=NA,size=1.5)+
+  geom_sf(data=coaststates)+
+  scale_fill_viridis(na.value=NA,limits=c(0,200),name="# traps")+
+  coord_sf(datum=NA)+
+  labs(x="",y="",title="March to June 2016")+
+  lims(x=c(bbox_bias[1],bbox_bias[3]),y=c(bbox_bias[2],bbox_bias[4]))+
+  theme(legend.position=c(0.2,0.2))
+
+fara_mean <- ggplot()+
+  geom_stars(data=traps_fara_allyr,na.rm=T)+
+  geom_sf(data=bia_mn,col="black",fill=NA,size=1.5)+
+  geom_sf(data=coaststates)+
+  scale_fill_viridis(na.value=NA,limits=c(0,200),name="# traps")+
+  coord_sf(datum=NA)+
+  labs(x="",y="",title="March to June Mean")+
+  lims(x=c(bbox_bias[1],bbox_bias[3]),y=c(bbox_bias[2],bbox_bias[4]))+
+  theme(legend.position=c(0.2,0.2))
+
+fara_diff <- (traps_fara_2016-traps_fara_allyr)/traps_fara_allyr*100
+fara_diff_plot <- ggplot()+
+  geom_stars(data=fara_diff,na.rm=T)+
+  geom_sf(data=bia_mn,col="black",fill=NA,size=1.5)+
+  geom_sf(data=coaststates)+
+  scale_fill_viridis(option="C",breaks=seq(-50,150,by=50), na.value=NA,name="Percent\nDifference")+
+  coord_sf(datum=NA)+
+  labs(x="",y="",title="2016 Relative to Mean")+
+  lims(x=c(bbox_bias[1],bbox_bias[3]),y=c(bbox_bias[2],bbox_bias[4]))+
+  theme(legend.position=c(0.2,0.2))
+
+# fara_2016
+# fara_mean
+# fara_diff_plot
+
+library(cowplot)
+plot_grid(fara_mean,fara_2016,fara_diff_plot,nrow=1,labels = 'auto')
+```
+
+## Density vs. Entanglements
+
+Doesn't look super promising
+
+```{r}
+trap_density_CA_BIAs_month_expanded <- all_obs_xy_expanded %>% 
+  filter(!is.na(GRID5KM_ID),STATE=="California",is_BIA) %>% 
+  # mean traps by cell by month
+  mutate(mth=month(date),yr=year(date)) %>% 
+  group_by(GRID5KM_ID,yr,mth) %>% 
+  summarise(trapdens=mean(traps_sqkm,na.rm=T)) %>% 
+  ungroup() %>% 
+  group_by(yr,mth) %>% 
+  summarise(trapdens=mean(trapdens,na.rm=T)) %>% 
+  ungroup() %>% 
+  arrange(yr,mth)
+
+# organize entanglement data to add this to the trap density data
+entanglements_CA<-entanglements %>% 
+  mutate(spp=tolower(`Common Name`)) %>% 
+  filter(grepl("Dungeness",Entanglement_Fishery),
+         Year<=max(traplocs$year),
+         spp %in% c("humpback whale","blue whale"),
+         State =="CA") %>% 
+  dplyr::select(Year,Month,spp) %>% 
+  # organize by quarter of year
+  mutate(day=1) %>% 
+  unite(date,Year,Month,day,sep="-",remove=F) %>% 
+  mutate(date=as_date(date,format="%Y-%m-%d")) %>% 
+  group_by(Year,Month) %>% 
+  summarise(ent=n()) %>% 
+  ungroup() %>% 
+  complete(Month=full_seq(1:12,1),Year=full_seq(2008:2019,1),fill=list(ent=0))
+
+# join
+trapdens_CA_BIAs_entanglements <- trap_density_CA_BIAs_month_expanded %>% 
+  left_join(entanglements_CA,by=c("yr"="Year","mth"="Month")) %>% 
+  # leads
+  mutate(lead1=lead(ent,1,default=0),lead2=lead(ent,2,default=0),lead3=lead(ent,3,default=0),lead4=lead(ent,4,default=0)) %>% 
+  # entanglements in the last 4 months in CA
+  mutate(ent3mon = lead1+lead2+lead3,
+         ent4mon = lead1+lead2+lead3+lead4) %>% 
+  mutate(ent_bin3=ifelse(ent3mon>0,1,0),
+         ent_bin4=ifelse(ent4mon>0,1,0))
+
+# plot
+binomial_smooth <- function(...) {
+  geom_smooth(method = "glm", method.args = list(family = "binomial"), ...)
+}
+trapdens_CA_BIAs_entanglements %>% 
+  filter(mth %in% 1:7,yr %in% 2014:2018) %>% 
+  ggplot(aes(trapdens,ent_bin3))+
+  geom_point()+
+  binomial_smooth()+
+  scale_y_continuous(limits = c(0,1),breaks=c(0,1),labels=c(0,1))+
+  labs(title="Mean Trap Density in CA BIAs and Entanglements",x="Mean Trap Density (#/sq. km)",y="Confirmed Entanglement(s) in CA\nin the next 4 months")
+```
+
+
+# Fig 4 Trap Depth Distributions
+
+Look at the depth distributions of simulated traps. For these first plots, we use the non-rasterized version of the simulated traps.
+
+Pull out the mean trap depth for all individual fish tickets/trips
+
+```{r}
+trap_depths <- traplocs %>% 
+  mutate(coast_region=case_when(
+    port_group_code %in% cenCA_ports ~ "Central CA",
+    port_group_code %in% norCA_ports ~ "Northern CA",
+    agency_code=="O" ~ "Oregon",
+    agency_code=="W" ~ "Washington"
+  )) %>% 
+  mutate(mean_trap_depth=purrr::map_dbl(traps,function(df) mean(df$depth,na.rm=T))) %>% 
+  dplyr::select(-traps) %>% 
+  filter(month !="October") %>% 
+  # add an identifier for early, mid, or late season
+  mutate(season_segment=case_when(
+    month %in% c('November','December','January') ~ 'early',
+    month %in% c('February','March','April') ~ 'mid',
+    month %in% c('May','June','July','August','September') ~ 'late'
+  )) %>% 
+  mutate(season_segment=factor(season_segment,levels=c('early','mid','late')))
+```
+
+Depth distributions by state and season segment
+
+```{r,fig.width=8,fig.height=8}
+trap_depth_dist <- trap_depths %>% 
+  ggplot(aes(mean_trap_depth,fill=season_segment,col=season_segment))+
+  geom_density(alpha=0.5)+
+  labs(x="Mean Trap Depth per Trip (m)",y="Kernel Density",fill="Season Portion",col="Season Portion")+
+  facet_wrap(~coast_region,nrow=4,scales = 'free_y')+
+  geom_vline(xintercept=-40*1.829,col='red',linetype=2)+
+  theme(panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        axis.text.y=element_blank())
+trap_depth_dist
+```
+
+Now, a timeseries of mean trap depth per trip across months
+
+```{r,fig.width=8,fig.height=8}
+trap_depths_months <- trap_depths %>% 
+  group_by(year,month,coast_region) %>% 
+  summarise(mean_depth=mean(mean_trap_depth,na.rm=T),se_depth=sd(mean_trap_depth,na.rm=T)/sqrt(n()))
+
+trap_depths_ts <- trap_depths_months %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d")) %>% 
+  mutate(depthpos=-mean_depth)
+
+trap_depths_ts_plot <- trap_depths_ts %>% 
+  ggplot(aes(date,depthpos,ymax=depthpos+se_depth,ymin=depthpos-se_depth))+
+  geom_line()+
+  scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
+  geom_ribbon(fill='red',alpha=0.7)+
+  labs(x="Date",y="Mean Trap Depth (m)")+
+  theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
+        panel.grid.minor = element_blank())+
+  facet_wrap(~coast_region,nrow=4)
+trap_depths_ts_plot
+```
+
+
+```{r,fig.width=8,fig.height=8}
+# trap_density_dist_nonexpanded <- all_obs_xy_no_expansion %>%  
+#   # add an identifier for early, mid, or late season
+#   mutate(season_segment=case_when(
+#     month(date) %in% c(11,12,1) ~ 'early',
+#     month(date) %in% c(2,3,4) ~ 'mid',
+#     month(date) %in% c(5,6,7,8,9) ~ 'late'
+#   )) %>% 
+#   mutate(statename=case_when(
+#     STATE=="WA" ~ "Washington",
+#     STATE=="CA" ~ "California",
+#     STATE=="OR" ~ "Oregon"
+#   )) %>% 
+#   filter(month(date)!=10,!is.na(count),count>0,!is.na(statename)) %>% 
+#   ggplot(aes(count/25,fill=season_segment,col=season_segment))+
+#   geom_density(alpha=0.5,col=NA)+
+#   scale_x_continuous(limits=c(0,10))+
+#   labs(x="Density (Traps per sq. Km)",y="Kernel Density",title="Distribution of Positive Trap Densities\nall years and weeks (non-expanded)")+
+#   facet_wrap(~statename)
+# 
+# trap_density_dist_expanded <- all_obs_xy_expanded %>%  
+#   # add an identifier for early, mid, or late season
+#   mutate(season_segment=case_when(
+#     month(date) %in% c(11,12,1) ~ 'early',
+#     month(date) %in% c(2,3,4) ~ 'mid',
+#     month(date) %in% c(5,6,7,8,9) ~ 'late'
+#   )) %>% 
+#   mutate(statename=case_when(
+#     STATE=="WA" ~ "Washington",
+#     STATE=="CA" ~ "California",
+#     STATE=="OR" ~ "Oregon"
+#   )) %>% 
+#   filter(month(date)!=10,!is.na(count),count>0,!is.na(statename)) %>% 
+#   ggplot(aes(count/25,fill=season_segment,col=season_segment))+
+#   geom_density(fill='red',alpha=0.98,col=NA)+
+#   scale_x_continuous(limits=c(0,150))+
+#   labs(x="Density (Traps per sq. Km)",y="Kernel Density",title="Distribution of Positive Trap Densities\nall years and weeks (expanded)")+
+#   facet_wrap(~statename)
+# trap_density_dist_nonexpanded
+# trap_density_dist_expanded
+```
+
 
 # Simulated vs. Permitted Traps
 
@@ -669,15 +1026,69 @@ max_traps_season <- fishtix_matched_all %>%
   unite(date,year,month,day,sep="-",remove = FALSE) %>% 
   mutate(date=as_date(date,format="%Y-%B-%d"))
 
+# add the total, expanded, simualted traps from the VLM
+trap_counts_state_month_expanded %>% 
+  rename(year=yr,month=mth) %>% 
+  mutate(month=month.name[month]) %>% 
+  mutate(agency_code=case_when(
+    STATE=="California" ~ "C",
+    STATE=="Washington" ~ "W",
+    STATE=="Oregon" ~ "O"
+  )) %>% 
+  right_join(max_traps_season)->max_traps_season
+
 max_traps_season %>% 
-  ggplot(aes(date,max_potential_traps))+
+  ungroup() %>% 
+  pivot_longer(cols=c(tottraps,max_potential_traps),names_to="type",values_to="traps") %>% 
+  ggplot(aes(date,traps/1000,col=type))+
   geom_point()+
   geom_line()+
   facet_wrap(~agency_code,nrow=3)+
   scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
-  labs(x="Month",y="Total Potential Traps")+
+  labs(x="Month",y="Number of Traps (1000s)")+
   theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
         panel.grid.minor = element_blank())
 
+```
+The gap is larger for Washington. I'm not sure why this is. Maybe look at the weighting schemes?
+
+```{r}
+wts_ts <- traplocs %>% 
+  dplyr::select(Rec_ID,date,year,month,agency_code,FINAL_LENGTH,ntraps,ntraps_permitted,ntraps_wt,vms_representation_wt) %>% 
+  mutate(comb_wt=ntraps_wt*vms_representation_wt) %>% 
+  group_by(year,month,agency_code) %>% 
+  summarise(mean_ntraps_wt=mean(ntraps_wt,na.rm=T),
+            mean_vms_rep_wt=mean(vms_representation_wt,na.rm=T),
+            mean_comb_wt=mean(comb_wt,na.rm=T)) %>% 
+  ungroup() %>%  
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d"))
+
+wts_ts %>% 
+  ggplot(aes(date,mean_ntraps_wt,col=agency_code))+
+  geom_point()+
+  geom_line()+
+  labs(x="Month",y="Traps per week weighting factor")
+
+wts_ts %>% 
+  ggplot(aes(date,mean_vms_rep_wt,col=agency_code))+
+  geom_point()+
+  geom_line()+
+  scale_y_log10()+
+  labs(x="Month",y="VMS representation weighting factor")
+wts_ts %>% 
+  ggplot(aes(date,mean_comb_wt,col=agency_code))+
+  geom_point()+
+  geom_line()+
+  labs(x="Month",y="Combined weighting factor")+
+  scale_y_log10()
+```
+
+Scatter sum(pots per trip) by week, then compare to permits (i.e. investigate calculation of ntraps_wt)
+
+```{r}
+test <- traplocs %>% 
+  filter(drvid=="264147",period_1wk==1)
 ```
 

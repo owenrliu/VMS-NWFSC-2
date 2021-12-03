@@ -28,7 +28,7 @@ Currently, the VMS data are organized by trip and have been joined to PacFin fis
 The cleaning of the data has been done elsewhere, but for the purposes of the following plots, the important points are:
 
 * A fishing "trip" (the unit of many of the analyses below) is defined as the collection of VMS records preceding a landed, recorded PacFIN fish ticket. This means that one "trip" could involve multiple returns to port by a vessel across multiple days, as long as there is no ticket submitted within that time frame.
-* In data processing, VMS records were assigned to fish tickets using two criteria. First, for each ticket, we looked backwards to see when the previous ticket had been submitted, and assigned all VMS records after the previous ticket to the current ticket. Second, for those vessels with long periods between submitted tickets, we enforced a 10 day "lookback window", such that the maximum number of calendar days of VMS records that could be associated with a single ticket is 10.
+* In data processing, VMS records were assigned to fish tickets using two criteria. First, for each ticket, we looked backwards to see when the previous ticket had been submitted, and assigned all VMS records after the previous ticket to the current ticket. Second, for those vessels with long periods between submitted tickets, we enforced a 7 day "lookback window", such that the maximum number of calendar days of VMS records that could be associated with a single ticket is 10.
 * We are focused here on fishing trips for Dungeness crab, but some vessels can participate in multiple fisheries. In data processing, if multiple tickets were submitted by a vessel on the same day, we denoted the primary target species for that trip as the species with the most landed pounds across all tickets. However, we also marked those trips so we can investigate any differences between single and multispecies fishing trips.
 
 ## Estimating Vertical Line Density
@@ -211,10 +211,10 @@ Now we apply this trap simulation to all Dungeness trips (where Dungeness is the
 
 ## Speed, Depth, and Total Number of Traps Filters
 
-We need to apply a few course filters to the data in order to get a more realistic estimates of lines. Three important filters are vessel speed (because vessels can't be actively checking traps if they are going too fast), depth (very little crab fishing is done in depths >100m), and total number of traps. For now, we assume the following values and procedures (which could be changed later):
+We need to apply a few course filters to the data in order to get a more realistic estimates of lines. Three important filters are vessel speed (because vessels can't be actively checking traps if they are going too fast), depth (very little crab fishing is done in depths >150m), and total number of traps. For now, we assume the following values and procedures (which could be changed later):
 
 *  Remove vessel trip segments, and their associated simulated traps, for segments with an average speed of >8.5 kts (= 4.372 m/s)
-*  Remove any traps that are placed in water greater than 100m deep
+*  Remove any traps that are placed in water greater than 150m deep
 *  After the previous filters, if the number of simulated traps per trip is still greater than 500, sub-sample (randomly) 500 traps for that trip
 
 ```{r import depth}

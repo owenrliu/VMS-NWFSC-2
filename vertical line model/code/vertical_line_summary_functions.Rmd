@@ -128,8 +128,9 @@ Add the 2 different weighting factors- one for the total number of allowable tra
 ```{r}
 traplocs_wts <- traplocs %>% 
 
-  group_by(drvid,period_1wk) %>% 
+  group_by(drvid,year,period_1wk) %>% 
   mutate(total_traps_period1wk=sum(ntraps)) %>%
+  ungroup() %>% 
   
   # total traps weighting
   mutate(ntraps_permitted=coalesce(ntraps_permitted,500)) %>% 
@@ -144,6 +145,16 @@ traplocs_wts <- traplocs %>%
   ungroup() %>% 
   dplyr::select(-prop_permitted_traps)
 ```
+
+```{r}
+test <- traplocs_wts %>%
+  filter(drvid=="264147",period_1wk==1)
+# distribution of ntraps weight
+traplocs_wts %>% distinct(Rec_ID,ntraps_wt) %>%
+  ggplot(aes(ntraps_wt))+geom_density()+scale_x_continuous(breaks=c(0.2,0.25,0.33,0.5,1))+
+  labs(x="omega weight")
+```
+
 
 ```{r}
 # write this to a file
@@ -204,46 +215,46 @@ count_traps <- function(yr,per,expand=F){
 #   unnest(cols=c(traps))
 
   
-count_traps_vctr <- function(yr,per,expand=F){
-  samp <- traplocs_wts %>%
-    ungroup() %>%
-    filter(year==yr,period_1wk==per)
-  
-  if(nrow(samp)==0){
-    print(paste('Week',per,'in',yr,"had zero observations."))
-    return(tibble(GRID5KM_ID = NA,tottraps=NA))
-  } else{
-    
-  # expand with VMS representation weight or no?
-  samp <- samp %>% 
-    mutate(trapwt=ifelse(expand,ntraps_wt*vms_representation_wt,ntraps_wt))
-  
-  # add as a "weight" for density calcs
-  samp <- samp %>% 
-    mutate(traps=purrr::map2(traps,trapwt,function(df,wt) mutate(df,wt=wt))) %>% 
-    unnest(cols=c(traps))
-
-
-  samp_sf<- samp %>%
-    sf::st_as_sf(crs=4326) %>% 
-    # transform to match the grid
-    st_transform(st_crs(grd)) 
-  
-  out <- samp_sf %>% 
-    # join the grid
-    st_join(grd) %>% 
-    # remove spatial
-    st_set_geometry(NULL) %>% 
-    # count traps
-    group_by(GRID5KM_ID) %>% 
-    summarise(tottraps=sum(wt)) %>% 
-    mutate(expanded=expand)
-
-  print(paste0('week'," ",per," ",yr," done."))
-  return(out)
-  }
-
-}
+# count_traps_vctr <- function(yr,per,expand=F){
+#   samp <- traplocs_wts %>%
+#     ungroup() %>%
+#     filter(year==yr,period_1wk==per)
+#   
+#   if(nrow(samp)==0){
+#     print(paste('Week',per,'in',yr,"had zero observations."))
+#     return(tibble(GRID5KM_ID = NA,tottraps=NA))
+#   } else{
+#     
+#   # expand with VMS representation weight or no?
+#   samp <- samp %>% 
+#     mutate(trapwt=ifelse(expand,ntraps_wt*vms_representation_wt,ntraps_wt))
+#   
+#   # add as a "weight" for density calcs
+#   samp <- samp %>% 
+#     mutate(traps=purrr::map2(traps,trapwt,function(df,wt) mutate(df,wt=wt))) %>% 
+#     unnest(cols=c(traps))
+# 
+# 
+#   samp_sf<- samp %>%
+#     sf::st_as_sf(crs=4326) %>% 
+#     # transform to match the grid
+#     st_transform(st_crs(grd)) 
+#   
+#   out <- samp_sf %>% 
+#     # join the grid
+#     st_join(grd) %>% 
+#     # remove spatial
+#     st_set_geometry(NULL) %>% 
+#     # count traps
+#     group_by(GRID5KM_ID) %>% 
+#     summarise(tottraps=sum(wt)) %>% 
+#     mutate(expanded=expand)
+# 
+#   print(paste0('week'," ",per," ",yr," done."))
+#   return(out)
+#   }
+# 
+# }
 ```
 
 
@@ -254,10 +265,10 @@ week35_2013 <- count_traps(2013,35)
 week35_2013_expanded <- count_traps(2013,35,expand=T)
 toc()
 
-tic('vector')
-week35_2013_vctr <- count_traps_vctr(2013,35)
-week35_2013_expanded_vctr <- count_traps_vctr(2013,35,expand=T)
-toc()
+# tic('vector')
+# week35_2013_vctr <- count_traps_vctr(2013,35)
+# week35_2013_expanded_vctr <- count_traps_vctr(2013,35,expand=T)
+# toc()
 
 # rasterizing seems faster 
 
