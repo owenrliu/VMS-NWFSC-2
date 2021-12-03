@@ -1012,7 +1012,7 @@ Utilization is pretty high. How does this compare to TOTAL possible traps, based
 
 Look at the sum of all traps for all registered vessels per season, and compare to the number of vessels/traps actually fished.
 
-```{r}
+```{r,fig.height=8,fig.width=8}
 max_traps_season <- fishtix_matched_all %>% 
   distinct(year,month,drvid) %>% 
   left_join(tier_key) %>% 
@@ -1043,7 +1043,7 @@ max_traps_season %>%
   ggplot(aes(date,traps/1000,col=type))+
   geom_point()+
   geom_line()+
-  facet_wrap(~agency_code,nrow=3)+
+  facet_wrap(~agency_code,nrow=3,scales='free_y')+
   scale_x_date(date_breaks= "6 months",date_labels="%b-%Y",expand=c(0,0))+
   labs(x="Month",y="Number of Traps (1000s)")+
   theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
