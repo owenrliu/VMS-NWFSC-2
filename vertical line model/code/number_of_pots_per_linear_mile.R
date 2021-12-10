@@ -66,12 +66,8 @@ traps_g_WA_pot_tier <- traps_g_WA %>%
   #drop_na(Pot_Limit) # if want to drop NAs
 
 
-# this RDS has pots simulated along the stringline (each row is an individual simulated pot) - the simulated pots aren't actually necessary, 
-# we only need the length of the line and the reported "PotsFished" - remove duplicated rows based on SetID
-# WRONG
-#traps_g_WA_v2 <- traps_g_WA_pot_tier %>% distinct(SetID, .keep_all = TRUE)
 
-#remove one pot from each stringline - when calcualting spacing, the first pot doesn't actually have spacing
+#remove one pot from each stringline - when calculating spacing, the first pot doesn't actually have spacing
 # and should therefore be removed
 traps_g_WA_pot_tier_v2 <- traps_g_WA_pot_tier %>% 
   group_by(SetID) %>%
@@ -81,46 +77,120 @@ traps_g_WA_pot_tier_v2 <- traps_g_WA_pot_tier %>%
   mutate(PotsFished_one = PotsFished - 1)
 
 traps_g_WA_pot_tier_v3 <- traps_g_WA_pot_tier_v2 %>% 
-  filter(line_length_m > 0.1) %>%  #van't get pot spacing if line length is 0
+  #there are line lengths of 0 that can be filtered out here, but also later
+  filter(line_length_m > 0.1) %>%  #can't get pot spacing if line length is 0
   rowwise() %>% 
   #now we can calculate the average spacing in each line
   mutate(spacing_in_m = (sum(line_length_m)) / (sum(PotsFished_one)) )
 
 
-#Kernel density plot if not filtered 
-pot_spacing_density <- traps_g_WA_pot_tier_v3 %>% 
+# there are cases of really short pot spacing when a short string line had reportedly lots of pots
+# there are  cases of really long pot spacing when few pots reported on a very long string
+# e.g. 2 post on a 19km string line
+# also infinite values when reported 1 pot on a string becomes 0 (
+# would still have been a long string line even if had kept PotsFished as 1, as PotsFished = 1 string lines >1km long
+# so we want to make a call of where to cut the data and acknowledge that the reported info in logbooks
+# may not always be fully trustworthy
+
+
+hist(traps_g_WA_pot_tier_v3$spacing_in_m)
+
+pot_spacing_WA_subset <- traps_g_WA_pot_tier_v3  %>%   
+  #this filter will get rid of 0s due to line length being 0. 
+  # 99% of pot spacings <300m
+  filter(spacing_in_m > 3 &  spacing_in_m <= 300)
+
+hist(pot_spacing_WA_subset$spacing_in_m)
+
+
+pots_by_spacing <- pot_spacing_WA_subset %>%
+  count(spacing_in_m) %>% 
+  ungroup() %>% 
+  rename(pots=n) %>% 
+  # do cumulative counts
+  arrange(spacing_in_m) %>% 
+  mutate(cumulative_pots=cumsum(pots),perc_pots=cumulative_pots/last(cumulative_pots)*100)
+glimpse(pots_by_spacing)
+
+
+dist_pots_spacing <- pots_by_spacing %>% 
+  ggplot(aes(x=spacing_in_m ,y=perc_pots))+
+  geom_line(size=1)+
+  geom_hline(aes(yintercept = 99), colour="blue", linetype=2)+
+  #scale_x_continuous(breaks=seq(0, 200, 20),limits=c(0,200))+
+  labs(x="Pot spacing (m)",y="Cumulative % Traps") +
+  ggtitle("Distribution of crab pots by pot spacing") + 
+  theme(legend.position = ("top"),legend.title=element_blank())
+dist_pots_spacing
+
+
+
+
+
+mean(pot_spacing_WA_subset$spacing_in_m)
+# mean and other summaries will depend on cutoff values (spacing > 2 or 3m, spacing < 500 or 300m)
+#109.5261m --> 14.36pots/mile
+1000/(mean(pot_spacing_WA_subset$spacing_in_m))/0.621371
+#14.6937
+
+pot_spacing_WA_subset %>% 
+  group_by(season) %>% 
+  summarise(mean_spacing = mean(spacing_in_m),
+            mean_pots_per_mile = 1000/(mean(spacing_in_m))/0.621371
+            )
+
+ggplot(pot_spacing_WA_subset, aes(x=as.factor(season), y=spacing_in_m)) + 
+  geom_boxplot()
+
+
+pot_spacing_WA_subset %>% 
+  group_by(Pot_Limit, season) %>% 
+  summarise(mean_spacing = mean(spacing_in_m),
+            mean_pots_per_mile = 1000/(mean(spacing_in_m))/0.621371
+  )
+
+ggplot(pot_spacing_WA_subset, aes(x=as.factor(Pot_Limit), y=spacing_in_m)) + 
+  geom_boxplot()
+
+ggplot(pot_spacing_WA_subset, aes(x=as.factor(season), y=spacing_in_m, fill=as.factor(Pot_Limit))) + 
+  geom_boxplot()
+
+
+
+
+pot_spacing_density <- pot_spacing_WA_subset %>% 
   ggplot(aes(spacing_in_m))+
-  #ggplot(aes(spacing_in_m,fill=as.factor(Pot_Limit),as.factor(Pot_Limit)))+
   geom_density(alpha=0.5)+
   labs(x="Pot spacing (m)",y="Kernel Density",fill="Pot limit group",col="Pot limit group")+
-  #facet_wrap(~coast_region,nrow=4,scales = 'free_y')+
-  #facet_wrap(~ Pot_Limit,scales = 'free_y')+
-  #geom_vline(xintercept=-40*1.829,col='red',linetype=2)+
+  facet_wrap(~ Pot_Limit,scales = 'free_y')+
   theme(panel.grid.major=element_blank(),
         panel.grid.minor=element_blank(),
         axis.text.y=element_blank())
 pot_spacing_density
 
-pot_spacing_WA_bins <-  traps_g_WA_pot_tier_v3 %>% 
-  mutate(pot_spacing_bins = cut(spacing_in_m, breaks = c(0, 250, 500, 1000, max(spacing_in_m))))
 
-plot1 <- pot_spacing_WA_bins %>%
+# plot of pot spacing across across 2009-10 to 2018-19
+WA_pot_spacing_p1 <- pot_spacing_WA_subset %>% 
   ggplot() + 
-  geom_bar(aes(x=pot_spacing_bins, y = (..count..)/sum(..count..))) +
-  #facet_wrap(~ Pot_Limit) +
-  labs(x="pot spacing bin (m)",y="proportion") +
-  ggtitle('WA - spacing between pots (in m)') +
-  theme_minimal()
-plot1
+  geom_bar(aes(x=spacing_in_m, y=stat(prop)), position = "dodge") +
+  scale_x_binned(breaks=seq(0, 500, 25),limits=c(0,500)) + 
+  facet_wrap(~ Pot_Limit) +
+  #scale_y_continuous(breaks=seq(0, 0.5, 0.05),limits=c(0,0.5))+
+  labs(x="Spacing between pots (m)",y="Proportion") +
+  ggtitle('WA - spacing between pots (m)')
+WA_pot_spacing_p1
+
+
+summary_pot_spacing_WA_subset <- pot_spacing_WA_subset %>% 
+  group_by(Pot_Limit) %>% #Pot_Limit #season
+  summarise(min_spacing = min(spacing_in_m, na.rm=TRUE),
+            max_spacing = max(spacing_in_m, na.rm=TRUE),
+            sd_spacing = sd(spacing_in_m, na.rm=TRUE), 
+            mean_spacing = mean(spacing_in_m, na.rm=TRUE),
+            median_spacing = median(spacing_in_m, na.rm=TRUE)
+  )
 #-----------------------------------------------------------------------------------
 
-# investigate pot spacing
-
-traps_g_WA_v2_adjusted_pots <-  traps_g_WA_v2 %>% 
-  mutate(PotsFished_one = PotsFished - 1) # PotsFished - 1 exists because we have to discount the anchor point
-
-new_pot_spacing_WA <- traps_g_WA_v2_adjusted_pots %>% 
-  summarise(pot_spacing = (sum(line_length_m)) / (sum(PotsFished_one)) )
 
 
 
@@ -133,28 +203,9 @@ new_pot_spacing_WA <- traps_g_WA_v2_adjusted_pots %>%
 
 
 
-
-
-
-
-
-
-
-
-# remove strinlines that are 0m as can't get spacing for those
-pot_spacing_WA <-  traps_g_WA_v2 %>% 
-  filter(line_length_m > 0.1) %>% 
-  mutate(spacing_in_m = line_length_m/(PotsFished-1))
-
-
-# there are few cases of really long pot spacing
-# large spacings occur when few pots reported on a very long string
-# e.g. the case of max spacing of 16472m is a case of 1 pot on a 16472m stringline
-# or the next longest spacing 9511m (2 pots on a 19023m stringline)
-# so we want to make a call of where to cut the data and acknolwedge that the reported info in logbooks
-# may not always be fully trustworthy
-
-pot_spacing_WA_bins <-  pot_spacing_WA %>% 
+# taking too long to run
+#pot_spacing_WA_bins <-  pot_spacing_WA %>% 
+pot_spacing_WA_bins <-  traps_g_WA_pot_tier_v3 %>% 
   mutate(pot_spacing_bins = cut(spacing_in_m, breaks = c(0, 250, 500, 1000, max(spacing_in_m))))
 
 plot1 <- pot_spacing_WA_bins %>%
@@ -183,78 +234,34 @@ summary_pot_spacing_WA_bins <- pot_spacing_WA_bins %>%
          percent_1000m_plus = (n_1000m_plus/n_records)*100
   ) %>% 
   select(percent_0_250m:percent_1000m_plus)
-# ALL DATA:
-# percent_0_250m percent_250_500m percent_500_1000m percent_1000m_plus
-#   95.9             3.04             0.778              0.318
-# ~96% of pot spacing is 0-250m between pots, or ~99% is within 0-500m between pots, regardless of trap tier
-# so lets just exclude cases where spacing between pots is >500m
+
 
 
 
 # there is also probably a min distance that the pots would need to be
 # lets look at 0-10m spacing subset
-pot_tier_300 <- pot_spacing_WA %>% 
+pot_tier_300 <- traps_g_WA_pot_tier_v3 %>% 
   filter(spacing_in_m <= 10) %>% 
   filter(Pot_Limit == 300)
 hist(pot_tier_300$spacing_in_m)
 
-pot_tier_500 <- pot_spacing_WA %>% 
+pot_tier_500 <- traps_g_WA_pot_tier_v3 %>% 
   filter(spacing_in_m <= 10) %>% 
   filter(Pot_Limit == 500)
 hist(pot_tier_500$spacing_in_m)
 
-pot_tier_NA <- pot_spacing_WA %>% 
+pot_tier_NA <- traps_g_WA_pot_tier_v3 %>% 
   filter(spacing_in_m <= 10) %>% 
   filter(is.na(Pot_Limit))
 hist(pot_tier_NA$spacing_in_m)
 # spike between 0-2m spacing for 300 & 500 pot tiers (but less for NA)
 # let's for now exclude spacing that is <2m or >500m
 
-#Kernel density plot if not filtered 
-pot_spacing_density <- pot_spacing_WA %>% 
-  ggplot(aes(spacing_in_m))+
-  #ggplot(aes(spacing_in_m,fill=as.factor(Pot_Limit),as.factor(Pot_Limit)))+
-  geom_density(alpha=0.5)+
-  labs(x="Pot spacing (m)",y="Kernel Density",fill="Pot limit group",col="Pot limit group")+
-  #facet_wrap(~coast_region,nrow=4,scales = 'free_y')+
-  facet_wrap(~ Pot_Limit,scales = 'free_y')+
-  #geom_vline(xintercept=-40*1.829,col='red',linetype=2)+
-  theme(panel.grid.major=element_blank(),
-        panel.grid.minor=element_blank(),
-        axis.text.y=element_blank())
-pot_spacing_density
 
-pot_spacing_WA_subset <- pot_spacing_WA %>% 
-  filter(spacing_in_m > 2 &  spacing_in_m <= 500)
-#or try less conservative cutoffs
-pot_spacing_WA_subset <- pot_spacing_WA %>% 
-  filter(spacing_in_m > 5 &  spacing_in_m <= 200)
 
-#Kernel density plot if  filtered 
-pot_spacing_density <- pot_spacing_WA_subset %>% 
-  ggplot(aes(spacing_in_m))+
-  #ggplot(aes(spacing_in_m,fill=as.factor(Pot_Limit),as.factor(Pot_Limit)))+
-  geom_density(alpha=0.5)+
-  labs(x="Pot spacing (m)",y="Kernel Density",fill="Pot limit group",col="Pot limit group")+
-  #facet_wrap(~coast_region,nrow=4,scales = 'free_y')+
-  facet_wrap(~ Pot_Limit,scales = 'free_y')+
-  #geom_vline(xintercept=-40*1.829,col='red',linetype=2)+
-  theme(panel.grid.major=element_blank(),
-        panel.grid.minor=element_blank(),
-        axis.text.y=element_blank())
-pot_spacing_density
+
 #-----------------------------------
 
-# plot of pot spacing across across 2009-10 to 2018-19
-WA_pot_spacing_p1 <- pot_spacing_WA_subset %>% 
-  ggplot() + 
-  geom_bar(aes(x=spacing_in_m, y=stat(prop)), position = "dodge") +
-  scale_x_binned(breaks=seq(0, 500, 50),limits=c(0,500)) + 
-  #facet_wrap(~ Pot_Limit) +
-  #scale_y_continuous(breaks=seq(0, 0.5, 0.05),limits=c(0,0.5))+
-  labs(x="Spacing between pots (m)",y="Proportion") +
-  ggtitle('WA - spacing between pots (m)')
-WA_pot_spacing_p1
 
 
 summary_pot_spacing_WA_subset <- pot_spacing_WA_subset %>% 
