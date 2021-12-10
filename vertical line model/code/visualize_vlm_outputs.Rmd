@@ -717,7 +717,7 @@ traps_inside_BIAs_seasons %>%
         panel.grid.minor = element_blank())
 ```
 
-## Maps
+# Figure 4: BIAs Maps
 
 A couple of representative maps for the large BIA around San Fran Bay.
 
@@ -845,9 +845,9 @@ trapdens_CA_BIAs_entanglements %>%
 ```
 
 
-# Fig 4 Trap Depth Distributions
+# Fig 5 Trap Depth Distributions
 
-Look at the depth distributions of simulated traps. For these first plots, we use the non-rasterized version of the simulated traps.
+Look at the depth distributions of simulated traps. For these first plots, we use the non-rasterized version of the simulated traps. Can use expanded (using VMS expansion weight) or non-expanded data.
 
 Pull out the mean trap depth for all individual fish tickets/trips
 
@@ -859,7 +859,12 @@ trap_depths <- traplocs %>%
     agency_code=="O" ~ "Oregon",
     agency_code=="W" ~ "Washington"
   )) %>% 
+  # can weight traps using omega factor (ntraps_wt) or using both the omega factor and the VMS representation factor ("expanded"; comb_wt)
+  mutate(comb_wt=ntraps_wt*vms_representation_wt) %>% 
+  # weighting for this plot is done in plotting (see next code chunk)
+  
   mutate(mean_trap_depth=purrr::map_dbl(traps,function(df) mean(df$depth,na.rm=T))) %>% 
+  filter(!is.nan(mean_trap_depth),!is.na(comb_wt)) %>% 
   dplyr::select(-traps) %>% 
   filter(month !="October") %>% 
   # add an identifier for early, mid, or late season
@@ -874,6 +879,7 @@ trap_depths <- traplocs %>%
 Depth distributions by state and season segment
 
 ```{r,fig.width=8,fig.height=8}
+# unweighted
 trap_depth_dist <- trap_depths %>% 
   ggplot(aes(mean_trap_depth,fill=season_segment,col=season_segment))+
   geom_density(alpha=0.5)+
@@ -884,7 +890,21 @@ trap_depth_dist <- trap_depths %>%
         panel.grid.minor=element_blank(),
         axis.text.y=element_blank())
 trap_depth_dist
+
+# weighted using both omega factor and vms representation (combined weights)
+trap_depth_dist_weighted <- trap_depths %>% 
+  ggplot(aes(mean_trap_depth,weight=comb_wt,fill=season_segment,col=season_segment))+
+  geom_density(alpha=0.5)+
+  labs(x="Mean Trap Depth per Trip (m)",y="Kernel Density",fill="Season Portion",col="Season Portion")+
+  facet_wrap(~coast_region,nrow=4,scales = 'free_y')+
+  geom_vline(xintercept=-40*1.829,col='red',linetype=2)+
+  theme(panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        axis.text.y=element_blank())
+trap_depth_dist_weighted
 ```
+
+# Supplementary Figures
 
 Now, a timeseries of mean trap depth per trip across months
 
@@ -955,7 +975,7 @@ trap_depths_ts_plot
 ```
 
 
-# Simulated vs. Permitted Traps
+## Simulated vs. Permitted Traps
 
 Try to do some validation by looking at unweighted and weighted traps per trip, including the relationship between simulated and permitted traps per trip in the data.
 
@@ -1026,7 +1046,7 @@ max_traps_season <- fishtix_matched_all %>%
   unite(date,year,month,day,sep="-",remove = FALSE) %>% 
   mutate(date=as_date(date,format="%Y-%B-%d"))
 
-# add the total, expanded, simualted traps from the VLM
+# add the total, expanded, simulated traps from the VLM
 trap_counts_state_month_expanded %>% 
   rename(year=yr,month=mth) %>% 
   mutate(month=month.name[month]) %>% 
@@ -1052,16 +1072,18 @@ max_traps_season %>%
 ```
 The gap is larger for Washington. I'm not sure why this is. Maybe look at the weighting schemes?
 
+## Weighting Factors
 ```{r}
 wts_ts <- traplocs %>% 
-  dplyr::select(Rec_ID,date,year,month,agency_code,FINAL_LENGTH,ntraps,ntraps_permitted,ntraps_wt,vms_representation_wt) %>% 
+  dplyr::select(Rec_ID,date,year,month,agency_code,FINAL_LENGTH,ntraps,ntraps_permitted,ntraps_wt,vessel_size_category,vms_representation_wt) %>% 
   mutate(comb_wt=ntraps_wt*vms_representation_wt) %>% 
-  group_by(year,month,agency_code) %>% 
+  group_by(year,month,vessel_size_category,agency_code) %>% 
   summarise(mean_ntraps_wt=mean(ntraps_wt,na.rm=T),
             mean_vms_rep_wt=mean(vms_representation_wt,na.rm=T),
             mean_comb_wt=mean(comb_wt,na.rm=T)) %>% 
   ungroup() %>%  
   mutate(day=1) %>% 
+  filter(!is.na(vessel_size_category)) %>% 
   unite(date,year,month,day,sep="-",remove = FALSE) %>% 
   mutate(date=as_date(date,format="%Y-%B-%d"))
 
@@ -1069,6 +1091,7 @@ wts_ts %>%
   ggplot(aes(date,mean_ntraps_wt,col=agency_code))+
   geom_point()+
   geom_line()+
+  facet_wrap(~vessel_size_category,nrow=2)+
   labs(x="Month",y="Traps per week weighting factor")
 
 wts_ts %>% 
@@ -1076,11 +1099,13 @@ wts_ts %>%
   geom_point()+
   geom_line()+
   scale_y_log10()+
+  facet_wrap(~vessel_size_category,nrow=2)+
   labs(x="Month",y="VMS representation weighting factor")
 wts_ts %>% 
   ggplot(aes(date,mean_comb_wt,col=agency_code))+
   geom_point()+
   geom_line()+
+  facet_wrap(~vessel_size_category,nrow=2,scales='free_y')+
   labs(x="Month",y="Combined weighting factor")+
   scale_y_log10()
 ```
