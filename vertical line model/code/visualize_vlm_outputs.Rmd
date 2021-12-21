@@ -46,11 +46,17 @@ simtraps <- read_rds(here::here('vertical line model',"sim_traps_speed_depth_fil
 
 # trap locations only, including fish ticket identifiers and weighting factors
 traplocs <- read_rds(here::here('vertical line model','trap_locations_with_weights.rds'))
+
+#jameal's annoying wd
+# traplocs <- read_rds('/Users/jameal.samhouri/Documents/VLM/trap_locations_with_weights.rds')
 ```
 
 5x5km grid
 ```{r}
 grd <- read_sf(here::here("data","raw","grid","fivekm_grid_polys_shore_lamb.shp"))
+#jameal's annoying wd
+# grd <- read_sf('/Users/jameal.samhouri/Documents/VLM/fivekm_grid_polys_shore_lamb.shp')
+
 names(grd)
 # raster representation of grid.
 # transform to a projection that uses meters instead of lat/long
@@ -133,6 +139,10 @@ Raster stacks of trap counts
 # raster stacks of trap counts (expanded and non-expanded)
 traps_nonexpanded <- read_rds(here::here('vertical line model','trap_density_all_1week_periods_non_expanded.rds'))
 traps_expanded <- read_rds(here::here('vertical line model',"trap_density_all_1week_periods_expanded.rds"))
+
+# jameal's annoying wd's
+# traps_nonexpanded <- read_rds('/Users/jameal.samhouri/Documents/VLM/trap_density_all_1week_periods_non_expanded.rds')
+# traps_expanded <- read_rds('/Users/jameal.samhouri/Documents/VLM/trap_density_all_1week_periods_expanded.rds')
 ```
 
 Port groups in Northern vs. Central CA
