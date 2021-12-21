@@ -220,21 +220,20 @@ relative_revenue <- revenue_by_month_state %>%
 # calc landings of VMS vs. non-VMS tix
 vms_prop_landings <- fishtix %>% 
   #HERE IS WHERE WE MAKE A CHOICE ABOUT NUMBER OF PERMITTED TRAPS---LETS ASSUME 500 FOR UNOBSERVED/UNREGISTERED VESSELS
+  # if a vessel appears multiple times in the data, keep only the first year/month/drvid/ntraps_permitted combination
+  dplyr::select(year,drvid,FINAL_LENGTH,ntraps_permitted,month,agency_code,has_vms) %>% 
+  distinct(year,month,drvid,has_vms,.keep_all=TRUE) %>% 
+  filter(!is.na(FINAL_LENGTH)) %>% 
   mutate(ntraps_permitted=coalesce(ntraps_permitted,500)) %>%
   # add vessel size designation
   mutate(vessel_size_category=ifelse(FINAL_LENGTH<40,'small','large')) %>% 
   # group and summarise
   group_by(year,month,agency_code,vessel_size_category,has_vms) %>% 
-  summarise(totland=sum(DCRB_lbs,na.rm=T),tottix=n(),
+  summarise(nvessels=n_distinct(drvid),
          traps_observed=sum(ntraps_permitted,na.rm=T)) %>% 
   ungroup() %>% 
   group_by(year,month,agency_code,vessel_size_category) %>% 
-  mutate(sumland=sum(totland),
-         sumland_thousand_mt=sumland/1000/2204.64,
-         propland=totland/sumland,
-         sumtix=sum(tottix),
-         proptix=tottix/sumtix,
-         prop_permitted_traps=traps_observed/sum(traps_observed,na.rm=T)) %>% 
+  mutate(prop_permitted_traps=traps_observed/sum(traps_observed,na.rm=T)) %>% 
   ungroup() %>% 
   # only save the proportion of tickets and landings with VMS
   filter(has_vms==1)

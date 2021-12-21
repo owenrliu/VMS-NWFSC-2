@@ -246,15 +246,12 @@ For total trap counts, we need to use the rasterized version of the VLM, because
 Gather x-y trap data
 
 ```{r}
-years_periods <- traplocs %>% 
+years_states_periods <- traplocs %>% 
   ungroup() %>% 
   filter(ntraps > 0) %>% 
-  distinct(year,period_1wk) %>% 
-  rename(yr=year,per=period_1wk) %>% 
-  mutate(per=per-1)
-years_periods %<>% mutate(nm = paste(yr,per,sep = "_"))
-names(traps_nonexpanded) <- years_periods$nm
-names(traps_expanded) <- years_periods$nm
+  distinct(year,period_1wk,agency_code) %>% 
+  rename(yr=year,per=period_1wk,state=agency_code) %>% 
+  unite(lab,state,yr,per,sep="_",remove=F)
 ```
 
 
@@ -1073,6 +1070,9 @@ max_traps_season %>%
 The gap is larger for Washington. I'm not sure why this is. Maybe look at the weighting schemes?
 
 ## Weighting Factors
+
+Explore time series of the two different trap weighting factors
+
 ```{r}
 wts_ts <- traplocs %>% 
   dplyr::select(Rec_ID,date,year,month,agency_code,FINAL_LENGTH,ntraps,ntraps_permitted,ntraps_wt,vessel_size_category,vms_representation_wt) %>% 
@@ -1110,10 +1110,56 @@ wts_ts %>%
   scale_y_log10()
 ```
 
-Scatter sum(pots per trip) by week, then compare to permits (i.e. investigate calculation of ntraps_wt)
+Explore the distribution of the vms representation factor.
 
+Overall distribution
 ```{r}
-test <- traplocs %>% 
-  filter(drvid=="264147",period_1wk==1)
+vms_rep_wts <- traplocs %>% 
+  distinct(year,month,agency_code,ntraps_wt,vessel_size_category,vms_representation_wt) %>% 
+  mutate(comb_wt=ntraps_wt*vms_representation_wt) %>% 
+  filter(!is.na(vessel_size_category))
+
+vms_rep_wts %>% 
+  ggplot(aes(vms_representation_wt))+
+  geom_density(fill='blue')
+
+# with logged x axis
+vms_rep_wts %>% 
+  ggplot(aes(vms_representation_wt))+
+  geom_density(fill='blue',alpha=0.5)+
+  scale_x_log10()
 ```
 
+Distribution by state and month
+
+```{r}
+vms_rep_wts %>% 
+  mutate(month_fct=factor(month,levels=month.name)) %>% 
+  ggplot(aes(vms_representation_wt,fill=agency_code))+
+  geom_density(alpha=0.5)+
+  scale_x_log10()+
+  facet_wrap(~month_fct,scales='free_y')+
+  theme_minimal()
+```
+
+Distribution by state and vessel size
+
+```{r}
+vms_rep_wts %>% 
+  mutate(month_fct=factor(month,levels=month.name)) %>% 
+  ggplot(aes(vms_representation_wt,fill=agency_code))+
+  geom_density(alpha=0.5)+
+  scale_x_log10()+
+  facet_wrap(~vessel_size_category)
+```
+
+Distribution by state, vessel size, and month
+
+```{r,fig.width=6,fig.height=12}
+vms_rep_wts %>% 
+  mutate(month_fct=factor(month,levels=month.name)) %>% 
+  ggplot(aes(vms_representation_wt,fill=agency_code))+
+  geom_density(alpha=0.5)+
+  scale_x_log10()+
+  facet_grid(month_fct~vessel_size_category)
+```

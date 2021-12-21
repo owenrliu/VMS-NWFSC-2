@@ -135,7 +135,6 @@ traplocs_wts <- traplocs %>%
   # total traps weighting
   mutate(ntraps_permitted=coalesce(ntraps_permitted,500)) %>% 
   mutate(ntraps_wt=ifelse(total_traps_period1wk<ntraps_permitted,1,ntraps_permitted/total_traps_period1wk)) %>% 
-
   # add vessel size designation
   mutate(vessel_size_category=ifelse(FINAL_LENGTH<40,'small','large')) %>% 
   # join vms representation key
@@ -171,10 +170,10 @@ Write the function to count traps, per grid cell, by period.
 The `expand` option determines whether traps are up-weighted by the relative representation in VMS of each vessel's length/tier level in each year/month in the fish ticket data.
 
 ```{r}
-count_traps <- function(yr,per,expand=F){
+count_traps <- function(yr,per,state,expand=F){
   samp <- traplocs_wts %>%
     ungroup() %>%
-    filter(year==yr,period_1wk==per)
+    filter(year==yr,period_1wk==per,agency_code==state)
   
   # expand with VMS representation weight or no?
   samp <- samp %>% 
@@ -201,7 +200,7 @@ count_traps <- function(yr,per,expand=F){
   out_rast <- raster::rasterize(samp_sf,grd_rast,field='wt',fun='sum')
   names(out_rast) <- paste0('week'," ",per," ",yr)
 
-  print(paste0('week'," ",per," ",yr," done."))
+  print(paste0('state ',state,' week'," ",per," ",yr," done."))
   return(out_rast)
   }
 
@@ -260,10 +259,8 @@ count_traps <- function(yr,per,expand=F){
 
 ```{r}
 # sample map
-tic('raster')
-week35_2013 <- count_traps(2013,35)
-week35_2013_expanded <- count_traps(2013,35,expand=T)
-toc()
+week48_2013_ca <- count_traps(2013,48,state="C")
+week48_2013_ca_expanded <- count_traps(2013,48,state="C",expand=T)
 
 # tic('vector')
 # week35_2013_vctr <- count_traps_vctr(2013,35)
@@ -272,10 +269,8 @@ toc()
 
 # rasterizing seems faster 
 
-# week35_2013
-# week35_2013_expanded
-# plot(week35_2013)
-# plot(week35_2013_expanded)
+# plot(week48_2013_ca)
+# plot(week48_2013_ca_expanded)
 
 ```
 
@@ -285,26 +280,29 @@ Non-expanded
 
 ```{r apply fxn}
 tic("1 Week Interval Pot Counts, non-Expanded")
-years_periods <- traplocs_wts %>% 
+years_states_periods <- traplocs_wts %>% 
   ungroup() %>% 
   filter(ntraps > 0) %>% 
-  distinct(year,period_1wk) %>% 
-  rename(yr=year,per=period_1wk)
+  distinct(year,period_1wk,agency_code) %>% 
+  rename(yr=year,per=period_1wk,state=agency_code) %>% 
+  unite(lab,state,yr,per,sep="_",remove=F)
 future::plan(multisession)
-trap_density_all_periods_no_expansion <- furrr::future_map2(years_periods$yr,years_periods$per,count_traps,expand=F)
+trap_density_all_periods_no_expansion <- furrr::future_pmap(list(years_states_periods$yr,years_states_periods$per,years_states_periods$state),count_traps,expand=F)
 toc()
 trap_density_stack_no_expansion <- raster::stack(trap_density_all_periods_no_expansion)
-write_rds(trap_density_stack_no_expansion,here::here('vertical line model',"trap_density_all_1week_periods_non_expanded.rds"))
+names(trap_density_stack_no_expansion) <- years_states_periods$lab
+write_rds(trap_density_stack_no_expansion,here::here('vertical line model',"trap_density_all_1week_periods_states_non_expanded.rds"))
 
 ```
 
 Expanded
 ```{r}
 tic("1 Week Interval Pot Counts, Expanded")
-trap_density_all_periods_expanded <- furrr::future_map2(years_periods$yr,years_periods$per,count_traps,expand=T)
+trap_density_all_periods_expanded <- furrr::future_pmap(list(years_states_periods$yr,years_states_periods$per,years_states_periods$state),count_traps,expand=T)
 toc()
 trap_density_stack_expanded <- raster::stack(trap_density_all_periods_expanded)
-write_rds(trap_density_stack_expanded,here::here('vertical line model',"trap_density_all_1week_periods_expanded.rds"))
+names(trap_density_stack_expanded) <- years_states_periods$lab
+write_rds(trap_density_stack_expanded,here::here('vertical line model',"trap_density_all_1week_periods_states_expanded.rds"))
 ```
 
 ```{r}
