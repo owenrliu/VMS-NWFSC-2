@@ -689,8 +689,10 @@ We can also investigate the correlation of vessel size with other variables in t
 ```{r}
 vessel_length_corr_plot <- vars.corrs %>% 
   filter(var1=='vessel_size',var2 !='vessel_size') %>% 
+  filter(!(var2 %in% c("revenue_mean","revenue_sd","landings_mean","landings_sd","vessel_size","trip_dist_sd","total_ports","prop_other_tix","trip_dist_mean"))) %>% 
   arrange(desc(corr)) %>% 
-  mutate(varname=factor(var2,levels=var2)) %>% 
+  left_join(variable_name_matches,by=c('var2'='v')) %>% 
+  mutate(varname=factor(metric,levels=metric)) %>% 
   mutate(is_neg=ifelse(corr<0,"neg","pos")) %>% 
   ggplot(aes(varname,corr,fill=is_neg))+
   geom_col()+
@@ -1446,9 +1448,16 @@ total_rev_landings_season <- fishtix_plus %>%
             profit_tot=mean(total_profit,na.rm=T),
             profit_sd=sd(total_profit,na.rm=T),
             profit_se=profit_sd/n^0.5) %>% 
-  ungroup()
+  ungroup() %>% 
+  mutate(partition=case_when(
+    partition==3 ~ "Roving Specialists",
+    partition==1 ~ "Local Generalists",
+    partition==4 ~ "Roving Generalists",
+    partition==2 ~ "Local Specialists"
+  )) %>% 
+  mutate(partition=factor(partition,levels=c("Local Specialists","Local Generalists","Roving Specialists","Roving Generalists")))
 
-total_rev_landings_season %>%
+rev_by_group_season_plot <- total_rev_landings_season %>%
   ggplot(aes(crab_season,rev_tot,ymin=rev_tot-2*rev_se,ymax=rev_tot+2*rev_se,
              group=factor(partition),color=factor(partition)))+
   geom_line(size=1.5,position=position_dodge(width=0.2))+geom_linerange(size=1,position=position_dodge(width=0.2))+
@@ -1456,8 +1465,9 @@ total_rev_landings_season %>%
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
+# ggsave(here::here('fishing behavior','plots','revenue_by_group_season.png'),rev_by_group_season_plot,w=10,h=8)
 
-total_rev_landings_season %>%
+cost_by_group_season_plot <- total_rev_landings_season %>%
   ggplot(aes(crab_season,cost_tot,ymin=cost_tot-2*cost_se,ymax=cost_tot+2*cost_se,
              group=factor(partition),color=factor(partition)))+
   geom_line(size=1.5,position=position_dodge(width=0.2))+geom_linerange(size=1,position=position_dodge(width=0.2))+
@@ -1465,6 +1475,7 @@ total_rev_landings_season %>%
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   theme(axis.text.x = element_text(angle=90,vjust=0.5),
         legend.position = 'bottom')
+# ggsave(here::here('fishing behavior','plots','cost_by_group_season.png'),cost_by_group_season_plot,w=10,h=8)
 
 total_rev_landings_season %>%
   ggplot(aes(crab_season,land_tot,ymin=land_tot-2*land_se,ymax=land_tot+2*land_se,
