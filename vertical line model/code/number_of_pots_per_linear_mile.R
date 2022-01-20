@@ -258,6 +258,25 @@ ggplot(pot_spacing_WA_subset, aes(x=as.factor(season), y=spacing_in_m, fill=as.f
   theme(legend.position="bottom")
 
 
+# by MONTH and by pot limit
+testx <- pot_spacing_WA_subset %>% 
+  mutate(month_name = factor(month_name, levels = c('December','January','February','March','April','May','June','July','August','September','October','November'))) %>%
+  filter(!is.na(month_name)) %>% 
+  group_by(Pot_Limit, month_name) %>% 
+  summarise(mean_spacing = mean(spacing_in_m),
+            mean_pots_per_mile = 1000/(mean(spacing_in_m))/0.621371
+  )
+
+
+spacing_by_month <- testx %>%
+  ggplot(aes(x=month_name ,y=mean_pots_per_mile, colour=as.factor(Pot_Limit), group=as.factor(Pot_Limit)))+
+  geom_line(size=1)+
+  labs(x="Month",y="Pots/mile") +
+  ggtitle("Mean pots/mile in WA by month and by pot tier group 2009-10 to 2018-19") +
+  theme(legend.position = ("top"),legend.title=element_blank())
+spacing_by_month
+
+
 #-----------
 #-----------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------
