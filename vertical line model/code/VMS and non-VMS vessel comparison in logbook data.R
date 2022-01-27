@@ -80,7 +80,7 @@ traps_g_WA_all_logs_2014_2020_VMS_grouping <- traps_g_WA_all_logs_2014_2020 %>%
   left_join(wa_tier_has_vms_key_groupings, by=c("Vessel")) %>% 
 #there are 14 vessels that don't appear in the 'wa_tier_has_vms_key.rds' and therefore don't have VMS grouping
 #could assume they are non_VMS, but for now, remove them
-  #--> these NA groupings had quite different pot spacing comapred to VMS and non-VMS groups
+  #--> these NA groupings had quite different pot spacing compared to VMS and non-VMS groups
   filter(!is.na(grouping))
 
 #also join in license data to get PotLimit info
@@ -100,7 +100,18 @@ traps_g_WA_all_logs_2014_2020_VMS_grouping_pot_tier <- traps_g_WA_all_logs_2014_
   drop_na(Pot_Limit) #the only other NA cases are records with no Vessel in the log
 
 
+#number/proportion of unique vessels in logbook data set with and without VMS data
+# grouping    number    proportion
+# non-VMS     199         0.76
+#   VMS       64          0.24
 
+# pot limit  grouping    number    proportion
+#   300       non-VMS     79         0.86
+#   300         VMS       13         0.14
+
+# pot limit  grouping    number    proportion
+#   500       non-VMS     120        0.70
+#   500         VMS       51         0.30
 #-----------------------------------------------------------------------------------
 
 #investigate pot spacing difference between VMS and non-VMS vessels
@@ -249,8 +260,8 @@ rmap.base <- c(
 bbox = c(-127,44,-120,49) 
 
 map_outline_VNS_vs_nonVMS <- ggplot() + 
-  geom_sf(data = dissolved_VMS_vessels, color = 'blue', fill = NA) +
-  geom_sf(data = dissolved_non_VMS_vessels, color = 'red', fill = NA) +
+  geom_sf(data = dissolved_VMS_vessels, color = 'blue', fill = 'blue',alpha=0.1) +
+  geom_sf(data = dissolved_non_VMS_vessels, color = 'red', fill = 'red',alpha=0.1) +
   geom_sf(data=rmap.base,col=NA,fill='gray50') +
   ggtitle("Fishery outline 2013-14 to 2019-20\nblue = VMS vessels, red = non-VMS vessels") +
   coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4])) +
@@ -284,8 +295,8 @@ plot(dissolved_500_non_VMS_vessels)
 
 
 map_outline_500_VMS_vs_nonVMS <- ggplot() + 
-  geom_sf(data = dissolved_500_VMS_vessels, color = 'blue', fill = NA) +
-  geom_sf(data = dissolved_500_non_VMS_vessels, color = 'red', fill = NA) +
+  geom_sf(data = dissolved_500_VMS_vessels, color = 'blue', fill = 'blue',alpha=0.1) +
+  geom_sf(data = dissolved_500_non_VMS_vessels, color = 'red', fill = 'red',alpha=0.1) +
   geom_sf(data=rmap.base,col=NA,fill='gray50') +
   ggtitle("Fishery outline 2013-14 to 2019-20\nPot tier: 500 \nblue = VMS vessels, red = non-VMS vessels") +
   coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4])) +
@@ -319,8 +330,8 @@ plot(dissolved_300_non_VMS_vessels)
 
 
 map_outline_300_VMS_vs_nonVMS <- ggplot() + 
-  geom_sf(data = dissolved_300_VMS_vessels, color = 'blue', fill = NA) +
-  geom_sf(data = dissolved_300_non_VMS_vessels, color = 'red', fill = NA) +
+  geom_sf(data = dissolved_300_VMS_vessels, color = 'blue', fill = 'blue',alpha=0.1) +
+  geom_sf(data = dissolved_300_non_VMS_vessels, color = 'red', fill = 'red',alpha=0.1) +
   geom_sf(data=rmap.base,col=NA,fill='gray50') +
   ggtitle("Fishery outline 2013-14 to 2019-20\nPot tier: 300 \nblue = VMS vessels, red = non-VMS vessels") +
   coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4])) +
