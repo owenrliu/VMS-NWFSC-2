@@ -6,6 +6,8 @@ library(tidyverse)
 library(lubridate)
 library(here)
 library(sf)
+library(rnaturalearth) #devtools::install_github("ropensci/rnaturalearthhires")
+
 
 # ggplot theme
 plot_theme <-   theme_minimal()+
@@ -191,4 +193,146 @@ ggplot(pot_spacing_WA_subset, aes(x=as.factor(Pot_Limit ), y=spacing_in_m, fill=
 
 
 #-----------------------------------------------------------------------------
+
+#differences in the spatial distribution between VMS and non-VMS vessels
+
+#starting data: traps_g_WA_all_logs_2014_2020_VMS_grouping_pot_tier
+#subset data to different groups
+
+traps_g_VMS_vessels <- traps_g_WA_all_logs_2014_2020_VMS_grouping_pot_tier %>% 
+  filter(grouping == "VMS")
+traps_g_non_VMS_vessels <- traps_g_WA_all_logs_2014_2020_VMS_grouping_pot_tier %>% 
+  filter(grouping == "non-VMS")
+
+
+traps_g_VMS_500_vessels <- traps_g_WA_all_logs_2014_2020_VMS_grouping_pot_tier %>% 
+  filter(grouping == "VMS" & Pot_Limit == 500)
+traps_g_VMS_300_vessels <- traps_g_WA_all_logs_2014_2020_VMS_grouping_pot_tier %>% 
+  filter(grouping == "VMS" & Pot_Limit == 300)
+
+
+traps_g_non_VMS_500_vessels <- traps_g_WA_all_logs_2014_2020_VMS_grouping_pot_tier %>% 
+  filter(grouping == "non-VMS" & Pot_Limit == 500)
+traps_g_non_VMS_300_vessels <- traps_g_WA_all_logs_2014_2020_VMS_grouping_pot_tier %>% 
+  filter(grouping == "non-VMS" & Pot_Limit == 300)
+
+
+#------------------
+
+path.grid.5km <- "C:/Users/Leena.Riekkola/Projects/NOAA data/maps_ts_whales/data/five_km_grid_polys_geo.shp"
+grid.5km <- st_read(path.grid.5km, quiet = TRUE) # 5km grid
+path.grid.5km.lno <- "C:/Users/Leena.Riekkola/Projects/NOAA data/maps_ts_whales/data/Grid_5km_landerased.rds"
+grid.5km.lno <- readRDS(path.grid.5km.lno) # 5km grid, land erased
+
+
+grids_VMS_vessels <- sort(unique(traps_g_VMS_vessels$GRID5KM_ID))
+grids_5km_VMS_vessels <- grid.5km %>% filter(GRID5KM_ID %in% grids_VMS_vessels)
+#outline of fishery footprint for VMS vessels (2014-2020)
+dissolved_VMS_vessels <- st_union(grids_5km_VMS_vessels)
+plot(dissolved_VMS_vessels)
+
+grids_non_VMS_vessels <- sort(unique(traps_g_non_VMS_vessels$GRID5KM_ID))
+grids_5km_non_VMS_vessels <- grid.5km %>% filter(GRID5KM_ID %in% grids_non_VMS_vessels)
+#outline of fishery footprint for VMS vessels (2014-2020)
+dissolved_non_VMS_vessels <- st_union(grids_5km_non_VMS_vessels)
+plot(dissolved_non_VMS_vessels)
+
+
+rmap.base <- c(
+  st_geometry(ne_states(country = "United States of America", returnclass = "sf")),   ne_countries(scale = 10, continent = "North America", returnclass = "sf") %>%
+    filter(admin %in% c("Canada", "Mexico")) %>%
+    st_geometry() %>%
+    st_transform(st_crs(grid.5km.lno))
+)
+
+
+bbox = c(-127,44,-120,49) 
+
+map_outline_VNS_vs_nonVMS <- ggplot() + 
+  geom_sf(data = dissolved_VMS_vessels, color = 'blue', fill = NA) +
+  geom_sf(data = dissolved_non_VMS_vessels, color = 'red', fill = NA) +
+  geom_sf(data=rmap.base,col=NA,fill='gray50') +
+  ggtitle("Fishery outline 2013-14 to 2019-20\nblue = VMS vessels, red = non-VMS vessels") +
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4])) +
+  theme_minimal() + #theme_classic() +
+  theme(text=element_text(family="sans",size=10,color="black"),
+        legend.text = element_text(size=10),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3),
+        axis.text.x.bottom = element_text(angle=45, vjust = 0.5),
+        strip.text = element_text(size=14),
+        title=element_text(size=16)
+  )
+map_outline_VNS_vs_nonVMS
+
+#------------------
+
+#Pot tier 500 - VMS vs non-VMS vessels
+
+grids_500_VMS_vessels <- sort(unique(traps_g_VMS_500_vessels$GRID5KM_ID))
+grids_5km_500_VMS_vessels <- grid.5km %>% filter(GRID5KM_ID %in% grids_500_VMS_vessels)
+#outline of fishery footprint for VMS vessels (2014-2020)
+dissolved_500_VMS_vessels <- st_union(grids_5km_500_VMS_vessels)
+plot(dissolved_500_VMS_vessels)
+
+grids_500_non_VMS_vessels <- sort(unique(traps_g_non_VMS_500_vessels$GRID5KM_ID))
+grids_5km_500_non_VMS_vessels <- grid.5km %>% filter(GRID5KM_ID %in% grids_500_non_VMS_vessels)
+#outline of fishery footprint for VMS vessels (2014-2020)
+dissolved_500_non_VMS_vessels <- st_union(grids_5km_500_non_VMS_vessels)
+plot(dissolved_500_non_VMS_vessels)
+
+
+map_outline_500_VMS_vs_nonVMS <- ggplot() + 
+  geom_sf(data = dissolved_500_VMS_vessels, color = 'blue', fill = NA) +
+  geom_sf(data = dissolved_500_non_VMS_vessels, color = 'red', fill = NA) +
+  geom_sf(data=rmap.base,col=NA,fill='gray50') +
+  ggtitle("Fishery outline 2013-14 to 2019-20\nPot tier: 500 \nblue = VMS vessels, red = non-VMS vessels") +
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4])) +
+  theme_minimal() + #theme_classic() +
+  theme(text=element_text(family="sans",size=10,color="black"),
+        legend.text = element_text(size=10),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3),
+        axis.text.x.bottom = element_text(angle=45, vjust = 0.5),
+        strip.text = element_text(size=14),
+        title=element_text(size=16)
+  )
+map_outline_500_VMS_vs_nonVMS
+
+#------------------
+
+#Pot tier 300 - VMS vs non-VMS vessels
+
+grids_300_VMS_vessels <- sort(unique(traps_g_VMS_300_vessels$GRID5KM_ID))
+grids_5km_300_VMS_vessels <- grid.5km %>% filter(GRID5KM_ID %in% grids_300_VMS_vessels)
+#outline of fishery footprint for VMS vessels (2014-2020)
+dissolved_300_VMS_vessels <- st_union(grids_5km_300_VMS_vessels)
+plot(dissolved_300_VMS_vessels)
+
+grids_300_non_VMS_vessels <- sort(unique(traps_g_non_VMS_300_vessels$GRID5KM_ID))
+grids_5km_300_non_VMS_vessels <- grid.5km %>% filter(GRID5KM_ID %in% grids_300_non_VMS_vessels)
+#outline of fishery footprint for VMS vessels (2014-2020)
+dissolved_300_non_VMS_vessels <- st_union(grids_5km_300_non_VMS_vessels)
+plot(dissolved_300_non_VMS_vessels)
+
+
+map_outline_300_VMS_vs_nonVMS <- ggplot() + 
+  geom_sf(data = dissolved_300_VMS_vessels, color = 'blue', fill = NA) +
+  geom_sf(data = dissolved_300_non_VMS_vessels, color = 'red', fill = NA) +
+  geom_sf(data=rmap.base,col=NA,fill='gray50') +
+  ggtitle("Fishery outline 2013-14 to 2019-20\nPot tier: 300 \nblue = VMS vessels, red = non-VMS vessels") +
+  coord_sf(xlim=c(bbox[1],bbox[3]),ylim=c(bbox[2],bbox[4])) +
+  theme_minimal() + #theme_classic() +
+  theme(text=element_text(family="sans",size=10,color="black"),
+        legend.text = element_text(size=10),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3),
+        axis.text.x.bottom = element_text(angle=45, vjust = 0.5),
+        strip.text = element_text(size=14),
+        title=element_text(size=16)
+  )
+map_outline_300_VMS_vs_nonVMS
 
