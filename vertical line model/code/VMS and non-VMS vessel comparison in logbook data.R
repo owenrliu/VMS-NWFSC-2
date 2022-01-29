@@ -203,6 +203,65 @@ ggplot(pot_spacing_WA_subset, aes(x=as.factor(Pot_Limit ), y=spacing_in_m, fill=
   theme(legend.position="bottom")
 
 
+#-----------
+#-----------
+
+# by MONTH and by VMS grouping
+testx <- pot_spacing_WA_subset %>% 
+  mutate(month_name = month(SetDate, label=TRUE, abbr = FALSE)) %>% 
+  mutate(month_name = factor(month_name, levels = c('December','January','February','March','April','May','June','July','August','September','October','November'))) %>%
+  filter(!is.na(month_name)) %>% 
+  group_by(grouping, month_name) %>% 
+  summarise(mean_spacing = mean(spacing_in_m),
+            mean_pots_per_mile = 1000/(mean(spacing_in_m))/0.621371
+  )
+
+
+spacing_by_month <- testx %>%
+  ggplot(aes(x=month_name ,y=mean_pots_per_mile, colour=as.factor(grouping), group=as.factor(grouping)))+
+  geom_line(size=1)+
+  labs(x="Month",y="pots/mile") +
+  ggtitle("Mean pots/mile in WA by month and by VMS grouping 2013-14 to 2019-20") +
+  theme(legend.position = ("top"),legend.title=element_blank())
+spacing_by_month
+
+
+pot_tier_300 <- pot_spacing_WA_subset %>% 
+  filter(Pot_Limit == 300) %>% 
+  mutate(month_name = month(SetDate, label=TRUE, abbr = FALSE)) %>% 
+  mutate(month_name = factor(month_name, levels = c('December','January','February','March','April','May','June','July','August','September','October','November'))) %>%
+  filter(!is.na(month_name)) %>% 
+  group_by(grouping, month_name) %>% 
+  summarise(mean_spacing = mean(spacing_in_m),
+            mean_pots_per_mile = 1000/(mean(spacing_in_m))/0.621371
+  )
+
+spacing_by_month_300_tier <- pot_tier_300 %>%
+  ggplot(aes(x=month_name ,y=mean_pots_per_mile, colour=as.factor(grouping), group=as.factor(grouping)))+
+  geom_line(size=1)+
+  labs(x="Month",y="pots/mile") +
+  ggtitle("Pot tier = 300 \nMean pots/mile in WA by month and by VMS grouping 2013-14 to 2019-20") +
+  theme(legend.position = ("top"),legend.title=element_blank())
+spacing_by_month_300_tier
+
+
+pot_tier_500 <- pot_spacing_WA_subset %>% 
+  filter(Pot_Limit == 500) %>% 
+  mutate(month_name = month(SetDate, label=TRUE, abbr = FALSE)) %>% 
+  mutate(month_name = factor(month_name, levels = c('December','January','February','March','April','May','June','July','August','September','October','November'))) %>%
+  filter(!is.na(month_name)) %>% 
+  group_by(grouping, month_name) %>% 
+  summarise(mean_spacing = mean(spacing_in_m),
+            mean_pots_per_mile = 1000/(mean(spacing_in_m))/0.621371
+  )
+
+spacing_by_month_500_tier <- pot_tier_500 %>%
+  ggplot(aes(x=month_name ,y=mean_pots_per_mile, colour=as.factor(grouping), group=as.factor(grouping)))+
+  geom_line(size=1)+
+  labs(x="Month",y="pots/mile") +
+  ggtitle("Pot tier = 500 \nMean pots/mile in WA by month and by VMS grouping 2013-14 to 2019-20") +
+  theme(legend.position = ("top"),legend.title=element_blank())
+spacing_by_month_500_tier
 #-----------------------------------------------------------------------------
 
 #differences in the spatial distribution between VMS and non-VMS vessels
