@@ -93,13 +93,6 @@ vessel_lengths <- purrr::map_df(2009:2019, function(yr){
   read_rds(paste0(here::here('data','processed','vessel length keys'),'/',"vessel_length_key_",yr,".rds"))
 })
 
-# For CA, tier info (number of traps per permit)
-CAtier <- read_rds(here('data','raw','CAtier_drvid_matching_key.rds'))
-
-# For OR, tier info (number of traps per permit, organized in a separate script
-# 3 keys for matching Oregon VLM
-ORtier <- read_rds(here('vertical line model','oregon_tier_drvid_matching_key.rds'))
-
 # a coastline, for plotting
 # coastline for plotting
 coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
@@ -243,7 +236,7 @@ vms_sf <- vms_sf %>%
 # Function to apply the steps above
 # the function takes a set of trip coordinates, a jitter amount in meters, and a number of traps/mile as input and returns a list of trap locations as output
 
-assign_traps <- function(trip,ntraps_per_mi=20,jitter_amount=1000) {
+assign_traps <- function(trip,ntraps_per_mi=15,jitter_amount=1000) {
   
   #convert to latlon for depth comparison
   if(nrow(trip)<3) return(NA)
@@ -321,7 +314,7 @@ nested_trips$traps <- simulated_traps
 toc()
 ```
 
-It took `r round(x[3]/60,2)` minutes to calculate traps for all trips. (5 hrs on 6 cores)
+It took a while to calculate traps for all trips. (5 hrs on 6 cores)
 
 ## Write to File
 

@@ -1,0 +1,213 @@
+---
+title: "Summarize VLM Outputs"
+author: "Owen Liu"
+date: "10/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(raster)
+library(data.table)
+library(tidyverse)
+library(lubridate)
+library(magrittr)
+library(sf)
+library(rnaturalearth)
+library(fasterize)
+library(tictoc)
+
+library(furrr)
+library(future)
+```
+
+```{r}
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_line(color="gray50",linetype=3))
+theme_set(plot_theme)
+```
+
+
+# Purpose
+
+The goal of this script is to take the output of the vertical line model simulation and apply functions that can summarise the total number and/or density of simulated crab pots. Update on a previous analysis that used weighting factors.
+
+# Import Data
+
+Simulated traps
+
+```{r}
+simtraps <- read_rds(here::here('vertical line model',"sim_traps_speed_depth_filters.rds"))
+```
+
+5x5km grid
+```{r}
+grd <- read_sf(here::here("data","raw","grid","fivekm_grid_polys_shore_lamb.shp"))
+names(grd)
+# raster representation of grid.
+# transform to a projection that uses meters instead of lat/long
+grd_rast <- fasterize(grd,raster = raster(grd,res=5000,crs=crs(grd)),field="GRID5KM_ID")
+# set -99999 to NA
+grd_rast[grd_rast==-99999] <- NA
+```
+
+Fish tickets
+```{r}
+fishtix_matched_all <- read_rds(here::here('data','processed','fish tickets','fish_tickets_w_dayofseason.rds'))
+# filter for out of season
+fishtix_matched_all %<>% filter(ticket_day_of_season>=0)
+```
+
+Coastline (just for plotting)
+```{r}
+# a coastline, for plotting
+# coastline for plotting
+coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington','Nevada'))
+coastline <- ne_coastline(scale='medium',returnclass = 'sf') %>% 
+  st_crop(st_bbox(coaststates))
+```
+
+Trap locations, discarding VMS data
+```{r}
+# traps locations only (discard VMS data for now), attached to fish ticket data
+traplocs <- simtraps %>% dplyr::select(Rec_ID,traps) %>% 
+  left_join(fishtix_matched_all,by="Rec_ID") %>% 
+  dplyr::select(Rec_ID,date,year,month,ticket_day_of_season,pacfin_port_code,port_group_code,agency_code,drvid,FINAL_LENGTH,traps) %>% 
+  distinct(Rec_ID,.keep_all = T) %>% 
+  # count number of traps associated with each trip
+  mutate(ntraps=purrr::map_int(traps,nrow))
+```
+
+Vessel tier info
+
+```{r}
+tier_key <- read_rds(here::here('vertical line model','tier_information_year_month_allstates.rds'))
+tier_key %<>% mutate(month=month.name[month]) %>% dplyr::select(-crabyr)
+```
+
+# Summarising Traps on the 5km Grid
+
+We want to write a function that takes the full simulated traps dataset, filters it by 1 week intervals, then gets counts of total traps per 5km grid cell.
+
+## Create Periods
+
+First, we need to create identifiers for 1 week periods.
+
+```{r}
+traplocs <- traplocs %>% 
+  filter(!is.na(date)) %>% 
+  # week of year
+  mutate(period_1wk=week(date))
+```
+
+Add tier info
+
+```{r}
+traplocs <- traplocs %>% 
+  left_join(tier_key,by=c('year','month','agency_code','drvid')) %>% 
+  mutate(vessel_size_category=ifelse(FINAL_LENGTH<40,'small','large'))
+```
+
+## Calculate Total Number of Permitted Traps
+
+```{r}
+max_traps_by_year_week_size <- fishtix_matched_all %>% 
+  left_join(tier_key) %>% 
+  mutate(period_1wk=week(date)) %>% 
+  mutate(vessel_size_category=ifelse(FINAL_LENGTH<40,'small','large')) %>% 
+  mutate(ntraps_permitted=coalesce(ntraps_permitted,500)) %>%
+  distinct(year,period_1wk,drvid,agency_code,vessel_size_category,ntraps_permitted) %>% 
+  group_by(year,period_1wk,agency_code,drvid,vessel_size_category) %>% 
+  slice_max(ntraps_permitted,n=1) %>% 
+  group_by(agency_code,year,period_1wk,vessel_size_category) %>% 
+  summarise(max_potential_traps=sum(ntraps_permitted)) %>% 
+  ungroup()
+```
+
+## Rasterize Traps
+
+Write the function to count traps, per grid cell, by period.
+
+```{r}
+count_traps <- function(yr,per,state,vesselsize){
+  
+  # use max_traps_year_by_year_month_size to get a maximum traps number
+  maxtraps <- max_traps_by_year_week_size %>% 
+    filter(year==yr,period_1wk==per,agency_code==state,vessel_size_category==vesselsize) %>% 
+    pull('max_potential_traps') %>% unique()
+  
+  samp <- traplocs %>%
+    ungroup() %>%
+    filter(year==yr,period_1wk==per,agency_code==state,vessel_size_category==vesselsize)
+  
+  # add a relative weight for density calcs
+  samp <- samp %>% 
+    mutate(traps=purrr::map(traps,function(df,wt) mutate(df,wt=1)))
+
+  if(nrow(samp)==0){
+    print(paste('Week',per,'in',yr,"had zero observations."))
+    zero_rast <- setValues(grd_rast,NA)
+    names(zero_rast) <- paste0('week'," ",per," ",yr)
+    return(zero_rast)
+  } else{
+    samp_sf<-setDT( samp )[, rbindlist( traps ) ] %>%
+    sf::st_as_sf(crs=4326) %>% 
+    # transform to match the grid
+    st_transform(st_crs(grd)) %>% 
+    dplyr::select(wt) %>% 
+    as_Spatial()
+    
+    # use raster::rasterize() to count the number of traps in each cell
+  out_rast <- raster::rasterize(samp_sf,grd_rast,field='wt',fun='sum')
+  
+  # normalize the raster, then multiply by max traps
+  out_rast <- out_rast/sum(getValues(out_rast),na.rm=T)*maxtraps
+  names(out_rast) <- paste0('week'," ",per," ",yr)
+
+  print(paste0('state ',state,' week'," ",per," ",yr," done."))
+  return(out_rast)
+  }
+
+}
+```
+
+```{r}
+week48_2013_ca <- count_traps(2013,48,state="C",vesselsize='small')
+plot(week48_2013_ca)
+```
+
+
+```{r apply fxn}
+tic("1 Week Interval Pot Counts, Small Vessels")
+years_states_periods <- traplocs %>% 
+  ungroup() %>% 
+  filter(ntraps > 0) %>% 
+  distinct(year,period_1wk,agency_code) %>% 
+  rename(yr=year,per=period_1wk,state=agency_code) %>% 
+  unite(lab,state,yr,per,sep="_",remove=F)
+# future::plan(multisession)
+# trap_density_all_periods_small <- furrr::future_pmap(list(years_states_periods$yr,years_states_periods$per,years_states_periods$state),count_traps,vesselsize='small')
+trap_density_all_periods_small <- purrr::pmap(list(years_states_periods$yr,years_states_periods$per,years_states_periods$state),count_traps,vesselsize='small')
+toc()
+trap_density_stack_small_vessels <- raster::stack(trap_density_all_periods_small)
+names(trap_density_stack_small_vessels) <- years_states_periods$lab
+write_rds(trap_density_stack_small_vessels,here::here('vertical line model',"trap_density_all_1week_periods_states_small_vessels.rds"))
+
+```
+
+```{r apply fxn}
+tic("1 Week Interval Pot Counts, Large Vessels")
+trap_density_all_periods_large <- purrr::pmap(list(years_states_periods$yr,years_states_periods$per,years_states_periods$state),count_traps,vesselsize='large')
+toc()
+trap_density_stack_large_vessels <- raster::stack(trap_density_all_periods_large)
+names(trap_density_stack_large_vessels) <- years_states_periods$lab
+write_rds(trap_density_stack_large_vessels,here::here('vertical line model',"trap_density_all_1week_periods_states_large_vessels.rds"))
+
+# future::plan(sequential)
+```
