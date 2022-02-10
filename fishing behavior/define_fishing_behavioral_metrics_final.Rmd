@@ -1,16 +1,19 @@
 ---
 title: "Calculating Fishing Behavioral Metrics"
 author: "Owen Liu"
-date: "2/4/2020"
+date: "2/9/2022"
 output: html_document
 ---
 
 ## Purpose
 
-Following O'Farrell et al. (2019), we want to use VMS and fish ticket data to define behavioral metrics for the west coast Dungeness crab fishery. These can then be used for classifying behavior through clustering and perhaps looking at behavior change surrounding whale entanglement and the 2014-16 marine heat wave.
+We want to use VMS and fish ticket data to define behavioral metrics for the west coast Dungeness crab fishery. These can then be used for classifying behavior through clustering and perhaps looking at behavior change surrounding whale entanglement and the 2014-16 marine heat wave.
 
 ## Import Data
+
 ```{r}
+options(dplyr.summarise.inform = FALSE)
+options(tidyverse.quiet = TRUE)
 library(tidyverse)
 library(magrittr)
 library(here)
@@ -37,6 +40,9 @@ fishtix_long <- read_rds(here::here('data','processed','fish tickets','fish_tick
 fishtix %<>% filter(ticket_day_of_season>=0)
 fishtix_long %<>% filter(ticket_day_of_season>=0)
 
+# pacfin species identifiers
+pacfin_spid <- read_csv(here('data','raw','pacfin_spid.csv'),col_types='icccc')
+
 # crab season indicator
 recid_crabseason <- fishtix %>% select(Rec_ID,crab_season) %>% distinct()
 
@@ -62,24 +68,7 @@ cpi %<>%
   mutate(convert2010=1/(annual_average/218.1)) %>% 
   filter(year>2007) %>% 
   dplyr::select(year,convert2010)
-```
 
-
-```{r}
-# key of drvid vs. states
-# vessel_state_key <- vms %>% 
-#   group_by(drvid,agency_code) %>% 
-#   summarise(totland=sum(DCRB_revenue)) %>% 
-#   ungroup() %>% 
-#   group_by(drvid) %>% 
-#   mutate(nstates=n_distinct(agency_code)) %>% 
-#   # for states with >1 state associated, pick the one with highest landings
-#   mutate(perc_land=totland/sum(totland)) %>% 
-#   arrange(desc(perc_land)) %>% 
-#   slice(1) %>% 
-#   select(drvid,agency_code)
-# # save
-# write_rds(vessel_state_key,here::here('fishing behavior','vessel_state_key.rds'))
 ```
 
 ## Metrics to Calculate
@@ -243,11 +232,11 @@ total_ports <- vms %>%
 
 # Collected port use metrics
 port_use_metrics <- ports_by_trip %>% 
-  left_join(ports_by_month) %>%
+  left_join(ports_by_month,by = c("drvid", "crab_season")) %>%
   # using inverse simpson index
-  left_join(ports_diversity_shannon) %>%
-  left_join(ports_diversity_simpson) %>% 
-  left_join(total_ports)
+  left_join(ports_diversity_shannon,by = c("drvid", "crab_season")) %>%
+  left_join(ports_diversity_simpson,by = c("drvid", "crab_season")) %>% 
+  left_join(total_ports,by = c("drvid", "crab_season"))
 
 # plot diversity metric (Shannon and Simpson)
 port_diversity_plot_shannon <- ports_diversity_shannon %>% 
@@ -263,6 +252,13 @@ port_diversity_plot_simp <- ports_diversity_simpson %>%
   labs(x='Diversity of Port Use (Simpson)')
 port_diversity_plot_simp
 ggsave(here::here('fishing behavior','plots','port_diversity_metric_simpson.png'),port_diversity_plot_simp,w=6,h=4)
+
+port_diversity_comparison <- port_use_metrics %>% 
+  ggplot(aes(port_shannon,port_simpson))+
+  geom_point()+
+  labs(x="Shannon",y="Simpson")
+port_diversity_comparison
+ggsave(here::here('fishing behavior','plots','port_diversity_metric_comparison.png'),port_diversity_comparison,w=6,h=4)
 
 # for now use Shannon
 port_use_metrics %<>% dplyr::select(-port_simpson)
@@ -385,9 +381,67 @@ Additionally, calculate revenue diversity of landings (inverse Simpson diversity
 Seasons over which to calculate other revenue are defined in the same manner as other metrics- that is, revenue is measured over the course of the crab seasons (as opposed to, e.g., calendar years).
 
 ```{r}
+# Grouping species before revenue diversity and participation metrics
+
+# check species prevalence
+all_fishtix_spp <- fishtix_long %>%
+  filter(drvid %in% vessel_list) %>%
+  distinct(PACFIN_SPECIES_CODE) %>% 
+  # join the PACFIN-recognized species groups, and use this to organize
+  left_join(pacfin_spid,by=c('PACFIN_SPECIES_CODE'='SPID')) %>% 
+  dplyr::select(PACFIN_SPECIES_CODE,`Common Name`, Grp) %>% 
+  rename(commonname=`Common Name`,spp_grp=Grp)
+
+other_fisheries_revenues_spp <- fishtix_long %>%
+  filter(drvid %in% vessel_list) %>%
+  distinct(Rec_ID,drvid,crab_season,PACFIN_SPECIES_CODE,tot_revenue_spp) %>%
+  left_join(all_fishtix_spp) %>% 
+  group_by(drvid,crab_season,spp_grp,PACFIN_SPECIES_CODE) %>%  
+  summarise(tot_rev=sum(tot_revenue_spp,na.rm=T)) %>% 
+  ungroup() %>% 
+  complete(nesting(drvid,crab_season),PACFIN_SPECIES_CODE,spp_grp,fill=list(tot_rev=0)) %>% 
+  ungroup() %>% 
+  group_by(drvid,crab_season) %>% 
+  mutate(prop_rev=tot_rev/sum(tot_rev)) %>%
+  ungroup() %>% 
+  group_by(PACFIN_SPECIES_CODE) %>% 
+  summarise(mean_prop_rev=mean(prop_rev,na.rm=T))
+
+other_fisheries_revenues_grp <- fishtix_long %>%
+  filter(drvid %in% vessel_list) %>%
+  distinct(Rec_ID,drvid,crab_season,PACFIN_SPECIES_CODE,tot_revenue_spp) %>%
+  left_join(all_fishtix_spp) %>% 
+  group_by(drvid,crab_season,spp_grp) %>%  
+  summarise(tot_rev=sum(tot_revenue_spp,na.rm=T)) %>% 
+  ungroup() %>% 
+  complete(nesting(drvid,crab_season),spp_grp,fill=list(tot_rev=0)) %>% 
+  ungroup() %>% 
+  group_by(drvid,crab_season) %>% 
+  mutate(prop_rev=tot_rev/sum(tot_rev)) %>%
+  ungroup() %>% 
+  group_by(spp_grp) %>% 
+  summarise(mean_prop_rev=mean(prop_rev,na.rm=T))
+
+# Across all crab seasons and vessels, this is what the breakdown of mean percent revenue by species looks like
+other_fisheries_revenues_spp %>% 
+  arrange(desc(mean_prop_rev)) %>% 
+  slice(1:20) %>% 
+  ggplot(aes(x=fct_reorder(PACFIN_SPECIES_CODE,-mean_prop_rev),y=mean_prop_rev*100))+
+  geom_col()+
+  labs(x="Species Code",y="Mean Percent of Revenue",title="Top 20 Species by Proportion of Revenue")
+
+other_fisheries_revenues_grp %>% 
+  arrange(desc(mean_prop_rev)) %>% 
+  ggplot(aes(x=fct_reorder(spp_grp,-mean_prop_rev),y=mean_prop_rev*100))+
+  geom_col()+
+  labs(x="Species Group Code",y="Mean Percent of Revenue",title="Species Groups by Proportion of Revenue")
+```
+
+```{r}
 # organize long-form fish tickets by Rec_ID, and DCRB vs. all other revenue
 fishtix_dcrb_other <- fishtix_long %>%
   filter(drvid %in% vessel_list) %>%
+  left_join(all_fishtix_spp) %>% 
   mutate(is_DCRB=PACFIN_SPECIES_CODE=="DCRB") %>% 
   group_by(Rec_ID,TARGET_rev,drvid,crab_season) %>% 
   summarise(DCRB_revenue=sum(spp_revenue[is_DCRB]),other_revenue=sum(spp_revenue[!is_DCRB])) %>% 
@@ -408,14 +462,17 @@ participation_metric <- fishtix_dcrb_other %>%
   rename(crab_season=crab_season) %>% 
   distinct(drvid,crab_season,prop_other_revenue,prop_other_tix)
 
-participation_diversity <- fishtix_long %>%
+# Update 02/2022- calculate diversity on species groups, not just species
+fishtix_spp_grps <- fishtix_long %>%
   filter(drvid %in% vessel_list) %>%
-  distinct(Rec_ID,drvid,crab_season,PACFIN_SPECIES_CODE,tot_revenue_spp) %>%
-  group_by(drvid,crab_season,PACFIN_SPECIES_CODE) %>%  
-  summarise(tot_rev=sum(tot_revenue_spp,na.rm=T)) %>% 
-  ungroup() %>% 
+  left_join(all_fishtix_spp) %>%
+  group_by(drvid,crab_season,spp_grp) %>% 
+  summarise(tot_rev_grp=sum(tot_revenue_spp)) %>% 
+  ungroup()
+
+participation_diversity <- fishtix_spp_grps %>%
   group_by(drvid,crab_season) %>% 
-  mutate(prop_rev=tot_rev/sum(tot_rev)) %>% 
+  mutate(prop_rev=tot_rev_grp/sum(tot_rev_grp)) %>% 
   summarise(revenue_diversity=1/sum(prop_rev^2)) %>% 
   ungroup()
 
@@ -443,43 +500,13 @@ participation_metrics <- participation_metric %>%
   full_join(participation_diversity)
 
 # comparing participation metrics
-# participation_metrics %>% 
-#   ggplot(aes(prop_other_tix,revenue_diversity))+
-#   geom_point()+
-#   geom_smooth(method='lm')+
-#   labs(x='Proportion of Tickets Targeting Other Fisheries',y='Inverse Simpson Diversity Index of Landings')
-# not correlated really
-cor(participation_metrics$prop_other_tix,participation_metrics$revenue_diversity,use='complete.obs')
+participation_metrics %>%
+  ggplot(aes(prop_other_tix,revenue_diversity))+
+  geom_point()+
+  geom_smooth()+
+  labs(x='Proportion of Tickets Targeting Other Fisheries',y='Inverse Simpson Diversity Index of Landings')
+# dome-shaped relationship makes sense
 ```
-
-```{r}
-# Update 02/09/21
-# Checking how much participation diversity is driven by groundfish
-
-# check species prevalence
-other_fisheries_revenues <- fishtix_long %>%
-  filter(drvid %in% vessel_list) %>%
-  distinct(Rec_ID,drvid,crab_season,PACFIN_SPECIES_CODE,tot_revenue_spp) %>%
-  group_by(drvid,crab_season,PACFIN_SPECIES_CODE) %>%  
-  summarise(tot_rev=sum(tot_revenue_spp,na.rm=T)) %>% 
-  ungroup() %>% 
-  complete(nesting(drvid,crab_season),PACFIN_SPECIES_CODE,fill=list(tot_rev=0)) %>% 
-  ungroup() %>% 
-  group_by(drvid,crab_season) %>% 
-  mutate(prop_rev=tot_rev/sum(tot_rev)) %>%
-  ungroup() %>% 
-  group_by(PACFIN_SPECIES_CODE) %>% 
-  summarise(mean_prop_rev=mean(prop_rev,na.rm=T))
-
-# Across all crab seasons and vessels, this is what the breakdown of mean percent revenue by fishery looks like
-other_fisheries_revenues %>% 
-  arrange(desc(mean_prop_rev)) %>% 
-  slice(1:20) %>% 
-  ggplot(aes(x=fct_reorder(PACFIN_SPECIES_CODE,-mean_prop_rev),y=mean_prop_rev*100))+
-  geom_col()+
-  labs(x="Species Code",y="Mean Percent of Revenue",title="Top 20 Species by Proportion of Revenue")
-```
-
 
 ### Risk Metric
 
@@ -798,6 +825,7 @@ homerange_plot <- homerange_metric %>%
   ggplot(aes(homerange))+
   geom_density(fill='#33638DFF')+
   labs(x='Home Range (95% Convex Hull Area, km^2)')
+
 homerange_plot
 
 write_rds(homerange_metric,here::here('fishing behavior','homerange_metric.rds'))
@@ -808,15 +836,15 @@ ggsave(here::here('fishing behavior','plots','homerange_metric.png'),homerange_p
 
 ```{r}
 all_metrics <- port_use_metrics %>% 
-  full_join(revenue_metrics) %>% 
-  full_join(landings_metrics) %>% 
-  full_join(trip_metrics) %>% 
-  full_join(derby_metric) %>% 
-  full_join(participation_metrics) %>% 
-  full_join(risk_metric) %>% 
-  full_join(entropy_metric) %>% 
-  full_join(homerange_metric) %>% 
-  full_join(vessel_size_metric) %>% 
+  full_join(revenue_metrics, by = c("drvid", "crab_season")) %>% 
+  full_join(landings_metrics, by = c("drvid", "crab_season")) %>% 
+  full_join(trip_metrics, by = c("drvid", "crab_season")) %>% 
+  full_join(derby_metric, by = c("drvid", "crab_season")) %>% 
+  full_join(participation_metrics, by = c("drvid", "crab_season")) %>% 
+  full_join(risk_metric, by = c("drvid", "crab_season")) %>% 
+  full_join(entropy_metric, by = c("drvid", "crab_season")) %>% 
+  full_join(homerange_metric, by = c("drvid", "crab_season")) %>% 
+  full_join(vessel_size_metric, by = c("drvid", "crab_season")) %>% 
   filter(drvid %in% vessel_list) %>% 
   filter(!is.na(crab_season)) %>% 
   distinct()
@@ -825,5 +853,5 @@ all_metrics <- port_use_metrics %>%
 
 ### Save
 ```{r}
-write_rds(all_metrics,here::here('fishing behavior','fishing_behavior_metrics_vessel_season.rds'))
+write_rds(all_metrics,here::here('fishing behavior','fishing_behavior_metrics_vessel_season_final.rds'))
 ```

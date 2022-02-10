@@ -54,6 +54,7 @@ dat <- read_rds(here::here('fishing behavior','fishing_behavior_metrics_vessel_s
   distinct()
 glimpse(dat)
 ```
+
 ```{r}
 # Important additional datasets needed for comparison of behavioral group performance
 
@@ -102,6 +103,46 @@ vms_all_grd %<>%
 
 trip_duration_key <- vms %>% 
   distinct(Rec_ID,trip_dur)
+
+# consumer price index (for inflation adjustments)
+#https://www.minneapolisfed.org/about-us/monetary-policy/inflation-calculator/consumer-price-index-1913-
+cpi <- read_csv(here('data','raw','cpi_2021.csv'),col_types='idc')
+# baseline is 1982-1984 $$
+# add a conversion factor to 2010 $$
+cpi %<>% 
+  mutate(convert2010=1/(annual_average/218.1)) %>% 
+  filter(year>2007) %>% 
+  dplyr::select(year,convert2010)
+```
+
+```{r}
+# convert revenue in all revenue observations to 2010 dollars
+fishtix %<>%
+  # do the $$ conversion factor to 2010 dollars
+  left_join(cpi,by='year') %>%
+  mutate(across(contains('revenue'), ~.x*convert2010)) %>%
+  select(Rec_ID:agency_code,date,crab_season,DCRB_revenue,DCRB_lbs,FINAL_LENGTH,ticket_day_of_season)
+
+
+fishtix_long %<>%
+  # do the $$ conversion factor to 2010 dollars
+  left_join(cpi,by='year') %>% 
+  mutate(across(c(spp_revenue,tot_revenue_spp), ~.x*convert2010)) %>% 
+  dplyr::select(-convert2010)
+
+vms %<>%
+  mutate(year=year(date)) %>% 
+  # do the $$ conversion factor to 2010 dollars
+  left_join(cpi,by='year') %>% 
+  mutate(across(c(other_rev,SABL_revenue,DCRB_revenue,LOBS_revenue,SPRW_revenue), ~.x*convert2010)) %>% 
+  dplyr::select(-convert2010,-year)
+
+vms_all_grd %<>%
+  mutate(year=year(date)) %>% 
+  # do the $$ conversion factor to 2010 dollars
+  left_join(cpi,by='year') %>% 
+  mutate(across(c(other_rev,SABL_revenue,DCRB_revenue,LOBS_revenue,SPRW_revenue), ~.x*convert2010)) %>% 
+  dplyr::select(-convert2010,-year)
 ```
 
 ```{r}
@@ -117,7 +158,7 @@ More specifically, the metrics are as follows for each vessel (`drvid`) in each 
 1.  Port use: 
   *  `n_ports_trip` Average ports visited per trip
   *  `ports_mean_mth` Number of ports visited per month 
-  *  `port_shannon` Shannon diversity index of port use
+  *  `port_diversity` Inverse Simpson diversity index of port use
   *  `total_ports` Total number of ports visited across the entire season
 2.  Revenue: 
   *  `revenue_mean` Mean Dungeness revenue per trip
@@ -155,7 +196,7 @@ vars.corrs <- dat %>% select(-(1:2),-revenue_mean,-revenue_sd,-landings_mean,-la
   cor(use="complete.obs") %>% 
   as_tibble(rownames="var1") %>% 
   pivot_longer(-var1,names_to = "var2",values_to = "corr")
-vars.corrs %>% filter(corr !=1) %>% distinct(corr,.keep_all = T) %>% arrange(desc(corr)) %>% slice(1:10) %>% knitr::kable()
+vars.corrs %>% filter(corr !=1) %>% distinct(corr,.keep_all = T) %>% arrange(desc(corr)) %>% slice(1:15) %>% knitr::kable()
 
 vars.corrs %>% 
   ggplot(aes(var1,var2,fill=corr))+
@@ -191,10 +232,10 @@ dat_scaled <- dat %>%
 We then perform a clustering of the data, using Ward aggregation that attempts to minimize total within-cluster variance. However, instead of choosing the number of resulting classes rather arbitrarily from the results, we utilize the package `NbClust` that calculates 22 clustering indices defined in the literature, and then recommends the optimal number of clusters via majority vote.
 
 ```{r,results=FALSE,include=FALSE}
-dat_clust <- dat_scaled %>% select(-(1:2)) %>% NbClust(method="ward.D2",min.nc = 2,max.nc=10,index='all')
+dat_clust <- dat_scaled %>% dplyr::select(-(1:2)) %>% NbClust(method="ward.D2",min.nc = 2,max.nc=10,index='all')
 ```
 
-After clustering, there was a range of number of clusters (groups) suggested by the clustering indices, but the **strong majority vote was 4 groups**. 7 of 22 clustering methods suggested that 4 was the best number of clusters. 6 methods suggested 3 groups, 4 suggested 2 groups, and no other group number received more than 2 votes.
+After clustering, there was a range of number of clusters (groups) suggested by the clustering indices, but the ** majority vote was 4 groups**. 9 of 22 clustering methods suggested that 4 was the best number of clusters. 7 methods suggested 3 groups, 3 suggested 2 groups, and no other group number received more than 2 votes.
 
 ```{r}
 write_rds(dat_clust,here('fishing behavior','FBT_clusters.rds'))
@@ -300,10 +341,10 @@ dat.pca <- FactoMineR::PCA(dat_for_pca,graph=FALSE)
 # names for groups
 clustnames <- tibble(partition=dat_clust$Best.partition) %>%
   mutate(partition=case_when(
-    partition==3 ~ "Roving Specialists",
-    partition==1 ~ "Local Generalists",
+    partition==2 ~ "Roving Specialists",
+    partition==3 ~ "Local Generalists",
     partition==4 ~ "Roving Generalists",
-    partition==2 ~ "Local Specialists"
+    partition==1 ~ "Local Specialists"
   )) %>%
   mutate(partition=factor(partition,levels=c("Local Specialists","Local Generalists","Roving Specialists","Roving Generalists")))
 
@@ -385,7 +426,7 @@ group_means <- dat %>%
 library(cowplot)
 
 group_boxes <- plot_grid(plotlist=group_means$plotvars,labels=LETTERS[1:nrow(group_means)])
-ggsave(here::here('fishing behavior','plots','groups_boxplots.png'),group_boxes,w=8,h=8)
+# ggsave(here::here('fishing behavior','plots','groups_boxplots.png'),group_boxes,w=8,h=8)
 
 group_boxes
 # If only 2 groups
@@ -471,11 +512,10 @@ ggsave(here::here('fishing behavior','plots','groups_rankings_plot.png'),groups_
 ## Add factor levels/names to clustered data
 dat_clustered <- dat_clustered %>%
   mutate(partition=case_when(
-    partition==3 ~ "Roving Specialists",
-    partition==1 ~ "Local Generalists",
+    partition==2 ~ "Roving Specialists",
+    partition==3 ~ "Local Generalists",
     partition==4 ~ "Roving Generalists",
-    partition==2 ~ "Local Specialists"
-  )) %>%
+    partition==1 ~ "Local Specialists")) %>%
   mutate(partition=factor(partition,levels=c("Local Specialists","Local Generalists","Roving Specialists","Roving Generalists")))
 # dat_clustered <- dat_clustered %>% 
 #   mutate(partition=case_when(
@@ -494,7 +534,7 @@ Random forests are built from a number of individual classification trees (we us
 
 Random forests build many of these trees, with two differences from single classification trees. First, for each tree, only a bootstrapped subsample of the original data is chosen for classification. Second, only a subset of the predictor variables are "available" to the tree for binary partitioning, chosen randomly. Therefore, each tree is twice randomized---first through bootstrapping, and then through the random selection of partitioning variables; hence creating the "random forest". Once many trees are grown from the bootstrapped sample, the classes for the observations from the original data set that were not chosen for fitting (known as out-of-bag observations) are predicted by each tree in the forest. We compile the rate at which the forest mis-classifies observations into the incorrect class. The measure of variable importance is the *change* in this mis-classification rate when a variable is randomly permuted in the out-of-bag sample. In other words, we measure how much worse our classification performs without the correctly-ordered variable.
 ```{r}
-variable_name_matches <- tibble(v=c("n_ports_trip","ports_mean_mth","port_shannon","trip_dur_mean","trip_dur_sd","quant90_day","prop_other_revenue","revenue_diversity","prop_highwinds","entropy_quant90","homerange","vessel_size"),metric=c("Ports per Trip",
+variable_name_matches <- tibble(v=c("n_ports_trip","ports_mean_mth","port_diversity","trip_dur_mean","trip_dur_sd","quant90_day","prop_other_revenue","revenue_diversity","prop_highwinds","entropy_quant90","homerange","vessel_size"),metric=c("Ports per Trip",
          "Ports per Month",
          "Port Diversity",
          "Mean Trip Duration",
