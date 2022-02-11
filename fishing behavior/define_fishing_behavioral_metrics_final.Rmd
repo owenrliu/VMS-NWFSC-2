@@ -20,6 +20,7 @@ library(here)
 library(lubridate)
 library(sf)
 library(rnaturalearth)
+library(cowplot)
 
 # ggplot theme
 plot_theme <-   theme_minimal()+
@@ -329,6 +330,7 @@ trip_metrics <- vms %>%
   group_by(drvid,crab_season) %>% 
   summarise(trip_dist_mean=mean(trip_dist,na.rm = T),trip_dur_mean=mean(trip_dur,na.rm = T),trip_dist_sd=sd(trip_dist,na.rm=T),trip_dur_sd=sd(trip_dur,na.rm=T)) %>%
   ungroup()
+
 trip_plot <- trip_metrics %>% 
   ggplot(aes(trip_dist_mean))+
   geom_density(fill='#33638DFF')+
@@ -336,12 +338,51 @@ trip_plot <- trip_metrics %>%
 trip_plot
 ggsave(here::here('fishing behavior','plots','trips_metric.png'),trip_plot,w=6,h=4)
 
+
+trip_dur_plot <- trip_metrics %>% 
+  ggplot(aes(trip_dur_mean))+
+  geom_density(fill='#33638DFF')+
+  labs(x='trip duration (days)')
+trip_dur_plot
+ggsave(here::here('fishing behavior','plots','trip_duration_metric.png'),trip_dur_plot,w=6,h=4)
+
 # relationship between trip distance and trip duration
-# trip_dist_duration_plot <- trip_metrics %>% 
+# trip_dist_duration_plot <- trip_metrics %>%
 #   ggplot(aes(trip_dist_mean,trip_dur_mean))+
 #   geom_point(size=0.5)+
 #   labs(x="trip distance (km)",y="trip duration (days)")
 # trip_dist_duration_plot
+
+
+# in another way
+trip_dur_alltrips <- vms %>% 
+  filter(drvid %in% vessel_list) %>% 
+  distinct(Rec_ID,.keep_all=T) %>% 
+  mutate(month=month(date)) %>% 
+  group_by(month) %>% 
+  summarise(ntrips=n_distinct(Rec_ID),
+            mean_dur=mean(trip_dur,na.rm=T),
+            less_than_7=sum(trip_dur<7,na.rm=T)) %>% 
+  mutate(prop_less_than_7=less_than_7/ntrips) %>% 
+  mutate(month=month.name[month]) %>% 
+  filter(!(month%in% c("September","October"))) %>% 
+  mutate(month=factor(month,levels=c("November","December","January","February","March","April","May","June","July","August")))
+
+trip_dur_by_month <- trip_dur_alltrips %>% 
+  ggplot(aes(month,mean_dur,group=1))+
+  geom_point()+geom_line()+
+  ylim(0,6)+
+  labs(x="Month",y="Mean Crab Trip Duration (Days)")
+
+trip_dur_prop_by_month <- trip_dur_alltrips %>% 
+  ggplot(aes(month,prop_less_than_7,group=1))+
+  geom_point()+geom_line()+
+  ylim(0,1)+
+  labs(x="Month",y="Proportion of Trips <7 days")
+
+trip_dur_plots <- plot_grid(trip_dur_by_month,trip_dur_prop_by_month,nrow=2,labels='auto')
+trip_dur_plots
+ggsave(here('fishing behavior','plots','trip_duration_by_month.png'),trip_dur_plots,h=8,w=6)
 ```
 
 ### Derby Metric

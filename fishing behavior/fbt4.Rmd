@@ -756,16 +756,16 @@ trans_types_by_season <- drvid_other_fisheries %>%
   mutate(transition_type=factor(transition_type,levels=c("Remain Not Fishing","Remain in Different Fishery","Switch to Different Fishery","Enter Non-crab Fishery","Enter Crab Fishery","Stop Fishing","Same Group","Switch Groups")))
 
 transition_types_by_season_plot <- trans_types_by_season %>% 
-  ggplot(aes(crab_season,prop,group=transition_type,col=transition_type,fill=transition_type))+
+  ggplot(aes(crab_season,n,group=transition_type,col=transition_type,fill=transition_type))+
   geom_line()+geom_point()+
   scale_fill_jco()+
   scale_color_jco()+
-  labs(x="Crab Season",y="Proportion of Vessels",fill="Transition Type",col="Transition Type")+
+  labs(x="Crab Season",y="Number of Vessels",fill="Transition Type",col="Transition Type")+
   theme(axis.text.x=element_text(angle=90,vjust=0.5),
         panel.grid.major=element_blank(),
         panel.grid.minor=element_blank())
 transition_types_by_season_plot
-
+ggsave(here('fishing behavior','plots','behavioral_group_transitions.png'),transition_types_by_season_plot,w=8,h=6)
 ```
 ## Behavioral Class and Performance
 
