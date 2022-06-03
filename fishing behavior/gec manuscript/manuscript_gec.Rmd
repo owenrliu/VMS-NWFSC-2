@@ -66,27 +66,58 @@ The importance of individual metrics in discriminating between clusters was calc
 
 ## Dungeness Fishing Profitability
 
-We used fish ticket data to assess the per-trip, per-week, and per-season landings and revenue of vessels in each fisher behavioral group over time. Additionally, we modeled fishing costs following the approach of @Dewees2004 to assign an estimated profit to each fishing trip. The cost of a fishing trip $C_t$ is assumed to be a function of fuel $C_f$ and bait costs, and the costs of labor (i.e., crew) $C_c$:
+Fishing trips incur daily costs $C_d$ that are associated with fuel $C_f$, bait $C_b$, and other variable costs $C_v$ like the fixing of traps. Additionally, there are costs associated with the entire fishing trip, most notably the share of trip revenue $R_i$ that goes to crew members, $C_c$. Revenue share to crew increases with vessel size, since larger vessels require more crew. We simulated the following relationships to estimate the cost of a fishing trip $Ci$ lasting $d_i$ days:
 
-$$C_t = C_f + C_c$$
-Fuel and bait cost is a function of vessel size $L$ and number of days fished $d$, as well as trip year $y$ to adjust for an assumed 2 percent inflation rate.
+\begin{equation}
+  C_i = d_iC_d + R_iC_c 
+\end{equation}
 
-$$C_f = f(L,d,y)$$
+\begin{equation}
+  C_d = C_b + C_f + C_v
+\end{equation}
 
-Crew cost is a function of vessel size (because larger vessels require more crew members) and total trip revenue $R$ (since crew members receive a proportion of revenue).
+To simulate these costs, we adopt data from Dewees et al. (2004), who conducted a survey of small (<30 feet in length), medium (30 to 50 feet), and large (more than 50 feet) size-class vessels. We used their estimates of $C_b$, $C_f$, $C_v$ and $C_c$ to simulate 10,000 draws from the distributions below for all combinations of year (2008-2019) and state (California, Oregon, and Washington). We accounted for fuel price differences between states using a relative marine fuel price index $r_{s,y}$ (Fig. A.16). All dollar values were normalized to 2010 USD.
 
-$$C_c = f(L,R)$$
+\begin{equation}
+  C_b =
+    \begin{cases}
+      \sim N(66,73) & \text{$0<$length$<30$}\\
+      \sim N(178,269) & \text{$30<=$length$<=50$}\\
+      \sim N(261,188) & \text{otherwise}\\
+    \end{cases}\\
+\end{equation}
+\begin{equation}
+  C_f =
+    \begin{cases}
+      \sim N(47,51)*r_{s,y} & \text{$0<$length$<30$}\\
+      \sim N(78.5,158)*r_{s,y} & \text{$30<=$length$<=50$}\\
+      \sim N(173,96)*r_{s,y} & \text{otherwise}\\
+    \end{cases}\\
+\end{equation}
+\begin{equation}
+  C_v =
+    \begin{cases}
+      \sim N(46,62) & \text{$0<$length$<30$}\\
+      \sim N(47,62) & \text{$30<=$length$<=50$}\\
+      \sim N(72,33) & \text{otherwise}\\
+    \end{cases}
+\end{equation}
 
-The above cost relationships were parameterized using data from @Dewees2004, who administered a survey to 243 Dungeness crab fishers and compiled estimates of fishing costs by vessel size. The survey estimated costs associated with bait, fuel, and labor (crew) for small (less than 9.1m), medium (9.1-15.2 m) and large (greater than 15.2 m) fishing vessels. Using the means and standard deviations of these costs reported in @Dewees2004, we simulated 10,000 trip costs for vessels ranging in length from 6.4 to 31.4 m, which is the range of vessel sizes in our data. Then, linear relationships between vessel size and both types of costs were estimated with simple linear regression. The resulting relationships,
+\begin{equation}
+  C_c = 
+  \begin{cases}
+      \sim N(0.15,0.1) & \text{$0<$length$<30$}\\
+      \sim N(0.24,0.11) & \text{$30<=$length$<=50$}\\
+      \sim N(0.31,0.1) & \text{otherwise}\\
+  \end{cases}
+\end{equation}
 
-$$C_f = d(150+3.5L)*1.02^{y-2004}$$
-$$C_c = R(0.17 + 0.0018L)$$
+This fishing costs simulation allowed us to extract estimates of $C_d$ and $C_c$ for every trip in the data based on the vessel's length and the trip's year, month, and state of landing (Figs. A.17, A.18). When combined with individual trip revenue $R_i$ and duration $d_i$, we were able to estimate the total cost of each fishing trip, which in turn allowed us to measure profits as revenue minus cost.
 
-were used to deterministically assign a cost to each Dungeness fishing trip in our data. From there, a profit for each trip could be estimated by subtracting costs from revenue. Using trip-level profits, we calculated mean profits per week---across seasons---for vessels in each behavioral group, as well as season-long profits.
+Using trip-level profits, we calculated season-long profits and mean profits per week for vessels in each behavioral group. Finally, we also calculated total revenue from all non-Dungeness fisheries for each vessel-season in the analysis. We constrained the calculation of non-Dungeness revenue to only those fishing trips that occurred within each vessel’s apparent Dungeness season (that is, within the time period where the vessel was also landing Dungeness crab).
 
-Using the fish ticket revenue data, we also calculated total revenue from all non-Dungeness fisheries for each vessel-season in the analysis. We constrained the calculation of non-Dungeness revenue to only those fishing trips that occurred within each vessel’s apparent Dungeness season (that is, within the time period where the vessel was also landing Dungeness crab).
 
-## Adaptation to the Marine Heatwave
+## Adaptation during the Marine Heatwave Period
 
 Using the results of cluster analyses, we compared key characteristics of behavioral groups in MHW versus non-MHW crab seasons. We defined the MHW as encompassing the crab fishing seasons from 2015-16 to 2017-18. Although there is evidence that the MHW began affecting west coast ecosystems as early as late 2014 [@McCabe2016a;@Cavole2016], the 2015-16 Dungeness crab season was the first to be significantly delayed as a direct result of ecosystem changes [@Jardine2020], a trend that continued through the 2017-18 season.
 

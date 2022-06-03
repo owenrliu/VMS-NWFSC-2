@@ -4,8 +4,11 @@ author: "Owen Liu"
 date: "2/10/2022"
 output: 
   pdf_document:
-    extra_dependencies: ["booktabs","tabularx","multirow","array"]
+    extra_dependencies: ["booktabs","tabularx","multirow","array","amsmath"]
 ---
+
+
+$$E_{im} = -\sum_{j=1}^{N_{im}}f_i(j)log_2f_i(j)$$
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -45,3 +48,45 @@ knitr::opts_chunk$set(echo = TRUE)
    \caption{Fisher behavioral and demographic variables derived and used in the clustering and random forest analyses. Variables with asterisks were removed from the final clustering analysis due to high collinearity with other variables.}
    \label{tab:booktabs}
 \end{table}
+
+\begin{equation}
+  C = dC_d + RC_c 
+\end{equation}
+
+\begin{equation}
+  C_d = C_b + C_f + C_v
+\end{equation}
+
+\begin{equation}
+  C_b =
+    \begin{cases}
+      N(66,73) & \text{$0<$length$<30$}\\
+      N(178,269) & \text{$30<=$length$<=50$}\\
+      N(261,188) & \text{otherwise}\\
+    \end{cases}\\
+\end{equation}
+\begin{equation}
+  C_f =
+    \begin{cases}
+      N(47,51)*r_s & \text{$0<$length$<30$}\\
+      N(78.5,158)*r_s & \text{$30<=$length$<=50$}\\
+      N(173,96)*r_s & \text{otherwise}\\
+    \end{cases}\\
+\end{equation}
+\begin{equation}
+  C_v =
+    \begin{cases}
+      N(46,62) & \text{$0<$length$<30$}\\
+      N(47,62) & \text{$30<=$length$<=50$}\\
+      N(72,33) & \text{otherwise}\\
+    \end{cases}
+\end{equation}
+
+\begin{equation}
+  C_c = 
+  \begin{cases}
+      N(0.15,0.1) & \text{$0<$length$<30$}\\
+      N(0.24,0.11) & \text{$30<=$length$<=50$}\\
+      N(0.31,0.1) & \text{otherwise}\\
+  \end{cases}
+\end{equation}

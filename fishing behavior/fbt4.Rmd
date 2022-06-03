@@ -487,7 +487,7 @@ rel_imp_plot <- var_imp %>%
   ggplot(aes(x=fct_reorder(metric,rel_imp),y=rel_imp))+
   geom_col()+
   # scale_y_continuous(breaks=seq(0,10,by=2))+
-  labs(x="Variable",y="Relative Importance")+
+  labs(x="Metric",y="Relative Importance")+
   coord_flip()+
   theme(axis.text.x = element_text(angle=45,vjust=1,hjust=0.8,size=8),
         panel.grid.major = element_blank(),
@@ -523,6 +523,8 @@ simplified_groups_plot <- pos %>% ggplot()+
   labs(x="Mobility, Ports Visited, Vessel Size, Fishing Range",y="Participation in Other Fisheries")+
   theme(panel.grid.major = element_blank(),
         panel.grid.minor=element_blank(),
+        axis.title.x = element_text(size=10),
+        axis.title.y=element_text(size=10),
         axis.text.x=element_blank(),
         axis.text.y=element_blank(),
         axis.line.y = element_line(arrow = grid::arrow(length = unit(0.3, "cm"), 
@@ -779,14 +781,51 @@ In order to compare the performance of the FBTs, we need to estimate the cost of
 
 To measure cost of fishing, we adopt data from a survey done by Dewees et al. (2004). A survey was conducted of small, medium, and large size-class vessels. We use their mean estimates of annual and daily fishing costs to associate a cost with each trip. Dollar values are adjusted for inflation.
 
-There are daily costs associated with vessel ownership that are associated with fuel and bait. Additionally, larger vessels require a greater number of crew members, which must be accounted for. Using The Dewees et al. study and simulation, we parameterize the following relationship:
+There are daily costs associated with vessel ownership that are associated with fuel, bait, and other variable costs like the fixing of traps. Additionally, there are costs associated with the entire fishing trip, most notably the share of revenues that go to crew. Larger vessels require more crew. Using The Dewees et al. survey values, we simulate the following relationships to estimate the cost of fishing trip $i$:
 
-$$C_t = C_f + C_c$$
-Where $C_t$ is trip cost that is a function of fuel and bait cost $C_f$ and crew cost $C_c$. The cost of fuel and bait is a function of vessel length $L$ and trip length in days $d$, while crew cost is a function of vessel length and trip revenue $R$.
+\begin{equation}
+  C_i = d_iC_d + R_iC_c 
+\end{equation}
 
-$$C_f = f(L,d)$$
-$$C_c = f(L,R)$$
+\begin{equation}
+  C_d = C_b + C_f + C_v
+\end{equation}
 
+\begin{equation}
+  C_b =
+    \begin{cases}
+      N(66,73) & \text{$0<$length$<30$}\\
+      N(178,269) & \text{$30<=$length$<=50$}\\
+      N(261,188) & \text{otherwise}\\
+    \end{cases}\\
+\end{equation}
+\begin{equation}
+  C_f =
+    \begin{cases}
+      N(47,51)*r_{s,y} & \text{$0<$length$<30$}\\
+      N(78.5,158)*r_{s,y} & \text{$30<=$length$<=50$}\\
+      N(173,96)*r_{s,y} & \text{otherwise}\\
+    \end{cases}\\
+\end{equation}
+\begin{equation}
+  C_v =
+    \begin{cases}
+      N(46,62) & \text{$0<$length$<30$}\\
+      N(47,62) & \text{$30<=$length$<=50$}\\
+      N(72,33) & \text{otherwise}\\
+    \end{cases}
+\end{equation}
+
+\begin{equation}
+  C_c = 
+  \begin{cases}
+      N(0.15,0.1) & \text{$0<$length$<30$}\\
+      N(0.24,0.11) & \text{$30<=$length$<=50$}\\
+      N(0.31,0.1) & \text{otherwise}\\
+  \end{cases}
+\end{equation}
+
+In the above equations, $C_i$ is total trip cost and $R_i$ is trip revenue as reported in the fish tickets. $C_d$, $C_c$, $C_b$, $C_f$, and $C_v$ represent total daily, crew, bait, fuel, and other variable costs, respectively, and $r_{s,y}$ is marine fuel cost relative to California in year $y$ (Figure A.16). We simulated 10,000 draws from the above distributions for all combinations of year (2008-2019) and state (California, Oregon, and Washington). This simulation allowed us to extract estimates of $C_d$ and $C_c$ for every trip in the data, which, when combined with individual trip revenue $R$, allows for a trip-specific fishing cost estimate (Figs. A.17, A.18). All costs were normalized to 2010 USD.
 
 ```{r}
 #Update, 02/09/2022
@@ -803,11 +842,13 @@ calfuel <- fuel %>%
 fuel <- fuel %>% 
   left_join(calfuel) %>% 
   mutate(ca_rel_fuel=mean_gal/cafuel)
-fuel %>% 
+relfuel_plot <- fuel %>% 
   ggplot(aes(YEAR,ca_rel_fuel,col=STATE))+
   geom_point()+
   geom_line()+
   labs(x="Year",y="Marine Fuel Price Relative to CA")
+relfuel_plot
+ggsave(here('fishing behavior','plots','relative_fuel_prices.png'),w=6,h=4)
 ```
 
 
@@ -816,7 +857,6 @@ fuel %>%
 # to make a smooth function, take means and SD from Dewees et al and sample, then fit a line
 # in the sample, use min and max values from our dataset on vessel lengths
 # convert 2004$ in Dewees et al. to 2010 values (multiply by 1.1545)
-
 
 daily_cost_sim <- function(x,rel_fuel){
   # first term is bait, second is fuel, third is other variable costs
@@ -835,7 +875,7 @@ crew_share_sim <- function(x){
   max(0,share)
 }
 
-cost_sim <- crossing(STATE=c("CA","OR","WA"),YEAR=2008:2020,vessel_length=runif(10000,21,104)) %>% 
+cost_sim <- crossing(STATE=c("CA","OR","WA"),YEAR=2008:2019,vessel_length=runif(10000,21,104)) %>% 
   left_join(fuel) %>% 
   mutate(agency_code=case_when(
     STATE=="CA"~"C",
@@ -864,7 +904,33 @@ cost_sim %>%
   # stat_regline_equation()+
   labs(x="Vessel Length",y="Crew Share",title="Daily Cost Simulation, Crew Share")
 
-# pull out the equation of the line
+daily_cost_plot <- cost_sim %>% 
+  filter(vessel_length_int%%1==0) %>% 
+  ggplot(aes(vessel_length_int,daily_cost,col=agency_code))+
+  geom_point(alpha=0.7)+
+  geom_smooth(se=F)+
+  facet_wrap(~YEAR)+
+  scale_color_manual(values=viridis_pal(option="A",begin=0.2,end=0.8)(3))+
+  labs(x="Vessel Length (ft)",y="Daily Fishing Cost (2010 USD)",col="State")
+
+crew_share_plot <- cost_sim %>% 
+  filter(vessel_length_int%%1==0) %>% 
+  ggplot(aes(vessel_length_int,crew_share))+
+  geom_point(alpha=0.7)+
+  geom_smooth(se=F)+
+  facet_wrap(~YEAR)+
+  labs(x="Vessel Length (ft)",y="Crew Share (Proportion of Revenue)")
+
+daily_cost_plot
+crew_share_plot
+
+ggsave(here('fishing behavior','plots','daily_cost_simulation.png'),daily_cost_plot,w=8,h=8)
+ggsave(here('fishing behavior','plots','crew_share_simulation.png'),crew_share_plot,w=8,h=8)
+
+```
+
+```{r}
+# function to pull out cost for a given vessel size, year, state, trip length, and revenue
 trip_cost_fx <- function(vessel_size,year,state,num_days,trip_rev){
   costs<-cost_sim %>% filter(YEAR==year,agency_code==state,vessel_length_int==vessel_size)
   cost_daily=num_days*(costs %>% pull(daily_cost))
@@ -1114,8 +1180,9 @@ tot_profit_season_plot <- total_rev_landings_season %>%
   geom_vline(xintercept=9.5,linetype=2,col="darkred")+
   labs(x="Crab Season",y="Profit per Vessel ($1000s)",title="",color="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
-  theme(axis.text.x = element_text(angle=90,vjust=0.5),
-        axis.title=element_text(family="sans",size=12,color="black"),
+  theme(axis.text.x = element_text(angle=90,vjust=0.5,size=10),
+        axis.title=element_text(family="sans",size=10,color="black"),
+        axis.text.y=element_text(size=10),
         panel.grid.major=element_blank(),
         panel.grid.minor = element_blank(),
         legend.position = 'bottom')
@@ -1172,9 +1239,10 @@ heatwave_profit_barplot <- heatwave_profit_summ %>%
   annotate('text',label="*",size=8,x=4,y=180)+
   theme(panel.grid.major=element_blank(),
         panel.grid.minor=element_blank(),
-        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.title=element_text(family="sans",size=10,color="black"),
         legend.position = c(0.2,0.8),
-        axis.text.x = element_text(size=12,angle=45,vjust=0.75))+
+        axis.text.x = element_text(size=10,angle=45,vjust=0.75),
+        axis.text.y=element_text(size=10))+
   labs(x="Behavioral Group",y="Profit per Vessel ($1000s)",fill="Period")
 heatwave_profit_barplot
 ggsave(here('fishing behavior','plots','heatwave_profit_barplot.png'),w=6,h=6)
@@ -1300,15 +1368,14 @@ other_rev_season <- other_rev %>%
   labs(x="Crab Season",y="Non-Dungeness Revenue ($1000s)",col="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
-  theme(axis.text.x = element_text(size=12,angle=90,vjust=0.5),
+  theme(axis.text.x = element_text(size=10,angle=90,vjust=0.5),
       panel.grid.major = element_blank(),
       panel.grid.minor = element_blank(),
       legend.text = element_text(size=8),
-      axis.text.y=element_text(size=12),
-      axis.title.x=element_text(size=12),
-      axis.title.y=element_text(size=12),
-      legend.position = 'bottom',
-        axis.title=element_text(size=10))
+      axis.text.y=element_text(size=10),
+      axis.title.x=element_text(size=10),
+      axis.title.y=element_text(size=10),
+      legend.position = 'bottom')
 other_rev_season
 # ggsave(here::here('fishing behavior','plots','outside_revenue_by_season_group.png'),other_rev_season,w=8,h=6)
 ```
@@ -1390,12 +1457,12 @@ homeranges_by_season <- homeranges_ts %>%
   labs(x="Crab Season",y="Home Range Area (square km)",col="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
-  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+  theme(axis.text.x = element_text(size=10,angle=90,vjust=0.5),
       panel.grid.major = element_blank(),
       panel.grid.minor = element_blank(),
       legend.text = element_text(size=8),
       legend.position = 'bottom',
-        axis.title=element_text(size=10))
+      axis.title=element_text(size=10))
 homeranges_by_season
 # ggsave(here::here('fishing behavior','plots','outside_revenue_by_season_group.png'),other_rev_season,w=8,h=6)
 ```
@@ -1436,9 +1503,9 @@ mhw_homeranges_plot <-mhw_homeranges_summ %>%
   theme(panel.grid.major=element_blank(),
         panel.grid.minor=element_blank(),
         legend.position = c(0.2,0.8),
-        axis.text.x=element_text(angle=45,vjust=0.75,size=12),
-        axis.text.y=element_text(size=12),
-        axis.title=element_text(family="sans",size=12,color="black"))
+        axis.text.x=element_text(angle=45,vjust=0.75,size=10),
+        axis.text.y=element_text(size=10),
+        axis.title=element_text(family="sans",size=10,color="black"))
         # legend.position = c(0.2,0.8),
         # axis.text.x = element_text(angle=45,vjust=0.75),)
 mhw_homeranges_plot
