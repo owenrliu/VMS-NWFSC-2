@@ -1,0 +1,92 @@
+---
+title: "rmarkdown whiteboard"
+author: "Owen Liu"
+date: "2/10/2022"
+output: 
+  pdf_document:
+    extra_dependencies: ["booktabs","tabularx","multirow","array","amsmath"]
+---
+
+
+$$E_{im} = -\sum_{j=1}^{N_{im}}f_i(j)log_2f_i(j)$$
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\begin{table}[htbp]
+\resizebox{\textwidth}{!}{%
+   %\centering
+   %\topcaption{Table captions are better up top} % requires the topcapt package
+   \begin{tabular}{>{\raggedright\arraybackslash} p{0.25\linewidth} >{\raggedright\arraybackslash}  p{0.4\linewidth}  p{0.5\linewidth}}
+      \toprule
+       \multicolumn{1}{c}{\textbf{Category}}	& \multicolumn{1}{c}{\textbf{Variable}} & \multicolumn{1}{c}{\textbf{Definition}}\\
+      \midrule
+     	\multirow{6}{\linewidth}{Port Use} & Ports per Trip & 	Average ports visited per trip \\
+	& Ports per Month &	Number of ports visited per month \\
+	& Port Diversity	 & Inverse Simpson diversity index of port use across the entire season \\
+	& Total Ports* &	Total number of ports visited across the entire season \\
+	\midrule
+	\multirow{4}{\linewidth}{Trip Length} & Mean Trip Distance* &	Mean distance per fishing trip \\
+	& Mean Trip Duration & Mean number of days per fishing trip \\
+	& SD Trip Distance*	& Standard deviation of distance traveled per trip \\
+	& SD Trip Duration	& Standard deviation of days per fishing trip \\
+	\midrule
+	\multirow{8}{\linewidth}{Participation in Other Fisheries} & Season Length	&	Day-of-season on which fisher reached 90\% of eventual, cumulative catch \\
+	& Proportion Non-Dungeness Revenue &	Proportion of revenue from non-Dungeness crab fisheries \\
+	& Proportion Non-Dungeness Tickets* &	Proportion of all fish tickets from non-Dungeness crab fisheries \\
+	& Revenue Diversity	& Inverse Simpson diversity index of revenue by fished species \\
+	\midrule
+	\multirow{3}{\linewidth}{Risk-Taking} & Risk Taking &	 Propensity to fish in high winds. Proportion of trip pursued where the 95\% quantile of wind speed was greater than 7.5 m/s\\
+	\midrule
+	\multirow{7}{\linewidth}{Exploration \& Mobility} & Location Entropy & Cumulative choice entropy, measuring how likely a vessel is to fish in new versus past locations. The metric used is the 90th percentile of maximum choice entropy per vessel per season \\
+	& Home Range Size	& Home range defined as the area of the convex hull surrounding all of a vessel's VMS pings during the season, excluding the top 5\% spatial outliers \\
+	\midrule
+	\multirow{1}{*}{Vessel Size} & Vessel Length in Feet &	Registered length of the fishing vessel\\
+      \bottomrule
+   \end{tabular}}
+   \caption{Fisher behavioral and demographic variables derived and used in the clustering and random forest analyses. Variables with asterisks were removed from the final clustering analysis due to high collinearity with other variables.}
+   \label{tab:booktabs}
+\end{table}
+
+\begin{equation}
+  C = dC_d + RC_c 
+\end{equation}
+
+\begin{equation}
+  C_d = C_b + C_f + C_v
+\end{equation}
+
+\begin{equation}
+  C_b =
+    \begin{cases}
+      N(66,73) & \text{$0<$length$<30$}\\
+      N(178,269) & \text{$30<=$length$<=50$}\\
+      N(261,188) & \text{otherwise}\\
+    \end{cases}\\
+\end{equation}
+\begin{equation}
+  C_f =
+    \begin{cases}
+      N(47,51)*r_s & \text{$0<$length$<30$}\\
+      N(78.5,158)*r_s & \text{$30<=$length$<=50$}\\
+      N(173,96)*r_s & \text{otherwise}\\
+    \end{cases}\\
+\end{equation}
+\begin{equation}
+  C_v =
+    \begin{cases}
+      N(46,62) & \text{$0<$length$<30$}\\
+      N(47,62) & \text{$30<=$length$<=50$}\\
+      N(72,33) & \text{otherwise}\\
+    \end{cases}
+\end{equation}
+
+\begin{equation}
+  C_c = 
+  \begin{cases}
+      N(0.15,0.1) & \text{$0<$length$<30$}\\
+      N(0.24,0.11) & \text{$30<=$length$<=50$}\\
+      N(0.31,0.1) & \text{otherwise}\\
+  \end{cases}
+\end{equation}

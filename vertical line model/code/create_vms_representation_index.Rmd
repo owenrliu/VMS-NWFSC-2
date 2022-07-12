@@ -247,7 +247,7 @@ What if we also weight by just the ratio of observed vs. permitted traps??
 ```{r,fig.width=8,fig.height=4}
 vms_representation_index <- vms_prop_landings %>% 
   filter(!is.na(vessel_size_category)) %>% 
-  dplyr::select(year:vessel_size_category,prop_permitted_traps)
+  dplyr::select(-has_vms)
 
 # California
 vms_representation_index %>%

@@ -12,6 +12,16 @@ glimpse(fishtix_matched_all)
 x <- fishtix_matched_all %>% filter(agency_code=="W")
 y <- unique(x$drvid)
 
+# vms tickets
+vms_tickets <- read_rds(here('fishing behavior','fish_tickets_with_vms.rds'))
+fishtix <- fishtix_matched_all %>% 
+  left_join(vms_tickets) %>% 
+  mutate(has_vms=replace_na(has_vms,0))
+drvid_hasvms <- fishtix %>% 
+  filter(year>2017) %>% 
+  distinct(drvid,has_vms)
+  
+
 # logs
 logs <- read_rds(here::here('data','raw','wa','crab-logs-portable','output','WA-crab-log-spatial-lines.rds')) %>% 
   as_tibble()
@@ -27,6 +37,13 @@ wa_tier_drvid <- watier %>% left_join(ids,by=c('License_ID'='License'))
 glimpse(wa_tier_drvid)
 
 write_rds(wa_tier_drvid,here::here('vertical line model','wa_tier_drvid_key.rds'))
+
+# check on vms representation
+wa_tier_hasvms <- wa_tier_drvid %>% left_join(drvid_hasvms) %>% 
+  mutate(has_vms=replace_na(has_vms,0))
+
+write_rds(wa_tier_hasvms,here::here('vertical line model','wa_tier_has_vms_key.rds'))
+
 
 # check total permitted pots per year
 x<-fishtix_matched_all %>% 

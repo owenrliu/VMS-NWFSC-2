@@ -129,6 +129,46 @@ nvessels_by_month %>%
   theme(axis.text.x.bottom = element_text(angle=90,vjust=+0.5,hjust=0),
         panel.grid.minor = element_blank())
 ```
+Proportion of vessels
+
+```{r}
+prop_vessels_by_month <- fishtix %>% 
+  group_by(year,month,agency_code,has_vms) %>% 
+  summarise(nvessels=n_distinct(drvid)) %>% 
+  ungroup() %>% 
+  mutate(day=1) %>% 
+  unite(date,year,month,day,sep="-",remove = FALSE) %>% 
+  mutate(date=as_date(date,format="%Y-%B-%d",tz="America/Los_Angeles")) %>% 
+  mutate(has_vms=as.logical(has_vms)) %>% 
+  mutate(month=match(month,month.name)) %>%
+  group_by(date,year,month,agency_code) %>% 
+  summarise(prop_vms=nvessels[has_vms]/sum(nvessels)) %>% 
+  ungroup() %>% 
+  mutate(prop_vms=ifelse(month%in%7:10,NA,prop_vms)) %>% 
+  filter(date<"2019-09-01") %>% 
+  mutate(state=case_when(
+    agency_code=="C" ~ "California",
+    agency_code=="O" ~ "Oregon",
+    agency_code=="W" ~ "Washington"
+  )) %>% 
+  mutate(state=factor(state,levels=c("Washington","Oregon","California")))
+
+vms_prop_vessels_state <- prop_vessels_by_month %>%
+  mutate(perc=prop_vms*100) %>% 
+  ggplot(aes(date,perc,fill=state,col=state))+
+  geom_bar(stat='identity')+
+  scale_fill_aaas()+
+  scale_color_aaas()+
+  facet_wrap(~state,nrow=3)+
+  scale_x_date(date_breaks="3 months",date_labels = "%b-%y")+
+  labs(x="Year",y="Percent of Vessels Represented by VMS",col="State",fill="State")+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        panel.grid.minor = element_blank())
+
+vms_prop_vessels_state
+ggsave(here('fishing behavior','plots','vms_perc_vessels_state.png'),vms_prop_vessels_state,w=7,h=5.5)
+```
+
 
 
 ## Total Landings
@@ -233,6 +273,36 @@ relative_revenue <- revenue_by_month_state %>%
   drop_na() %>%
   mutate(vms_relative=VMS/(VMS+nonVMS)) %>% 
   filter(!(month(date) %in% c(7,8,9,10)))
-  
 ```
 
+```{r}
+# proportion of revenue represented by VMS
+prop_revenue <- revenue_by_month_state %>% 
+  group_by(date,year,month,agency_code) %>% 
+  mutate(has_vms=as.logical(has_vms)) %>% 
+  mutate(month=match(month,month.name)) %>% 
+  summarise(prop_vms=DCRB_revenue[has_vms]/sum(DCRB_revenue)) %>% 
+  ungroup() %>% 
+  mutate(prop_vms=ifelse(month%in%7:10,NA,prop_vms)) %>% 
+  filter(date<"2019-09-01") %>% 
+  mutate(state=case_when(
+    agency_code=="C" ~ "California",
+    agency_code=="O" ~ "Oregon",
+    agency_code=="W" ~ "Washington"
+  )) %>% 
+  mutate(state=factor(state,levels=c("Washington","Oregon","California")))
+
+vms_prop_rev_state <- prop_revenue %>%
+  mutate(perc=prop_vms*100) %>% 
+  ggplot(aes(date,perc,fill=state,col=state))+
+  geom_bar(stat='identity')+
+  scale_fill_aaas()+
+  scale_color_aaas()+
+  facet_wrap(~state,nrow=3)+
+  scale_x_date(date_breaks="3 months",date_labels = "%b-%y")+
+  labs(x="Year",y="Revenue Percent Represented by VMS",col="State",fill="State")+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        panel.grid.minor = element_blank())
+
+ggsave(here('fishing behavior','plots','vms_perc_rev_state.png'),vms_prop_rev_state,w=7,h=5.5)
+```
