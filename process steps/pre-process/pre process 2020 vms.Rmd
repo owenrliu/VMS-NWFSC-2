@@ -7,6 +7,8 @@ output: html_document
 
 # Purpose
 
+This code is based on the previous pre-processing codes that were in this folder
+
 Import and join together all months' VMS data for 2020. We import each separate month's .csv file and then bind them together. Then, we rename column headers to match other years.
 
 ```{r setup, include=FALSE}
