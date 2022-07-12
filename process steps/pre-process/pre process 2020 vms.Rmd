@@ -1,0 +1,124 @@
+---
+title: "Pre-Process 2020"
+author: "Leena Riekkola"
+date: "7/12/2022"
+output: html_document
+---
+
+# Purpose
+
+Import and join together all months' VMS data for 2020. We import each separate month's .csv file and then bind them together. Then, we rename column headers to match other years.
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(here)
+library(magrittr)
+```
+
+## Import and Bind Rows
+
+We read date-times as character for now
+
+```{r import2019}
+#change the file names so that they can be called with the existing code
+#note that Dec is 2 files
+#note that column names are different across the files - Jul, Aug, Sep are different, 
+#oct, Nov, Dec are different. And Dec B has no header
+#lat lon info is as degress, and decimal minutes
+
+mths_part1 <- c("Jan","Feb","March")
+part1_2020<-purrr::map_df(mths_part1,function(x){
+  read_csv(here::here('data','raw','vms','VMS 2020 data',paste0(x,"_2020.csv")),col_types = 'ccccddddccc') #,col_types = 'ccccddddccc'
+})
+glimpse(part1_2020)
+#change lat long to be in decimal degrees
+
+part1_2020$Lat <- iconv(part1_2020$Lat, to = "UTF-8")
+part1_2020$Lon <- iconv(part1_2020$Lon, to = "UTF-8")
+
+part1_2020_fix_latlong <- part1_2020 %>% 
+  separate(Lat, into = c("Lat_degree", "Lat_minutes"), sep = "°") %>% 
+  separate(Lon, into = c("Lon_degree", "Lon_minutes"), sep = "°") %>%
+  mutate(Lat_degree = as.numeric(Lat_degree),
+         Lat_minutes = as.numeric(Lat_minutes),
+         Lon_degree = as.numeric(Lon_degree),
+         Lon_minutes = as.numeric(Lon_minutes)) %>% 
+  mutate(LATITUDE = Lat_degree + (Lat_minutes/60),
+         LONGITUDE = Lon_degree + (Lon_minutes/60))
+glimpse(part1_2020_fix_latlong)
+
+  
+
+#these months have one column for lat and long in degress + decimal minutes
+#and another column for decimal degrees
+mths_part2 <- c("April","May","June")
+part2_2020<-purrr::map_df(mths_part2,function(x){
+  read_csv(here::here('data','raw','vms','VMS 2020 data',paste0(x,"_2020.csv")),col_types = 'ccccddddccddc') 
+})
+glimpse(part2_2020)
+
+
+#these months have one column for lat and long in degress + decimal minutes
+#and another column for decimal degrees
+#plus also lots of other columns
+mths_part3 <- c("July","Aug","Sept")
+part3_2020<-purrr::map_df(mths_part3,function(x){
+  read_csv(here::here('data','raw','vms','VMS 2020 data',paste0(x,"_2020.csv")),col_types = 'cccccccccccddddcccccccddccc') 
+})
+glimpse(part3_2020)
+
+
+#these months have one column for lat and long in degress + decimal minutes
+#and another column for decimal degrees
+# December was originally in 2 files, joined before importing
+mths_part4 <- c("Oct","Nov","Dec")
+part4_2020<-purrr::map_df(mths_part4,function(x){
+  read_csv(here::here('data','raw','vms','VMS 2020 data',paste0(x,"_2020.csv")),col_types = 'cccccddddccddc') 
+})
+glimpse(part4_2020)
+
+
+
+```
+
+
+## Fix Column Names and Reorder
+
+We choose only some columns for now, to match the VMs data we have for other years.
+
+```{r}
+# column names from previous years
+correct_colnames <- c('UTCDATETIM', 'LATITUDE', 'LONGITUDE', 'VESSEL_NAM', 'AVG_SPEED', 
+                      'AVG_COURSE', 'DOCNUM', 'DECLARATIO')
+correct_colnames
+
+
+#fix all column names, then rbind
+
+part1_2020_final <- part1_2020_fix_latlong %>% 
+  select(`UTC time`,LATITUDE, LONGITUDE, Name, `Avg Speed`, `Avg Course`, Docnum, `Declaration Code`) %>% 
+  set_colnames(correct_colnames)
+
+part2_2020_final <- part2_2020 %>% 
+  select(`UTC time`,Lat...11, Lon...12, Name, `Avg Speed`, `Avg Course`, Docnum, `Declaration Code`) %>% 
+  set_colnames(correct_colnames)
+
+part3_2020_final <- part3_2020 %>% 
+  select(`UTC time`,Lat...23, Lon...24, Name, `Avg Speed`, `Avg Course`, Docnum, `Declaration Code`) %>% 
+  set_colnames(correct_colnames)
+
+
+part4_2020_final <- part4_2020 %>% 
+  select(`UTC time`,Lat...12, Lon...13, Name, `Avg Speed`, `Avg Course`, Docnum, `Declaration Code`) %>% 
+  set_colnames(correct_colnames)
+
+
+all2020 <- rbind(part1_2020_final,part2_2020_final,part3_2020_final,part4_2020_final)
+glimpse(all2020)
+```
+
+## Save Output
+
+```{r}
+write_csv(all2020,here::here('data','raw','vms','VMS_all_data_2020.csv'))
+```
