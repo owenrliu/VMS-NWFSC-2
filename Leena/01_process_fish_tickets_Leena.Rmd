@@ -53,7 +53,7 @@ rm(list=setdiff(ls(),c('process_year','alltime')))
 Choose directories and set objects
 ```{r objects}
 ## which years of fish tickets are you interested in?
-# process_year = 2017
+# process_year = 2021
 # process_year = 2018 #Create a version of 2018 that has FTID
 
 ## which species-specific revenue and lbs columns would you like? (static)
@@ -94,7 +94,7 @@ This should be a .csv file containing raw PacFIN data. We only read in columns t
 ## for running 2020 and 2021 pipeline, all fish tickets are already together:
 rawdat <- read_rds(here::here('data','raw','fish tickets','pacfin_compiled_2004thru2021.rds'))
 rawdat <- rawdat %>%
-  filter(LANDING_YEAR == 2020)
+  filter(LANDING_YEAR %in%  process_year)
 
 
 #earlier years:
