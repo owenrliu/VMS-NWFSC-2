@@ -47,7 +47,7 @@ rm(list=setdiff(ls(),c('process_year','alltime')))
 To process data, user can choose year and lat/lon bounds of VMS data points (currently set conservatively around US West Coast waters). Additionally, choose an upper bound for the bathymetry layer. Conservatively set at +100 ft., which should certainly retain all ocean areas.
 
 ```{r}
-# process_year = 2012
+# process_year = 2020
 lon_upper = -117 # if you do not want this filter, set to NA
 lon_lower = -132 # if you do not want this filter, set to NA
 lat_lower = 32 # if you do not want this filter, set to NA
