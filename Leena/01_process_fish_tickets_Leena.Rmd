@@ -90,6 +90,14 @@ This should be a .csv file containing raw PacFIN data. We only read in columns t
 
 ```{r rawdata}
 
+
+## for running 2020 and 2021 pipeline, all fish tickets are already together:
+rawdat <- read_rds(here::here('data','raw','fish tickets','pacfin_compiled_2004thru2021.rds'))
+rawdat <- rawdat %>%
+  filter(LANDING_YEAR == 2020)
+
+
+#earlier years:
 #tixfiles <- list.files(here::here('data','raw','fish tickets'),full.names = T)
 tixfiles <- list.files(here::here('data','raw','fish tickets','has FTID'),full.names = T)
 
