@@ -106,6 +106,9 @@ cpi %<>%
 
 #state-specific fuel prices
 fuel <- read_csv(here('data','raw','state_average_fuel_prices.csv'))
+
+# pacfin species identifiers
+pacfin_spid <- read_csv(here('data','raw','pacfin_spid.csv'),col_types='icccc')
 ```
 
 ```{r}
@@ -1115,6 +1118,7 @@ metrics_by_partition_week %>%
   labs(x="Week",y="CPUE (lbs per day)",col="Group",fill="Group")+
   scale_color_manual(values=viridis_pal(begin=0.2,end=0.8)(4))+
   scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(4))
+
 ```
 
 ### Season-long Revenue and Landings
@@ -1202,7 +1206,8 @@ heatwave_profit <- fishtix_plus %>%
     total_profit=sum(trip_profit,na.rm=T)) %>% 
   ungroup() %>%  
   mutate(is_heatwave=ifelse(crab_season %in% c('2015-2016','2016-2017','2017-2018'),"MHW","Non-MHW")) %>%
-  mutate(is_heatwave=factor(is_heatwave,levels=c("Non-MHW","MHW")))
+  mutate(is_heatwave=factor(is_heatwave,levels=c("Non-MHW","MHW"))) %>% 
+  mutate(partition=factor(partition))
 
 heatwave_profit_summ <- heatwave_profit %>%
   group_by(partition,is_heatwave,drvid) %>% 
@@ -1432,6 +1437,90 @@ other_revenue_season_heatwave
 # ggsave(here::here('fishing behavior','plots','non_dcrb_seasons_groups_revenue.png'),other_revenue_season_heatwave,w=6,h=8)
 # ggsave(here::here('fishing behavior','plots','non_dcrb_seasons_groups_revenue.pdf'),other_revenue_season_heatwave,w=6,h=8)
 ```
+```{r}
+all_fishtix_spp <- fishtix_long %>%
+  filter(drvid %in% vessel_list) %>%
+  distinct(PACFIN_SPECIES_CODE) %>% 
+  # join the PACFIN-recognized species groups, and use this to organize
+  left_join(pacfin_spid,by=c('PACFIN_SPECIES_CODE'='SPID')) %>% 
+  dplyr::select(PACFIN_SPECIES_CODE,`Common Name`, Grp) %>% 
+  rename(commonname=`Common Name`,spp_grp=Grp) %>% 
+  mutate(commonname=tools::toTitleCase(tolower(commonname)))
+
+# other species caught by Dcrab groups
+other_fisheries_revenue_partitions <- fishtix_long %>%
+  filter(drvid %in% vessel_list) %>%
+  left_join(drvid_group_key) %>% 
+  distinct(Rec_ID,drvid,partition,crab_season,PACFIN_SPECIES_CODE,tot_revenue_spp) %>%
+  left_join(all_fishtix_spp) %>% 
+  group_by(partition,crab_season,spp_grp) %>%  
+  summarise(tot_rev=sum(tot_revenue_spp,na.rm=T)) %>% 
+  ungroup() %>% 
+  drop_na() %>% 
+  filter(spp_grp!='CRAB') %>% 
+  arrange(partition,spp_grp,crab_season)
+
+outside_revenue_sppgroups_ts <- other_fisheries_revenue_partitions %>% 
+  ggplot(aes(factor(crab_season),tot_rev,group=spp_grp,fill=spp_grp))+
+  # geom_point()+geom_line()+
+  geom_col()+
+  scale_fill_manual(values=viridis_pal(begin=0.2,end=0.8)(6))+
+  # facet_wrap(~spp_grp)+
+  facet_wrap(~partition)+
+  labs(x='Crab Season',y="Total Revenue",col="Group")+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5),
+        legend.position = 'bottom')
+outside_revenue_sppgroups_ts
+ggsave(here::here('fishing behavior','plots','otherspp_revenue_ts.pdf'),outside_revenue_sppgroups_ts,w=8,h=6)
+# ggsave(here::here('fishing behavior','plots','otherspp_revenue_ts.png'),outside_revenue_sppgroups_ts,w=8,h=6)
+```
+Bar plots by group of proportional revenue by outside species group
+```{r}
+other_fisheries_revenues_grp <- fishtix_long %>%
+  filter(drvid %in% vessel_list) %>%
+  # first 100 days of the season
+  filter(ticket_day_of_season<=120) %>% 
+  left_join(drvid_group_key) %>% 
+  distinct(Rec_ID,drvid,crab_season,partition,PACFIN_SPECIES_CODE,tot_revenue_spp) %>%
+  left_join(all_fishtix_spp) %>% 
+  group_by(drvid,crab_season,partition,spp_grp) %>%  
+  summarise(tot_rev=sum(tot_revenue_spp,na.rm=T)) %>% 
+  ungroup() %>% 
+  complete(nesting(drvid,crab_season),spp_grp,fill=list(tot_rev=0)) %>% 
+  ungroup() %>% 
+  group_by(drvid,crab_season,partition) %>% 
+  mutate(prop_rev=tot_rev/sum(tot_rev)) %>%
+  mutate(is_heatwave=ifelse(crab_season %in% c('2015-2016','2016-2017','2017-2018'),"MHW","Non-MHW")) %>%
+  mutate(is_heatwave=factor(is_heatwave,levels=c("Non-MHW","MHW"))) %>%
+  ungroup() %>% 
+  group_by(partition,is_heatwave,spp_grp) %>% 
+  summarise(mean_prop_rev=mean(prop_rev,na.rm=T)) %>% 
+  ungroup() %>% 
+  drop_na()
+
+# other_fisheries_changes <- other_fisheries_revenues_grp %>% 
+#   group_by(partition,spp_grp) %>% 
+#   summarise(mhwdiff=mean_prop_rev[is_heatwave=="MHW"]-mean_prop_rev[is_heatwave=="Non-MHW"]) %>% 
+#   mutate(mhwdiff=mhwdiff*100)
+
+other_fisheries_revenues_spp_grps_plot <- other_fisheries_revenues_grp %>% 
+  drop_na() %>% 
+  arrange(desc(mean_prop_rev)) %>% 
+  ggplot(aes(x=fct_reorder(spp_grp,-mean_prop_rev),y=mean_prop_rev*100,fill=partition))+
+  geom_col(position='dodge')+
+  facet_wrap(~is_heatwave,nrow=2)+
+  scale_fill_manual(values=p)+
+  theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank(),
+        axis.text.x=element_text(angle = 90,vjust=0))+
+  scale_y_continuous(breaks=seq(0,100,by=20),limits=c(0,100))+
+  labs(x="Species Group Code",y="Mean Percent of Revenue",fill="Group",title="Species Groups by Proportion of Revenue\nFirst 120 Days of Crab Season")
+
+other_fisheries_revenues_spp_grps_plot
+
+ggsave(here::here('fishing behavior','plots','outside_fisheries_revenue_by_group_and_spp.png'),other_fisheries_revenues_spp_grps_plot,w=6,h=8)
+
+```
+
 
 ## Homerange Size
 

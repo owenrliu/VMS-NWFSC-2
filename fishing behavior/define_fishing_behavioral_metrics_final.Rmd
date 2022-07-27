@@ -160,7 +160,7 @@ vessel_size_metric <-  fishtix %>%
 vessel_size_plot <- vessel_size_metric %>% 
   ggplot(aes(vessel_size))+
   geom_density(fill='#33638DFF')+
-  labs(x='Vessel Length (m)')
+  labs(x='Vessel Length (ft)')
 vessel_size_plot
 ggsave(here::here('fishing behavior','plots','vessel_size_metric.png'),vessel_size_plot,w=6,h=4)
 write_rds(vessel_size_metric,here::here('fishing behavior','vessel_sizes.rds'))
