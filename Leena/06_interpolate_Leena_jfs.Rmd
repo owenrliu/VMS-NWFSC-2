@@ -40,7 +40,7 @@ theme_set(plot_theme)
 rm(list=setdiff(ls(),c('process_year','alltime')))
 
 #if needed, process_year
-# process_year=2012
+# process_year=2021
 ```
 
 Read in the filtered VMS data set from the previous step
