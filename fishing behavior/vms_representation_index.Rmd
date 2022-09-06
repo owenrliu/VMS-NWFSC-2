@@ -306,3 +306,57 @@ vms_prop_rev_state <- prop_revenue %>%
 
 ggsave(here('fishing behavior','plots','vms_perc_rev_state.png'),vms_prop_rev_state,w=7,h=5.5)
 ```
+## Vessel Length and Day of Season
+
+Size comparison
+
+```{r}
+vessel_size_comp <-  fishtix %>%
+  filter(drvid %in% vessel_list) %>% 
+  distinct(drvid,crab_season,has_vms,FINAL_LENGTH) %>% 
+  rename(vessel_size=FINAL_LENGTH)
+
+# plot vessel size metric
+vessel_size_plot <- vessel_size_comp %>% 
+  mutate(has_vms=has_vms==1) %>% 
+  ggplot(aes(vessel_size,col=has_vms))+
+  geom_density()+
+  labs(x='Vessel Length (ft)',color="Vessel Has VMS")
+vessel_size_plot
+ggsave(here::here('fishing behavior','plots','vessel_size_vms_comp.png'),vessel_size_plot,w=6,h=4)
+```
+
+In-season dynamics (cumulative CPUE)
+```{r}
+vessel_size_cpue_comp <- fishtix %>% 
+  mutate(is_small=FINAL_LENGTH<=40) %>%
+  mutate(is_small=ifelse(is_small,"<40 ft.",">40 ft.")) %>% 
+  dplyr::select(drvid,is_small,has_vms,crab_season,ticket_day_of_season,DCRB_revenue) %>% 
+  group_by(drvid,is_small,has_vms,crab_season) %>% 
+  arrange(ticket_day_of_season) %>% 
+  mutate(cumrev=cumsum(DCRB_revenue)) %>% 
+  mutate(cumprop=cumrev/last(cumrev)) %>% 
+  ungroup() %>% 
+  group_by(is_small,has_vms,ticket_day_of_season) %>% 
+  summarise(mean_prop=mean(cumprop),sd_prop=sd(cumprop)) %>% 
+  ungroup() %>% 
+  mutate(upper=mean_prop+sd_prop,
+         lower=mean_prop-sd_prop) %>% 
+  mutate(upper=ifelse(upper>1,1,upper),
+         lower=ifelse(lower<0,0,lower)) %>% 
+  mutate(has_vms=has_vms==1) %>% 
+  drop_na()
+
+vessel_size_cpue_plot <- vessel_size_cpue_comp %>% 
+  ggplot(aes(ticket_day_of_season,y=mean_prop,ymax=upper,ymin=lower,color=has_vms,fill=has_vms))+
+  geom_pointrange(size=0.5,alpha=0.7)+
+  facet_wrap(~is_small,nrow=2)+
+  scale_x_continuous(limits = c(0,225))+
+  labs(x="Day of Crab Season",y="Cumulative Revenue Captured",color="Vessel Has VMS",fill="Vessel Has VMS")+
+  theme(panel.background = element_rect(fill=NA,color='black'))
+
+vessel_size_cpue_plot
+ggsave(here::here('fishing behavior','plots','vessel_size_vms_cumulative_cpue.png'),vessel_size_cpue_plot,w=6,h=4)
+```
+
+
