@@ -88,33 +88,33 @@ Set filtering-related objects[NOT CURRENTLY USED]
 This should be a .csv file containing raw PacFIN data. We only read in columns that we need.
 
 ```{r rawdata}
-
-tixfiles <- list.files(here::here('data','raw','fish tickets'),full.names = T)
-
-rawdat <- purrr::map_df(tixfiles,function(fl){
-  read_csv(fl,col_types= cols_only(
-    FISH_TICKET_ID = col_double(), 
-    FTID = col_character(), #It is also adviced to include FTID column to compare between logbook data
-    #note that this won't work if the column doesn't appear in ALL raw fish ticket files
-    PACFIN_PORT_CODE= col_character(), 
-    PACFIN_GROUP_PORT_CODE= col_character(), 
-    VESSEL_NUM= col_character(), 
-    AGENCY_CODE= col_character(), 
-    GEAR_CODE= col_double(),
-    GEAR_NAME= col_character(), 
-    PACFIN_GROUP_GEAR_CODE= col_character(), 
-    REMOVAL_TYPE_CODE= col_character(), 
-    REMOVAL_TYPE_NAME= col_character(), 
-    LANDING_DATE= col_character(),
-    LANDING_MONTH= col_double(), 
-    LANDING_YEAR= col_double(), 
-    PACFIN_SPECIES_CODE= col_character(), 
-    LANDED_WEIGHT_LBS= col_double(), 
-    EXVESSEL_REVENUE= col_double()))
-})
+#for 2020 and 2021 pipeline runs, didn't have all individual years of tickets, but a ocmpiled one, see below
+# tixfiles <- list.files(here::here('data','raw','fish tickets'),full.names = T)
+# 
+# rawdat <- purrr::map_df(tixfiles,function(fl){
+#   read_csv(fl,col_types= cols_only(
+#     FISH_TICKET_ID = col_double(), 
+#     FTID = col_character(), #It is also adviced to include FTID column to compare between logbook data
+#     #note that this won't work if the column doesn't appear in ALL raw fish ticket files
+#     PACFIN_PORT_CODE= col_character(), 
+#     PACFIN_GROUP_PORT_CODE= col_character(), 
+#     VESSEL_NUM= col_character(), 
+#     AGENCY_CODE= col_character(), 
+#     GEAR_CODE= col_double(),
+#     GEAR_NAME= col_character(), 
+#     PACFIN_GROUP_GEAR_CODE= col_character(), 
+#     REMOVAL_TYPE_CODE= col_character(), 
+#     REMOVAL_TYPE_NAME= col_character(), 
+#     LANDING_DATE= col_character(),
+#     LANDING_MONTH= col_double(), 
+#     LANDING_YEAR= col_double(), 
+#     PACFIN_SPECIES_CODE= col_character(), 
+#     LANDED_WEIGHT_LBS= col_double(), 
+#     EXVESSEL_REVENUE= col_double()))
+# })
 
 #If you do not have individual Fish Ticket files for each year separately, you can also use a collated file
-#rawdat <- read_rds(here::here('data','raw','fish tickets','pacfin_compiled_2004thru2021.rds'))
+rawdat <- read_rds(here::here('data','raw','fish tickets','pacfin_compiled_2004thru2021.rds'))
 
 
 rawdat <- rawdat %>%
