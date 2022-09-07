@@ -47,7 +47,6 @@ all2021 <- all2021_raw %>%
   set_colnames(correct_colnames)
 
 glimpse(all2021)
-
 ```
 
 ## Save Output
