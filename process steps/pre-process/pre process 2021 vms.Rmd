@@ -22,9 +22,10 @@ library(magrittr)
 We read date-times as character for now
 
 ```{r import2019}
-#2021 vms data is already in one file, but only goes upto October
+#2021 vms data file now updated to one that goes up to Dec 2021
+#did a little bit of spot checking to confirm that the 2 files seem to match.
 
-all2021_raw <- read_csv(here::here('data','raw','vms', 'VMS 2021 data',paste0("vms_01012021_10042021.csv")),col_types='ccccddddddccc') 
+all2021_raw <- read_csv(here::here('data','raw','vms', 'VMS 2021 data',paste0("vms_01012021_12312021.csv")),col_types='ccccddddddccc') 
 glimpse(all2021_raw)
 
 
