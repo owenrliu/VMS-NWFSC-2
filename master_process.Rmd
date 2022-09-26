@@ -27,7 +27,7 @@ This parameter will get passed through all processing steps
 
 ```{r choose year}
 alltime <- proc.time()
-process_year <- 2020
+process_year <- 2021
 ```
 
 # Step 1: Process Raw Fish Ticket Data
