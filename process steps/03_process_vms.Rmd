@@ -64,7 +64,7 @@ vms_raw <- read_csv(here::here('data','raw','vms',paste0("VMS_all_data_", proces
 ## 2021 has different UTCDATETIM format to previous years
 if (process_year == 2021){
     vms_raw %<>%
-  mutate(UTCDATETIM=parse_date_time(UTCDATETIM, c("mdy HM","mdy HMS")))
+  mutate(UTCDATETIM=parse_date_time(UTCDATETIM, c("mdy HMS")))
 } else {
     vms_raw %<>%
   mutate(UTCDATETIM=parse_date_time(UTCDATETIM,"ymd HM"))
