@@ -81,7 +81,7 @@ for(y in process_year){
   vessel_length_key_df_subset <- read_rds(here::here('data','processed','vessel length keys',paste0("vessel_length_key_", y, ".rds")))
   
   # join
-  dcrb_landings_length <- left_join(landings_subset,vessel_length_key_df_subset, by=c("drvid", "agency_code"))
+  dcrb_landings_length <- left_join(landings_subset,vessel_length_key_df_subset, by=c("drvid", "agency_code","year"))
   
   # write
   write_rds(dcrb_landings_length,here::here('data','processed','fish tickets compFT',paste0(y, "fishtix_vlengths.rds")))

@@ -33,6 +33,7 @@
 ## knitted html files that may have confidential data
 *.html
 **/*.html
+!scripts/process\ steps/post-process/QC_compare_processed_tix.html
 
 ### R ###
 # History files
