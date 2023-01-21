@@ -32,6 +32,7 @@
 
 ## knitted html files that may have confidential data
 *.html
+**/*.html
 
 ### R ###
 # History files
