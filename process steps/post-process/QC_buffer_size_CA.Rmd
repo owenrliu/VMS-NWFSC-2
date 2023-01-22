@@ -1,0 +1,47 @@
+---
+title: "Check Port Buffer Zones, CA"
+author: "M. Fisher"
+date: "1/21/2023"
+output: html_document
+---
+
+
+## Purpose
+
+Verify that we aren't losing a ton of potential fishing data by using a 3km buffer zone around California ports of landing (instead of 1.5km).
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+## Data
+VMS data from 2010
+```{r}
+vms_wfilters <- read_rds(here::here('data','processed','matched','filtering','2010matched_unfiltered.rds'))
+```
+
+port coordinates
+```{r}
+portlist_coords <- read_csv(here::here('data','raw','port_coords_fromBlake_edited.csv'),col_types='cddd') %>% 
+  select(port_code,Lon,Lat) %>% 
+  set_names(c('port_code','portlon','portlat'))
+```
+<br>
+
+Filter for California ports
+```{r}
+vmsdat <- vms_wfilters %>% filter(agency_code=="C")
+portdat <- portlist_coords %>% filter(port_code %in% vmsdat$pacfin_port_code)
+```
+<br>
+
+## Check Speeds
+
+```{r}
+for(p in portdat$port_code){
+  vmsdat %>% filter(pacfin_port_code==p) %>%
+    
+}
+```
