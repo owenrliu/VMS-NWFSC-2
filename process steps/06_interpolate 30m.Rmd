@@ -5,7 +5,7 @@ output: html_document
 
 ## Purpose
 
-In this step, we produce a version of the VMS data that is interpolated such that records are evenly distributed every hour.
+In this step, we produce a version of the VMS data that is interpolated such that records are evenly distributed every **30 minutes**.
 
 First, the script filters for time gaps over which it is unlikely that linear interpolation will be representative. According to the following rules:
 
@@ -85,52 +85,7 @@ ntottrips <- length(unique(vms_filtered$Rec_ID))
 nremovedtrips <- length(unique(trips_removed_table$Rec_ID))
 nremovedlastseg <- trips_removed_table %>% filter(is_last_seg) %>% nrow()
 ```
-**** 
-Aside: how does the # of trips retained drop when we increase / decrease the % of trip missing?
-```{r}
-step_gaps <- seq(0,1,by=0.05)
-for(i in step_gaps){
-  tmp_vms_gapfiltered <- vms_filtered %>%
-    # filter(Rec_ID %in% random_trip) %>% 
-    group_by(Rec_ID) %>% 
-    # overall trip duration
-    mutate(trip_dur=sum(segment_dur)) %>% 
-    # add a sequential record number
-    arrange(westcoastdate) %>% 
-    mutate(recnum=row_number()) %>% 
-    #indicate whether to keep or remove trip based on segment durations
-    mutate(keep_remove_timelag=ifelse(max(segment_dur,na.rm=T) > (4*3600) | (segment_dur/trip_dur) > i, "remove", "keep")) %>% 
-    #indicate whether the reason for removal was because of the last segment
-    mutate(longest_seg=first(recnum,order_by=desc(segment_dur))) %>% 
-    mutate(last_seg_longest=longest_seg==max(recnum)) %>% 
-    mutate(is_last_seg=ifelse(last_seg_longest&keep_remove_timelag=='remove',TRUE,FALSE)) %>% 
-    ungroup()
-  
-  tmp_trips_removed_table <- tmp_vms_gapfiltered %>%
-    filter(keep_remove_timelag=='remove') %>% 
-    dplyr::select(Rec_ID,last_seg_longest,is_last_seg) %>% 
-    distinct()
-  
-  if(i==0){
-    track_removals <- data.frame(max_pdur = i,
-                                 ntottrips = length(unique(vms_filtered$Rec_ID)),
-                                 nremovedtrips = length(unique(trips_removed_table$Rec_ID)),
-                                 nremovedlastseg = trips_removed_table %>% filter(is_last_seg) %>% nrow(),
-                                 premovedtrips = nremovedtrips/ntottrips)
-  } else{
-    track_removals %<>% bind_rows(data.frame(max_pdur = i,
-                                             ntottrips = length(unique(vms_filtered$Rec_ID)),
-                                             nremovedtrips = length(unique(trips_removed_table$Rec_ID)),
-                                             nremovedlastseg = trips_removed_table %>% filter(is_last_seg) %>% nrow(),
-                                             premovedtrips = nremovedtrips/ntottrips))
-  }
-}
 
-ggplot(track_removals, aes(x=max_pdur,y=premovedtrips)) + geom_col() + labs(y="% trips removed",x="max gap (% of trip time)")
-```
-
-
-****
 With these criteria, out of `r ntottrips` unique trips in the filtered dataset, we flagged `r nremovedtrips` for removal, with `r nremovedlastseg` of these because of the last segment in the trip. For now, we instead retain these `r nremovedlastseg` trips for investigation later.
 
 Now we can filter the dataset.
@@ -191,9 +146,6 @@ Sys.time() - start.time
 movedatProj <- spTransform(movedat, CRSobj="+proj=utm +zone=10 +datum=WGS84 +units=m +no_defs +type=crs")
 
 ```
-Time difference of 2.59252 mins
-
-
 
 ### Run Interpolation
 
@@ -208,7 +160,7 @@ interpolated_data <- purrr::map_df(1:ntrips,function(i){
   #tmp_movedat <- movedat[[i]] #change this due to edits made in above section
   tmp_movedat <- movedatProj[[i]]
 
-  inter_movedat <- interpolateTime(x=tmp_movedat, time=as.difftime(60, units="mins"), spaceMethod='euclidean')
+  inter_movedat <- interpolateTime(x=tmp_movedat, time=as.difftime(30, units="mins"), spaceMethod='euclidean')
   inter_df <- as.data.frame(inter_movedat)
   #clean up the data frame
   inter_df <- inter_df %>%
@@ -222,7 +174,7 @@ interpolated_data <- purrr::map_df(1:ntrips,function(i){
 tm <- proc.time()-ptm
 ```
 
-Interpolation took taken `r round(tm[3]/60,2)` minutes to run. (2010: 22min)
+Interpolation took taken `r round(tm[3]/60,2)` minutes to run.
 
 ### Integrate Interpolated Data
 

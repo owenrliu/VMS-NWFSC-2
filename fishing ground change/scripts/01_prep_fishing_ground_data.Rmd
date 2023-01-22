@@ -1,0 +1,127 @@
+---
+title: "Prep Fishing Ground Data"
+output: html_document
+---
+
+Produce a .csv file with filtered VMS data that (to the best of our ability) represents Dungeness crab fishing grounds.
+
+
+```{r setup, include=FALSE}
+rm(list=ls())
+knitr::opts_chunk$set(echo = TRUE)
+
+library(raster)
+library(adehabitatHR)
+library(lubridate)
+library(ggmap)
+library(ggplot2)
+library(dplyr)
+library(maps)
+library(rgdal)
+library(rgeos)
+library(here)
+```
+<br>
+
+User Inputs:
+```{r}
+y=2017
+state="C"
+outdir <- "HomeRange/R_Output"
+```
+<br>
+
+## Data
+
+```{r vms}
+for(y in crab_years){
+  tmpvms <- readRDS(readRDS(here::here("Input_Data","processed_vms",paste0(y,"interpolated.rds"))))
+  if(y==crab_years[1]){
+    vms <- readRDS(here::here("Input_Data","processed_vms",paste0(y-1,"interpolated.rds"))) %>%
+      bind_rows(tmpvms)
+  } else{
+    tmpvms %<>% bind_rows(tmpvms)
+  }
+}
+```
+
+filter for California Dungeness crab trips, and grab columns of interest
+```{r}
+vms.filter %<>%
+  filter(agency_code == "C") %>%
+  filter(TARGET_lbs == "DCRB") %>%
+  filter(removal_type_code=="C" | removal_type_code=="D" | removal_type_code=="U") %>%
+  dplyr::select(Rec_ID,tdate, pacfin_port_code, port_group_code, agency_code, 
+                removal_type_code, removal_type_name, TARGET_lbs,
+                VMS_RECNO,VESSEL_NAM,drvid,UTCDATETIM,westcoastdate,westcoastdate_notime,
+                X_COORD,Y_COORD, LATITUDE,LONGITUDE,NGDC_M,
+                AVG_SPEED,avg_speed_recalc,AVG_COURSE,DECLARATIO, in_port, is_interpolated, 
+                tmonth,tyear,crab_year,DCRB_lbs,DCRB_revenue)
+```
+<br>
+
+Basemap
+```{r}
+data(stateMapEnv)
+states_df <- map_data("state") %>%
+  filter(region %in% c("california", "oregon", "washington"))
+states_df_sp <- states_df; coordinates(states_df_sp) <- c("long", "lat");proj4string(states_df_sp) <- CRS("+init=epsg:4326") # WGS 84
+states_geo <- spTransform(states_df_sp, CRS("+init=epsg:32610"))
+states_geo_df <- as.data.frame(states_geo)
+```
+<br>
+
+
+## Filter for Fishing Activity
+
+Apply filters for best guess at VMS points that represent fishing activity. filter out data points 
+
+(1) with average speed is > 4.2 m/s (in transit), 
+
+(2) with depths greater than 150m, and 
+
+(3) designated as "to remove" using the buffer zones (if to_rm column is NA because speed is unavailable, point will be removed if it has a NGDC_M > 100000, the ArcGIS indication of an in-port point.)
+
+Mark "remove" if the record is in port *and* the avg speed is < 0.75 m/s.
+```{r remove_flag}
+vms_filter <- mutate(vms, to_rm = ifelse(!is.na(in_port) & avg_speed_recalc < 0.75, "remove", "retain"))
+```
+<br>
+
+Filter Data
+```{r filter_trips}
+dim(vms_filter)
+vms_filter <- vms_filter %>%
+  filter(to_rm != "remove") %>%
+  filter(!(is.na(to_rm) & NGDC_M > 100000)) %>%
+  filter(avg_speed_recalc < 4.2) %>%
+  filter(NGDC_M < 150)
+dim(vms_filter)
+```
+<br>
+
+How much data was removed for each step?
+
+
+## Filter out inactive vessels
+
+Remove vessels with fewer than 5 relocations, or only one Dungeness crab trip per season. 
+```{r relocations}
+no_movement <- vms_filter %>%
+  group_by(drvid) %>%
+  summarise(n.locs = length(unique(LATITUDE))) %>%
+  filter(n.locs < 5)
+cat("removing ", dim(no_movement)[1] / length(unique(vms_filter$drvid))*100, "% of vessels.\n")
+
+dim(vms_filter)
+vms_filter <- vms_filter %>% filter(!(drvid %in% no_movement$drvid))
+dim(vms_filter)
+```
+<br>
+
+
+## Save fishing activity records
+```{r}
+write.csv(vms_filter,here::here(outdir,paste0("VMS_Outputs_DCRB_10d_lookback_crab",y,"_interpolated_regular_fishingloc.csv")),row.names=FALSE)
+```
+<br>
