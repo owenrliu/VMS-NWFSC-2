@@ -5,7 +5,7 @@ output: html_document
 
 ## Purpose
 
-In this step, we produce a version of the VMS data that is interpolated such that records are evenly distributed every hour.
+In this step, we produce a version of the VMS data that is interpolated such that records are evenly distributed every **30 minutes**.
 
 First, the script filters for time gaps over which it is unlikely that linear interpolation will be representative. According to the following rules:
 
@@ -57,7 +57,7 @@ vms_filtered <- read_rds(here::here('data','processed','matched','filtering',pas
 Find trips whose maximum time gap is greater than 4 hours or encompasses more than 25 percent of the trip
 NOTE:: Was this 40% before??
 
-```{r echo=FALSE}
+```{r}
 # random_trip <- vms_filtered %>% filter(TARGET_rev=='DCRB') %>% distinct(Rec_ID) %>% sample_n(3) %>% pull(Rec_ID)
 
 vms_gapfiltered <- vms_filtered %>%
@@ -67,11 +67,11 @@ vms_gapfiltered <- vms_filtered %>%
   mutate(trip_dur=sum(segment_dur)) %>% 
   # add a sequential record number
   arrange(westcoastdate) %>% 
-  mutate(recnum=row_number()) %>%
+  mutate(recnum=row_number()) %>% 
   #indicate whether to keep or remove trip based on segment durations
-  mutate(keep_remove_timelag=ifelse(max(segment_dur,na.rm=TRUE) > (4*3600) | (segment_dur/trip_dur) > max_gap_ptrip, "remove", "keep")) %>%
+  mutate(keep_remove_timelag=ifelse(max(segment_dur,na.rm=T) > (4*3600) | (segment_dur/trip_dur) > max_gap_ptrip, "remove", "keep")) %>% 
   #indicate whether the reason for removal was because of the last segment
-  mutate(longest_seg=first(recnum,order_by=desc(segment_dur))) %>%
+  mutate(longest_seg=first(recnum,order_by=desc(segment_dur))) %>% 
   mutate(last_seg_longest=longest_seg==max(recnum)) %>% 
   mutate(is_last_seg=ifelse(last_seg_longest&keep_remove_timelag=='remove',TRUE,FALSE)) %>% 
   ungroup()
@@ -86,7 +86,7 @@ nremovedtrips <- length(unique(trips_removed_table$Rec_ID))
 nremovedlastseg <- trips_removed_table %>% filter(is_last_seg) %>% nrow()
 ```
 
-With these criteria, out of `r ntottrips` unique trips in the filtered dataset, we flagged `r nremovedtrips` for removal, with `r nremovedlastseg` of these because of the last segment in the trip. For now, we instead retain these `r nremovedlastseg` trips for investigation later.
+With these criteria, out of `r ntottrips` unique trips in the filtered dataset, we flagged `r nremovedtrips` for removal (`r (nremovedtrips/ntottrips)*100`%), with `r nremovedlastseg` of these because of the last segment in the trip. For now, we instead retain these `r nremovedlastseg` trips for investigation later.
 
 Now we can filter the dataset.
 
@@ -96,6 +96,7 @@ vms_gapfiltered %<>%
   mutate(keep_remove_timelag=ifelse(is_last_seg,'keep',keep_remove_timelag)) %>% 
   filter(keep_remove_timelag=='keep')
 ```
+
 
 
 **** 
@@ -187,7 +188,6 @@ ggplot(track_removals2, aes(x=max_gap,y=premovedtrips)) + geom_col() + labs(y="%
 ****
 
 
-
 ## Interpolate
 
 Interpolate, using package `move`.
@@ -237,11 +237,8 @@ Sys.time() - start.time
 movedatProj <- spTransform(movedat, CRSobj="+proj=utm +zone=10 +datum=WGS84 +units=m +no_defs +type=crs")
 
 ```
-Time difference of 2.59252 mins
 
-
-
-### Run Interpolation
+### Run Interpolation (30min)
 
 Starting from a MoveStack object
 
@@ -254,7 +251,7 @@ interpolated_data <- purrr::map_df(1:ntrips,function(i){
   #tmp_movedat <- movedat[[i]] #change this due to edits made in above section
   tmp_movedat <- movedatProj[[i]]
 
-  inter_movedat <- interpolateTime(x=tmp_movedat, time=as.difftime(60, units="mins"), spaceMethod='euclidean')
+  inter_movedat <- interpolateTime(x=tmp_movedat, time=as.difftime(30, units="mins"), spaceMethod='euclidean')
   inter_df <- as.data.frame(inter_movedat)
   #clean up the data frame
   inter_df <- inter_df %>%
@@ -268,7 +265,7 @@ interpolated_data <- purrr::map_df(1:ntrips,function(i){
 tm <- proc.time()-ptm
 ```
 
-Interpolation took taken `r round(tm[3]/60,2)` minutes to run. (2010: 22min)
+Interpolation took taken `r round(tm[3]/60,2)` minutes to run.
 
 ### Integrate Interpolated Data
 
@@ -401,6 +398,6 @@ Add a final indicator for whether a point was interpolated or not, then save
 ```{r}
 vms_regular %<>% mutate(is_interpolated=ifelse(sensor=="interpolateTime",1,0)) %>% dplyr::select(-sensor)
 
-write_rds(vms_regular,here::here('data','processed','matched','interpolation_60min',paste0(process_year,'interpolated.rds')))
+write_rds(vms_regular,here::here('data','processed','matched','interpolation_30min',paste0(process_year,'interpolated.rds')))
 ```
 

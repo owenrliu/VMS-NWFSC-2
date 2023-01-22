@@ -26,6 +26,7 @@ library(lubridate)
 library(sf)
 library(move)
 library(rgdal)
+library(beepr)
 
 # ggplot theme
 plot_theme <-   theme_minimal()+
@@ -36,6 +37,19 @@ plot_theme <-   theme_minimal()+
         panel.grid.major = element_blank(),
         panel.grid.minor = element_blank())
 theme_set(plot_theme)
+
+# alerts
+options(error = function(){    # Beep on error
+  beepr::beep()
+  Sys.sleep(1)
+  }
+ )
+
+.Last <- function() {          # Beep on exiting session
+  beepr::beep()
+  Sys.sleep(1)
+}
+
 
 rm(list=setdiff(ls(),c('process_year','alltime')))
 
@@ -86,7 +100,7 @@ nremovedtrips <- length(unique(trips_removed_table$Rec_ID))
 nremovedlastseg <- trips_removed_table %>% filter(is_last_seg) %>% nrow()
 ```
 
-With these criteria, out of `r ntottrips` unique trips in the filtered dataset, we flagged `r nremovedtrips` for removal, with `r nremovedlastseg` of these because of the last segment in the trip. For now, we instead retain these `r nremovedlastseg` trips for investigation later.
+With these criteria, out of `r ntottrips` unique trips in the filtered dataset, we flagged `r nremovedtrips` for removal (`r (nremovedtrips/ntottrips)*100`%), with `r nremovedlastseg` of these because of the last segment in the trip. For now, we instead retain these `r nremovedlastseg` trips for investigation later.
 
 Now we can filter the dataset.
 
@@ -96,6 +110,97 @@ vms_gapfiltered %<>%
   mutate(keep_remove_timelag=ifelse(is_last_seg,'keep',keep_remove_timelag)) %>% 
   filter(keep_remove_timelag=='keep')
 ```
+
+
+
+**** 
+Aside: how does the # of trips retained drop when we increase / decrease the % of trip missing? *For 2010, the % trips removed drops to ~20% at 0.25 and plateaus from there*
+```{r echo=FALSE, fig.height=4,fig.width=5, warning=FALSE, message=FALSE}
+step_gaps <- seq(0,1,by=0.05)
+for(i in step_gaps){
+  tmp_vms_gapfiltered <- vms_filtered %>%
+    # filter(Rec_ID %in% random_trip) %>% 
+    group_by(Rec_ID) %>% 
+    # overall trip duration
+    mutate(trip_dur=sum(segment_dur)) %>% 
+    # add a sequential record number
+    arrange(westcoastdate) %>% 
+    mutate(recnum=row_number()) %>% 
+    #indicate whether to keep or remove trip based on segment durations
+    mutate(keep_remove_timelag=ifelse(max(segment_dur,na.rm=TRUE) > (4*3600) | (segment_dur/trip_dur) > i, "remove", "keep")) %>% 
+    #indicate whether the reason for removal was because of the last segment
+    mutate(longest_seg=first(recnum,order_by=desc(segment_dur))) %>% 
+    mutate(last_seg_longest=longest_seg==max(recnum)) %>% 
+    mutate(is_last_seg=ifelse(last_seg_longest&keep_remove_timelag=='remove',TRUE,FALSE)) %>% 
+    ungroup()
+  
+  tmp_trips_removed_table <- tmp_vms_gapfiltered %>%
+    filter(keep_remove_timelag=='remove') %>% 
+    dplyr::select(Rec_ID,last_seg_longest,is_last_seg) %>% 
+    distinct()
+  
+  if(i==0){
+    track_removals <- data.frame(max_pdur = i,
+                                 ntottrips = length(unique(vms_filtered$Rec_ID)),
+                                 nremovedtrips = length(unique(tmp_trips_removed_table$Rec_ID)),
+                                 nremovedlastseg = tmp_trips_removed_table %>% filter(is_last_seg) %>% nrow()) %>%
+      mutate(premovedtrips = nremovedtrips/ntottrips)
+  } else{
+    track_removals %<>% bind_rows(data.frame(max_pdur = i,
+                                             ntottrips = length(unique(vms_filtered$Rec_ID)),
+                                             nremovedtrips=length(unique(tmp_trips_removed_table$Rec_ID)),
+                                             nremovedlastseg=tmp_trips_removed_table %>% filter(is_last_seg) %>% nrow()) %>%
+      mutate(premovedtrips = nremovedtrips/ntottrips))
+  }
+}
+
+ggplot(track_removals, aes(x=max_pdur,y=premovedtrips)) + geom_col() + labs(y="% trips removed",x="max gap (% of trip time)")
+```
+
+Aside: how does the # of trips retained drop when we increase / decrease the hours missing? *For 2010, there is a big drop in % removed from 1 to 1.5; from 4.0 to 4.5 it drops from 16% to 12.5%*
+```{r echo=FALSE,fig.height=4,fig.width=5, warning=FALSE, message=FALSE}
+step_gaps <- seq(0,6,by=0.5)
+for(i in step_gaps){
+  tmp_vms_gapfiltered <- vms_filtered %>%
+    # filter(Rec_ID %in% random_trip) %>% 
+    group_by(Rec_ID) %>% 
+    # overall trip duration
+    mutate(trip_dur=sum(segment_dur)) %>% 
+    # add a sequential record number
+    arrange(westcoastdate) %>% 
+    mutate(recnum=row_number()) %>% 
+    #indicate whether to keep or remove trip based on segment durations
+    mutate(keep_remove_timelag=ifelse(max(segment_dur,na.rm=TRUE) > (i*3600) | (segment_dur/trip_dur) > 0.50, "remove", "keep")) %>% 
+    #indicate whether the reason for removal was because of the last segment
+    mutate(longest_seg=first(recnum,order_by=desc(segment_dur))) %>% 
+    mutate(last_seg_longest=longest_seg==max(recnum)) %>% 
+    mutate(is_last_seg=ifelse(last_seg_longest&keep_remove_timelag=='remove',TRUE,FALSE)) %>% 
+    ungroup()
+  
+  tmp_trips_removed_table <- tmp_vms_gapfiltered %>%
+    filter(keep_remove_timelag=='remove') %>% 
+    dplyr::select(Rec_ID,last_seg_longest,is_last_seg) %>% 
+    distinct()
+  
+  if(i==0){
+    track_removals2 <- data.frame(max_gap = i,
+                                 ntottrips = length(unique(vms_filtered$Rec_ID)),
+                                 nremovedtrips = length(unique(tmp_trips_removed_table$Rec_ID)),
+                                 nremovedlastseg = tmp_trips_removed_table %>% filter(is_last_seg) %>% nrow()) %>%
+      mutate(premovedtrips = nremovedtrips/ntottrips)
+  } else{
+    track_removals2 %<>% bind_rows(data.frame(max_gap = i,
+                                             ntottrips = length(unique(vms_filtered$Rec_ID)),
+                                             nremovedtrips=length(unique(tmp_trips_removed_table$Rec_ID)),
+                                             nremovedlastseg=tmp_trips_removed_table %>% filter(is_last_seg) %>% nrow()) %>%
+      mutate(premovedtrips = nremovedtrips/ntottrips))
+  }
+}
+
+ggplot(track_removals2, aes(x=max_gap,y=premovedtrips)) + geom_col() + labs(y="% trips removed",x="max gap (hrs)")
+```
+****
+
 
 ## Interpolate
 
@@ -147,7 +252,7 @@ movedatProj <- spTransform(movedat, CRSobj="+proj=utm +zone=10 +datum=WGS84 +uni
 
 ```
 
-### Run Interpolation
+### Run Interpolation (30min)
 
 Starting from a MoveStack object
 
@@ -307,6 +412,6 @@ Add a final indicator for whether a point was interpolated or not, then save
 ```{r}
 vms_regular %<>% mutate(is_interpolated=ifelse(sensor=="interpolateTime",1,0)) %>% dplyr::select(-sensor)
 
-write_rds(vms_regular,here::here('data','processed','matched','interpolation_60min',paste0(process_year,'interpolated.rds')))
+write_rds(vms_regular,here::here('data','processed','matched','interpolation_30min',paste0(process_year,'interpolated.rds')))
 ```
 
