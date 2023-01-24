@@ -62,7 +62,7 @@ plot_theme <-   theme_minimal()+
         panel.grid.major = element_line(color="gray50",linetype=3))
 theme_set(plot_theme)
 
-process_year <- seq(2009,2015)
+process_year <- seq(2016,2019)
 plot_output <- TRUE
 ```
 

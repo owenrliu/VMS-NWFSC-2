@@ -54,7 +54,7 @@ Choose directories and set objects
 ```{r objects}
 ## which years of fish tickets are you interested in?
 # process_year = 2017
-process_year   = seq(2008,2015)
+process_year   = seq(2016,2022)
 
 ## which species-specific revenue and lbs columns would you like? (static)
 species_cols <- c("DCRB", "SABL", "LOBS", "SPRW") 
@@ -118,7 +118,7 @@ This should be a .csv file containing raw PacFIN data. We only read in columns t
 
 #If you do not have individual Fish Ticket files for each year separately, you can also use a collated file
 # rawdat <- read_rds(here::here('data','raw','fish tickets','pacfin_compiled_2004thru2021.rds'))
-rawdat   <- read_csv(here::here('data','raw','2006_2016_compFT.csv'))
+rawdat   <- read_csv(here::here('data','raw','fish tickets 2016-2022 010323.csv'))
 
 rawdat <- rawdat %>%
   filter(LANDING_YEAR %in%  process_year)
