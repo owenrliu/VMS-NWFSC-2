@@ -126,16 +126,12 @@ rawdat <- rawdat %>%
 
 Check to make sure columns were in the correct format for reading. This will return the names of columns with parsing errors.
 ```{r}
-problems(rawdat) %>% select(col) %>% distinct()
+colnames(rawdat)[(problems(rawdat) %>% select(col) %>% distinct())$col]
 # The columns with parsing errors are usually from columns that we do not need anyway
 ```
 <br>
 
-We need FTID; what is the error?
-```{r}
-probs <- problems(rawdat) %>% filter(col=="FTID") %>% distinct(); probs
-message("of the ",dim(rawdat)[1], " rows in the dataset, ", length(probs$row), " rows have a FTID error.")
-```
+In the 2016-2022 data, it looks like read_csv is trying to read in TRIP_ID as a factor instead of numeric.
 <br>
 
 ## Edit existing columns
@@ -144,12 +140,12 @@ First, subset the raw data to include only the columns that are needed. Rename t
 
 ```{r}
 #an error here might be due to a missing FTID field, which should be included if possible
-## add into to column selection AFI_EXVESSEL_REVENUE - already adjusted for inflation **REMOVED FOR CHANGING FISHING GROUNDS PROJECT 2023-01-21**
+## add into to column selection AFI_EXVESSEL_REVENUE - already adjusted for inflation **REMOVED FOR pre-2016 data for CHANGING FISHING GROUNDS PROJECT 2023-01-21**
 ## add into column selection FTID: Source agency fish ticket identifier. This number is unique within a year and agency, but not necessarily across years or agencies.
-rawdat.sub <- rawdat %>% select(FISH_TICKET_ID, FTID, PACFIN_PORT_CODE, PACFIN_GROUP_PORT_CODE, VESSEL_NUM, AGENCY_CODE, GEAR_CODE, GEAR_NAME, PACFIN_GROUP_GEAR_CODE, REMOVAL_TYPE_CODE, REMOVAL_TYPE_NAME, LANDING_DATE, LANDING_MONTH, LANDING_YEAR, PACFIN_SPECIES_CODE, LANDED_WEIGHT_LBS, EXVESSEL_REVENUE) %>% 
+rawdat.sub <- rawdat %>% select(FISH_TICKET_ID, FTID, PACFIN_PORT_CODE, PACFIN_GROUP_PORT_CODE, VESSEL_NUM, AGENCY_CODE, GEAR_CODE, GEAR_NAME, PACFIN_GROUP_GEAR_CODE, REMOVAL_TYPE_CODE, REMOVAL_TYPE_NAME, LANDING_DATE, LANDING_MONTH, LANDING_YEAR, PACFIN_SPECIES_CODE, LANDED_WEIGHT_LBS, EXVESSEL_REVENUE,AFI_EXVESSEL_REVENUE) %>% 
 # change some column names
   set_colnames(c("Rec_ID","FTID", "pacfin_port_code", "port_group_code","drvid", "agency_code","gear_code", "gear_name", "gear_group", "removal_type_code", "removal_type_name", "date", "month", "year", 
-                          "PACFIN_SPECIES_CODE", "LANDED_WEIGHT_LBS", "EXVESSEL_REVENUE"))
+                          "PACFIN_SPECIES_CODE", "LANDED_WEIGHT_LBS", "EXVESSEL_REVENUE","AFI_EXVESSEL_REVENUE"))
 ```
 
 Remove the rows where the vessel identifier (drvid) is either "UNKNOWN" or blank ("")
@@ -321,7 +317,9 @@ Change existing date columns to date objects and format.
 
 ```{r dates}
 dat_targets_other %<>%
-  mutate(date=as.Date(date,"%d-%b-%y")) %>% 
+  ## edited for 2016-2022 tickets
+  mutate(date=as.Date(date,tryFormats=c("%m/%d/%y","%d-%b-%y"))) %>% 
+  ##
   mutate(month=lubridate::month(date),
          month=month.name[month],
          year_mo=paste(year,lubridate::month(date),sep="_"),
@@ -330,6 +328,13 @@ dat_targets_other %<>%
          Week=week(date),
          year_Wk=ifelse(Week < 10, paste0(year,"_0",Week), paste0(year,"_",Week)))
 ```
+```{r}
+## edited for 2016-2022 tickets
+if(any(is.na(dat_targets_other$date))){
+  message("WARNING: ",sum(is.na(dat_targets_other$date))," dates processed incorrectly. check format for as.Date function.")
+}
+```
+<br>
 
 ## Duplicated Dates
 
@@ -353,7 +358,7 @@ dat_out <- dat_targets_other %>%
 
 ## Reorder Output
 
-Clean up the output by reording the columns of interest
+Clean up the output by re-ording the columns of interest
 
 ```{r reorder_dataframe}
 dat_out %<>%
@@ -373,7 +378,7 @@ yrs_of_data <- unique(dat_out$year)
 for(y in 1:length(yrs_of_data)) {
  dat_out %>% 
     filter(year==yrs_of_data[y]) %>% 
-    write_rds(here::here('data','processed','fish tickets compFT',paste0(yrs_of_data[y],"fishtix",".rds",collapse=""))) 
+    write_rds(here::here('data','processed','fish tickets',paste0(yrs_of_data[y],"fishtix",".rds",collapse=""))) 
 }
 # for(y in unique(rawdat$LANDING_YEAR)){
 #   year.final.processdat <- filter(final.processdat, year == y )
