@@ -26,6 +26,7 @@ library(lubridate)
 library(sf)
 library(move)
 library(rgdal)
+library(rnaturalearth)
 
 # ggplot theme
 plot_theme <-   theme_minimal()+
@@ -40,7 +41,7 @@ theme_set(plot_theme)
 rm(list=setdiff(ls(),c('process_year','alltime')))
 
 #if needed, process_year
-# process_year=2010
+process_year=2015
 max_gap_ptrip=0.40
 ```
 
@@ -404,3 +405,59 @@ vms_regular %<>% mutate(is_interpolated=ifelse(sensor=="interpolateTime",1,0)) %
 write_rds(vms_regular,here::here('data','processed','matched','interpolation_60min',paste0(process_year,'interpolated.rds')))
 ```
 
+
+## Check interpolation
+
+Map a few random trips
+
+```{r}
+vms_regular <- read_rds(here::here('data','processed','matched','interpolation_60min',paste0(process_year,'interpolated.rds')))
+```
+```{r message=FALSE, fig.height=4, fig.width=7}
+vms_regular %>%
+  dplyr::select(Rec_ID, date, agency_code) %>%
+  distinct() %>%
+  group_by(date,agency_code) %>% summarise(ntrips=length(unique(Rec_ID))) %>%
+  ggplot(aes(x=date,y=ntrips,fill=agency_code)) +
+  geom_col() + ggtitle(paste0("Year: ", process_year))
+```
+
+```{r}
+vms_sf <- as.data.frame(vms_regular) %>% 
+  dplyr::select(Rec_ID,VMS_RECNO,X_COORD,Y_COORD,in_port,date) %>%
+  st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+
+# import a background/land layer from rnaturalearth package
+library(rnaturalearth)
+coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington')) %>%
+  # make sure CRS is the same as the port layer
+  st_transform(st_crs(vms_sf))
+
+test_port<-vms_sf %>% 
+  filter(in_port=='BDG') %>% 
+  #subsample for quicker plotting
+  sample_n(.,min(nrow(.),1000))
+testbbox <- st_bbox(test_port)
+ggplot()+
+  geom_sf(data=coaststates,fill='gray50')+
+  # geom_sf(data=ports_buffer,fill='seagreen',alpha=0.5)+
+  geom_sf(data=test_port,size=1,aes(color=date))+
+  xlim(testbbox[1]-5000,testbbox[3]+5000)+ylim(testbbox[2]-5000,testbbox[4]+5000)+
+  labs(x='',y='',title="Points for Bodega Trips")+
+  theme(axis.text.x = element_text(angle=90))
+```
+```{r}
+test_port<-vms_sf %>% 
+  filter(in_port=='CRS') %>% 
+  #subsample for quicker plotting
+  sample_n(.,min(nrow(.),1000))
+testbbox <- st_bbox(test_port)
+ggplot()+
+  geom_sf(data=coaststates,fill='gray50')+
+  # geom_sf(data=ports_buffer,fill='seagreen',alpha=0.5)+
+  geom_sf(data=test_port,size=1,aes(color=date))+
+  xlim(testbbox[1]-5000,testbbox[3]+5000)+ylim(testbbox[2]-5000,testbbox[4]+5000)+
+  labs(x='',y='',title="Points for Crescent City Trips")+
+  theme(axis.text.x = element_text(angle=90))
+```

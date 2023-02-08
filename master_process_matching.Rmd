@@ -27,7 +27,7 @@ This parameter will get passed through all processing steps
 
 ```{r choose year}
 alltime <- proc.time()
-process_year <- 2016
+process_year <- 2019
 ```
 
 

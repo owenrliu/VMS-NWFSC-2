@@ -72,10 +72,10 @@ plot_output <- TRUE
 
 If this script was run previously, just match landings to vessel lengths.
 
-```{r, eval=FALSE}
+```{r eval=FALSE}
 for(y in process_year){
   # read in landings rds file
-  landings_subset <- read_rds(here::here('data','processed','fish tickets compFT',paste0(y,'fishtix.rds')))
+  landings_subset <- read_rds(here::here('data','processed','fish tickets',paste0(y,'fishtix.rds')))
   
   # read in vessel lengths rds file
   vessel_length_key_df_subset <- read_rds(here::here('data','processed','vessel length keys',paste0("vessel_length_key_", y, ".rds")))
@@ -84,7 +84,7 @@ for(y in process_year){
   dcrb_landings_length <- left_join(landings_subset,vessel_length_key_df_subset, by=c("drvid", "agency_code","year"))
   
   # write
-  write_rds(dcrb_landings_length,here::here('data','processed','fish tickets compFT',paste0(y, "fishtix_vlengths.rds")))
+  write_rds(dcrb_landings_length,here::here('data','processed','fish tickets',paste0(y, "fishtix_vlengths.rds")))
   
   # save length key for plotting?
   if(plot_output){

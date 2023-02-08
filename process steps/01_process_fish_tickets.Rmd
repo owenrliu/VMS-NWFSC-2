@@ -318,8 +318,9 @@ Change existing date columns to date objects and format.
 ```{r dates}
 dat_targets_other %<>%
   ## edited for 2016-2022 tickets
-  mutate(date=as.Date(date,tryFormats=c("%m/%d/%y","%d-%b-%y"))) %>% 
+  mutate(date=lubridate::parse_date_time(date,c("mdy_HMS","dmy_HMS")))
   ##
+dat_targets_other %<>%
   mutate(month=lubridate::month(date),
          month=month.name[month],
          year_mo=paste(year,lubridate::month(date),sep="_"),
@@ -331,7 +332,7 @@ dat_targets_other %<>%
 ```{r}
 ## edited for 2016-2022 tickets
 if(any(is.na(dat_targets_other$date))){
-  message("WARNING: ",sum(is.na(dat_targets_other$date))," dates processed incorrectly. check format for as.Date function.")
+  message("WARNING: ",sum(is.na(dat_targets_other$date))," dates processed incorrectly. check format for parse_date_time function.")
 }
 ```
 <br>
