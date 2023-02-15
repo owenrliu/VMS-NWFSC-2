@@ -1,0 +1,195 @@
+---
+title: "Cluster Vessels into Groups"
+output: html_document
+---
+
+**Author: M. Fisher**
+
+Cluster Dungeness crab fishing vessels in a given crab year, according to fishing location. Clustering input is the proportion of geolocations in each California offshore management block. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# r packages
+library(tidyverse)
+library(magrittr)
+library(sf)
+library(sp)
+library(lubridate)
+library(ggplot2)
+library(rgdal)
+library(rgeos)
+library(here)
+library(rnaturalearth)
+library(cowplot)
+# library(maps)
+
+
+# ggplot theme
+plot_theme <- theme_classic() +
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+theme_set(plot_theme)
+
+```
+
+User Inputs:
+```{r}
+crab_years <- seq(2011,2018)
+states <- c("C")
+outdir <- "fishing-ground-change/project-dat/vms/interpolation_60min/NaN_speed_filter"
+```
+
+
+## Data
+
+```{r read_vms}
+for(y in crab_years){
+  tmpvms <-  read_rds(here::here('fishing-ground-change','project-dat','vms','interpolation_60min','NaN_speed_filter',paste0(y,'season_crabfishing.rds')))
+  if(y==crab_years[1]){
+    vms <- tmpvms
+  } else{
+    vms %<>% bind_rows(tmpvms)
+  }
+}
+
+str(vms)
+```
+
+
+## Add management blocks
+
+Match each geolocation to a California offshore management block. These are slightly smaller-scale than the management areas.
+```{r}
+#Load shapefile
+blocks <- st_read(here("fishing-ground-change","project-dat","CA_largeOffshoreblocks/CA_largeOffshoreblocks.shp"))
+
+#change blocks to lat/lon WGS84
+blocks4326 <- blocks %>% st_transform(4326)
+```
+```{r echo=FALSE,fig.width=4,fig.height=6}
+## plot
+blocks_coords <- as.data.frame(sf::st_coordinates(sf::st_point_on_surface(blocks4326))) %>%
+  mutate(NAME=blocks4326$BLOCK10_ID)
+ggplot() +
+  geom_sf(data=blocks4326) +
+  geom_text(data = blocks_coords, aes(X, Y, label = NAME), colour = "black") +
+  labs(x="",y="")
+```
+<br>
+
+Most Dungeness crab fishing occurs north of Santa Barbara, so let's aggregate the southern-most management blocks. 
+```{r eval=FALSE}
+## separate blocks to combine
+keep_blocks <- blocks4326[blocks4326$BLOCK10_ID %in% c("1042","1041","1040","1038","1037","1036")]
+# combine_blocks <- blocks4326[blocks4326$BLOCK10_ID %in% c("1035","1034","1033","1032"),]
+combine_blocks <- blocks4326 %>% filter(BLOCK10_ID %in% c("1035","1034","1033","1032"))
+
+
+
+## aggregate southern blocks 
+combine_blocks2 <- st_union(x=combine_blocks,by_feature=FALSE)
+combine_blocks3 <- st_as_sf(data.frame(BLOCK10_ID=103532,
+                                 Perimeter=0,
+                                 Area=0,
+                                 Acres=0,
+                                 Hectares=0,
+                                 geometry=combine_blocks2)) %>%
+  group_by()
+combine_blocks4 <- st_as_sf(combine_blocks3) %>% st_cast(to="MULTIPOLYGON",group_or_split=FALSE) %>% st_transform(4326)
+
+## new blocks object
+blocks2 <- rbind(keep_blocks,combine_blocks4,makeUniqueIDs = TRUE)
+```
+```{r echo=FALSE, fig.width=5, fig.height=7}
+ggplot() +
+  geom_sf(data=combine_blocks2)
+  # geom_polygon(data = combine_blocks, aes(x=long,y=lat,group=group),size = 1, color = "black", fill = "cyan1", alpha=0.5)
+```
+<br>
+
+
+
+```{r}
+# thin out data frame
+vms_thin <- dplyr::select(vms_nodup, Rec_ID, VMS_RECNO, drvid, UTCDATETIM, LATITUDE, LONGITUDE, X_COORD,Y_COORD,westcoastdate,avg_speed_recalc,crab_year)
+rm(vms_nodup)
+```
+
+```{r}
+assign_dcrb_block <- function(vms, blocks_sf, y, plot=FALSE){
+  # Subset vms data
+  tmpvms <- filter(vms_thin,crab_year==y)
+  # make sf object and assign coord system
+  tmpvms_sp <- st_as_sf(tmpvms,coords=c("LONGITUDE", "LATITUDE"),crs = st_crs(4326))
+  
+  # get block location of each vms point
+  newvms_sp <- st_join(tmpvms_sp,blocks4326) 
+  
+  # save as data frame
+  outvms <- newvms_sp %>%
+    st_set_geometry(NULL) %>%
+    dplyr::select(-Perimeter,-Area,-Acres,-Hectares)
+  
+if(plot){
+  myplot <- ggplot() +
+  geom_sf(data=blocks4326) +
+    geom_sf(data=newvms_sp,aes(col=BLOCK10_ID)) +
+  geom_text(data = blocks_coords, aes(X, Y, label = NAME), colour = "black") +
+  labs(x="",y="")
+  
+  return(list(outvms,myplot))
+} else{
+  
+  return(outvms)
+  
+}
+}
+```
+
+
+```{r}
+for(y in crab_years){
+  tmpout <- assign_dcrb_block(vms=vms, blocks_sf = blocks4326, y=y, plot=TRUE)
+  if(y==crab_years[1]){
+    vms_out <- tmpout[[1]]
+  } else{
+    vms_out %<>% bind_rows(tmpout[[1]])
+  }
+  
+  png(here(outdir,paste0(y,'block_assignments.png')))
+  print(tmpout[[2]])
+  dev.off()
+}
+```
+
+
+remove any vms points that did not assign to a block
+```{r}
+missing_block <- vms_out %>% filter(is.na(BLOCK10_ID))
+vms_out %<>% filter(!is.na(BLOCK10_ID))
+```
+<br>
+
+
+```{r}
+trips_per_block <- vms_out %>%
+  group_by(crab_year,drvid,BLOCK10_ID) %>%
+  summarise(ntrips=length(unique(Rec_ID)),
+            nvms  =length(unique(VMS_RECNO))) %>%
+  mutate(region=ifelse(BLOCK10_ID %in% ))
+```
+
+## clustering
+
+
+Remove any records within the same trip that have the same time stamp. Depending on how "NA" speeds were filtered, there may be no duplicate locations.
+```{r}
+vms_nodup <- vms[c(which(!(duplicated(subset(vms,select=c(Rec_ID, UTCDATETIM)),fromLast=TRUE)))),]
+message('removed ', round((1-(dim(vms_nodup)[1]/dim(vms)[1]))*100,3), "% of all VMS records.")
+```
+
