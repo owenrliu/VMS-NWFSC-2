@@ -5,7 +5,13 @@ output: html_document
 
 **Author: M. Fisher**
 
-Cluster Dungeness crab fishing vessels in a given crab year, according to fishing location. Clustering input is the proportion of geolocations in each California offshore management block. 
+Cluster Dungeness crab fishing vessels in a given crab year, according to fishing location. Clustering input is the proportion of geolocations in each California offshore management block. This script is specific to commercial fishing vessels landing Dungeness crab at California port groups.
+
+Clustering details: 
+
+- Hellinger distance: because we don't know for sure if 0s mean no fishing in a given block, or just no VMS-covered fishing.
+
+- `k` chosen using a combination of heatmaps, NbClust
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -14,15 +20,21 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(magrittr)
 library(sf)
-library(sp)
+# library(sp)
 library(lubridate)
 library(ggplot2)
-library(rgdal)
-library(rgeos)
+# library(rgdal)
+# library(rgeos)
 library(here)
-library(rnaturalearth)
 library(cowplot)
+library(parallelDist)
+library(vegan)
+library(NbClust)
+library(ggdendro)
+library(grid);library(gridExtra)
 # library(maps)
+
+source(here('R','intersect_vms_block.R'))
 
 
 # ggplot theme
@@ -40,16 +52,17 @@ theme_set(plot_theme)
 User Inputs:
 ```{r}
 crab_years <- seq(2011,2018)
-states <- c("C")
-outdir <- "fishing-ground-change/project-dat/vms/interpolation_60min/NaN_speed_filter"
+cluster_year <- 2014
+outdir <- "project-dat/vms/interpolation_60min/NaN_speed_filter"
 ```
 
 
 ## Data
 
+VMS
 ```{r read_vms}
 for(y in crab_years){
-  tmpvms <-  read_rds(here::here('fishing-ground-change','project-dat','vms','interpolation_60min','NaN_speed_filter',paste0(y,'season_crabfishing.rds')))
+  tmpvms <-  read_rds(here::here('project-dat','vms','interpolation_60min','NaN_speed_filter',paste0(y,'season_crabfishing.rds')))
   if(y==crab_years[1]){
     vms <- tmpvms
   } else{
@@ -60,17 +73,20 @@ for(y in crab_years){
 str(vms)
 ```
 
-
-## Add management blocks
-
-Match each geolocation to a California offshore management block. These are slightly smaller-scale than the management areas.
+offshore management blocks, in a shapefile.
 ```{r}
 #Load shapefile
-blocks <- st_read(here("fishing-ground-change","project-dat","CA_largeOffshoreblocks/CA_largeOffshoreblocks.shp"))
+blocks <- st_read(here("project-dat","CA_largeOffshoreblocks/CA_largeOffshoreblocks.shp"))
 
 #change blocks to lat/lon WGS84
 blocks4326 <- blocks %>% st_transform(4326)
 ```
+
+
+
+## Add management blocks
+
+California offshore management blocks are slightly smaller-scale than the management areas. Blocks 1042, 1041, and 1040 are in the northern management area.
 ```{r echo=FALSE,fig.width=4,fig.height=6}
 ## plot
 blocks_coords <- as.data.frame(sf::st_coordinates(sf::st_point_on_surface(blocks4326))) %>%
@@ -82,7 +98,8 @@ ggplot() +
 ```
 <br>
 
-Most Dungeness crab fishing occurs north of Santa Barbara, so let's aggregate the southern-most management blocks. 
+### southern blocks (optional)
+Most Dungeness crab fishing occurs north of Santa Barbara, so let's aggregate the southern-most management blocks. **Set to `eval=FALSE`**
 ```{r eval=FALSE}
 ## separate blocks to combine
 keep_blocks <- blocks4326[blocks4326$BLOCK10_ID %in% c("1042","1041","1040","1038","1037","1036")]
@@ -105,56 +122,18 @@ combine_blocks4 <- st_as_sf(combine_blocks3) %>% st_cast(to="MULTIPOLYGON",group
 ## new blocks object
 blocks2 <- rbind(keep_blocks,combine_blocks4,makeUniqueIDs = TRUE)
 ```
-```{r echo=FALSE, fig.width=5, fig.height=7}
+```{r eval=FALSE, echo=FALSE, fig.width=5, fig.height=7}
 ggplot() +
   geom_sf(data=combine_blocks2)
   # geom_polygon(data = combine_blocks, aes(x=long,y=lat,group=group),size = 1, color = "black", fill = "cyan1", alpha=0.5)
 ```
 <br>
 
-
-
-```{r}
-# thin out data frame
-vms_thin <- dplyr::select(vms_nodup, Rec_ID, VMS_RECNO, drvid, UTCDATETIM, LATITUDE, LONGITUDE, X_COORD,Y_COORD,westcoastdate,avg_speed_recalc,crab_year)
-rm(vms_nodup)
-```
-
-```{r}
-assign_dcrb_block <- function(vms, blocks_sf, y, plot=FALSE){
-  # Subset vms data
-  tmpvms <- filter(vms_thin,crab_year==y)
-  # make sf object and assign coord system
-  tmpvms_sp <- st_as_sf(tmpvms,coords=c("LONGITUDE", "LATITUDE"),crs = st_crs(4326))
-  
-  # get block location of each vms point
-  newvms_sp <- st_join(tmpvms_sp,blocks4326) 
-  
-  # save as data frame
-  outvms <- newvms_sp %>%
-    st_set_geometry(NULL) %>%
-    dplyr::select(-Perimeter,-Area,-Acres,-Hectares)
-  
-if(plot){
-  myplot <- ggplot() +
-  geom_sf(data=blocks4326) +
-    geom_sf(data=newvms_sp,aes(col=BLOCK10_ID)) +
-  geom_text(data = blocks_coords, aes(X, Y, label = NAME), colour = "black") +
-  labs(x="",y="")
-  
-  return(list(outvms,myplot))
-} else{
-  
-  return(outvms)
-  
-}
-}
-```
-
+### add block to locations
 
 ```{r}
 for(y in crab_years){
-  tmpout <- assign_dcrb_block(vms=vms, blocks_sf = blocks4326, y=y, plot=TRUE)
+  tmpout <- intersect_vms_block(vms=vms, blocks_sf = blocks4326, y=y, plot=TRUE)
   if(y==crab_years[1]){
     vms_out <- tmpout[[1]]
   } else{
@@ -168,27 +147,390 @@ for(y in crab_years){
 ```
 
 
-remove any vms points that did not assign to a block
+how many vms points were not assigned to a block? remove them from the dataset.
+```{r echo=FALSE}
+vms_out %>% filter(is.na(BLOCK10_ID)) %>%
+  group_by(crab_year) %>%
+  summarise(nvms=length(unique(VMS_RECNO))) %>%
+  left_join(vms_out %>% group_by(crab_year) %>%
+              summarise(totalvms=length(unique(VMS_RECNO))),by="crab_year") %>%
+  mutate(percent_missing=100*(nvms/totalvms)) %>%
+  ggplot(aes(x=as.factor(crab_year),y=percent_missing)) + 
+  geom_col() + labs(x="Crab Year",y="% VMS out of blocks")
+```
 ```{r}
-missing_block <- vms_out %>% filter(is.na(BLOCK10_ID))
 vms_out %<>% filter(!is.na(BLOCK10_ID))
+```
+<br>
+
+Calculate proportion of VMS points in each offshore block, for each vessel and crab year. 
+```{r}
+vms_per_block <- vms_out %>%
+  group_by(crab_year,drvid,BLOCK10_ID) %>%
+  summarise(nvms=length(unique(VMS_RECNO))) %>%
+  left_join(vms_out %>%
+              group_by(crab_year,drvid) %>%
+  summarise(totalvms=length(unique(VMS_RECNO))), by=c("drvid","crab_year")) %>%
+  mutate(propVMS=nvms/totalvms)
+```
+```{r echo=FALSE}
+ggplot(vms_per_block, aes(x=as.factor(crab_year),y=propVMS)) +
+  geom_boxplot(aes(col=as.factor(BLOCK10_ID))) + 
+  facet_wrap(~BLOCK10_ID) + theme(legend.position="none") +
+  labs(x="crab year",y="propVMS per vessel")
+```
+
+Calculate proportion of VMS points in each management area, for each vessel and crab year. 
+```{r}
+vms_per_area <- vms_out %>%
+  mutate(area=ifelse(BLOCK10_ID %in% c("1042","1041","1040"), "northern","central")) %>%
+  group_by(crab_year,drvid,area) %>%
+  summarise(nvms=length(unique(VMS_RECNO))) %>%
+  left_join(vms_out %>%
+              group_by(crab_year,drvid) %>%
+  summarise(totalvms=length(unique(VMS_RECNO))), by=c("drvid","crab_year")) %>%
+  mutate(propVMS=nvms/totalvms)
+```
+```{r echo=FALSE}
+ggplot(vms_per_area, aes(x=as.factor(crab_year),y=propVMS)) +
+  geom_boxplot(aes(col=as.factor(area))) + 
+  facet_wrap(~area) + theme(legend.position="none") +
+  labs(x="crab year",y="propVMS per vessel")
+```
+
+
+
+## clustering
+
+### by block
+
+Remove empty rows; select only cluster year
+```{r}
+mydat <- vms_per_block %>% filter(crab_year==cluster_year) %>%
+  ungroup() %>%
+  dplyr::select(drvid,BLOCK10_ID,propVMS) %>%
+  pivot_wider(id_cols=c("drvid"), names_from=BLOCK10_ID, values_from=propVMS, values_fill=0)
+```
+```{r echo=FALSE}
+mydat_counts <- vms_per_block %>% filter(crab_year==cluster_year) %>%
+  ungroup() %>%
+  dplyr::select(drvid,BLOCK10_ID,nvms)
+```
+<br>
+
+calculate hellinger distance between vessels.
+```{r}
+starttime <- Sys.time()
+
+   dat.dist <- parDist(as.matrix(mydat[,2:8]), method="hellinger", diag=FALSE, upper=FALSE)
+
+Sys.time()-starttime
+```
+
+clustering
+```{r}
+dat.hclust <- hclust(d=dat.dist, method="ward.D2")
+dat.dendro <- as.dendrogram(dat.hclust)
+```
+
+
+#### explore clusters
+```{r echo=FALSE}
+heights <- cbind(dat.hclust$height, dat.hclust$merge)
+plot(x=12:1, y=heights[(nrow(heights)-11):nrow(heights),1],xlab="Number of Groups", ylab="height", type="b")
+nb <- NbClust(data=as.matrix(mydat[,2:8]), diss=dat.dist, distance=NULL, method="ward.D2", index="gap")
+plot(x=seq(2,length(nb$All.index)+1), y=nb$All.index)
+
+plot(dat.hclust, labels=mydat$drvid, hang=-1, ylab="Dissimilarity")
+rect.hclust(dat.hclust, k=6) # k splits dendrogram into given number of clusters
+
+plot(dat.hclust, labels=mydat$drvid, hang=-1, ylab="Dissimilarity")
+rect.hclust(dat.hclust, k=5) # k splits dendrogram into given number of clusters
+
+plot(dat.hclust, labels=mydat$drvid, hang=-1, ylab="Dissimilarity")
+rect.hclust(dat.hclust, k=4) # k splits dendrogram into given number of clusters
+```
+<br>
+
+Vessel Heatmap 
+```{r echo=FALSE}
+dat_long <- mydat %>% 
+  pivot_longer(cols=2:8, names_to="block",values_to="propVMS")
+
+dat.order <- data.frame(drvid=mydat$drvid[order.dendrogram(dat.dendro)])
+
+dat_long$drvid <- factor(dat_long$drvid,levels=dat.order$drvid)
+
+
+ordered.heatmap.plot <- ggplot(data = dat_long, aes(x = block, y = drvid)) +
+  geom_tile(aes(fill = propVMS)) +
+  scale_fill_gradient2() +
+  theme(axis.text.y = element_blank())
+
+dendro.plot <- ggdendrogram(data = dat.dendro, rotate = TRUE) + 
+  theme(axis.text.y = element_text(size = 6))
+
+png(here(outdir,paste0(cluster_year,'dendrogram_heatmap_block-clustered.png')))
+grid.newpage()
+print(ordered.heatmap.plot, vp = viewport(x = 0.4, y = 0.5, width = 0.8, height = 1.0))
+print(dendro.plot, vp = viewport(x = 0.90, y = 0.5, width = 0.2, height = 1.08))
+dev.off()
+
+
+grid.newpage()
+print(ordered.heatmap.plot, vp = viewport(x = 0.4, y = 0.5, width = 0.8, height = 1.0))
+print(dendro.plot, vp = viewport(x = 0.90, y = 0.5, width = 0.2, height = 1.08))
+```
+<br>
+
+#### final clusters
+
+```{r}
+k=6
+
+plot(dat.hclust,hang=-1, ylab="Dissimilarity")
+hclust.groups <- rect.hclust(dat.hclust, k=k)
+drvid_groups <- data.frame(vessels=as.character(),
+                           group=as.numeric(),
+                           crab_year=as.numeric())
+for(i in seq(1,k)){
+  vessel_list <- mydat$drvid[hclust.groups[[i]]]
+  tmp_df <- data.frame(vessels=vessel_list,
+                       group=rep(i,length(vessel_list)),
+                       crab_year=cluster_year)
+  drvid_groups <- rbind(drvid_groups, tmp_df)
+}
+```
+<br>
+
+Name groups
+```{r}
+get_home <- function(df, cutoff=0.10){
+  df <- mutate(df, max_sum = max(tmpn),prop_max = 1-tmpn/max_sum)
+  home_ports <- filter(df, prop_max < cutoff)$BLOCK10_ID
+  home_out <- paste0(home_ports, collapse="/")
+  return(home_out)
+}
 ```
 <br>
 
 
 ```{r}
-trips_per_block <- vms_out %>%
-  group_by(crab_year,drvid,BLOCK10_ID) %>%
-  summarise(ntrips=length(unique(Rec_ID)),
-            nvms  =length(unique(VMS_RECNO))) %>%
-  mutate(region=ifelse(BLOCK10_ID %in% ))
+for(i in seq(1,k)){
+  tmp_drvids <- filter(drvid_groups, group == i)
+  tmp_dat <- mydat_counts %>%
+    filter(drvid %in% tmp_drvids$vessels) %>%
+    group_by(BLOCK10_ID) %>%
+    summarise(tmpn = sum(nvms, na.rm=TRUE))
+  home_block <- get_home(tmp_dat, cutoff=0.7)
+  if(i==1){
+    home_names <- data.frame(vessels=tmp_drvids$vessels,
+                             block=rep(home_block,times=length(tmp_drvids$vessels)))
+  } else{
+    tmp_names <-data.frame(vessels=tmp_drvids$vessels,
+                             block=rep(home_block,times=length(tmp_drvids$vessels)))
+    home_names <- rbind(home_names, tmp_names)
+  }
+}
+
+drvid_groups <- left_join(drvid_groups, home_names, by="vessels")
+
+#write it out
+plotdat <- left_join(drvid_groups,mydat,by=c("vessels"="drvid"))
+write.csv(plotdat,here::here(outdir,paste0(cluster_year,"_k",k,"clusters_blocks.csv")))
+```
+<br>
+
+Condensed heat map
+```{r}
+plotdat.summary <- mydat_counts %>%
+  left_join(plotdat %>% dplyr::select(vessels,group,block),by=c("drvid"="vessels")) %>%
+  rename("group_block"=block) %>%
+  group_by(group,group_block, BLOCK10_ID) %>%
+  summarise(groupVMS=sum(nvms)) %>%
+  pivot_wider(names_from=BLOCK10_ID,values_from=groupVMS, values_fill=0)
+plotdat_prop <- prop.table(as.matrix(plotdat.summary[,3:9]),margin=1) %>%
+  bind_cols(dplyr::select(plotdat.summary,group,group_block)) %>%
+  pivot_longer(cols=1:7,names_to="block")
+
+labeldat <- data.frame(x=0.75,y=seq(1,k),nv=(plotdat %>% group_by(group) %>% summarise(n.vessels=length(unique(vessels))))[,"n.vessels"])
+
+ggplot(data = plotdat_prop, aes(x = block, y = as.factor(group))) +
+  geom_tile(aes(fill = value)) +
+  geom_text(data=labeldat,aes(x,y,label=n.vessels), size=4, color="grey30") +
+  scale_fill_gradient2() +
+  theme(axis.text.y = element_text(size = 9)) + theme_bw()
 ```
 
-## clustering
 
 
-Remove any records within the same trip that have the same time stamp. Depending on how "NA" speeds were filtered, there may be no duplicate locations.
+### by area
+
+
+Remove empty rows; select only cluster year
 ```{r}
+mydat <- vms_per_area %>% filter(crab_year==cluster_year) %>%
+  ungroup() %>%
+  dplyr::select(drvid,area,propVMS) %>%
+  pivot_wider(id_cols=c("drvid"), names_from=area, values_from=propVMS, values_fill=0)
+```
+```{r echo=FALSE}
+mydat_counts <- vms_per_area %>% filter(crab_year==cluster_year) %>%
+  ungroup() %>%
+  dplyr::select(drvid,area,nvms)
+```
+<br>
+
+calculate hellinger distance between vessels.
+```{r}
+starttime <- Sys.time()
+
+   dat.dist <- parDist(as.matrix(mydat[,2:3]), method="hellinger", diag=FALSE, upper=FALSE)
+
+Sys.time()-starttime
+```
+
+clustering
+```{r}
+dat.hclust <- hclust(d=dat.dist, method="ward.D2")
+dat.dendro <- as.dendrogram(dat.hclust)
+```
+
+
+#### explore clusters
+```{r echo=FALSE}
+heights <- cbind(dat.hclust$height, dat.hclust$merge)
+plot(x=12:1, y=heights[(nrow(heights)-11):nrow(heights),1],xlab="Number of Groups", ylab="height", type="b")
+nb <- NbClust(data=as.matrix(mydat[,2:3]), diss=dat.dist, distance=NULL, method="ward.D2", index="gap")
+plot(x=seq(2,length(nb$All.index)+1), y=nb$All.index)
+
+plot(dat.hclust, labels=mydat$drvid, hang=-1, ylab="Dissimilarity")
+rect.hclust(dat.hclust, k=4) # k splits dendrogram into given number of clusters
+
+plot(dat.hclust, labels=mydat$drvid, hang=-1, ylab="Dissimilarity")
+rect.hclust(dat.hclust, k=3) # k splits dendrogram into given number of clusters
+
+plot(dat.hclust, labels=mydat$drvid, hang=-1, ylab="Dissimilarity")
+rect.hclust(dat.hclust, k=2) # k splits dendrogram into given number of clusters
+```
+<br>
+
+Vessel Heatmap 
+```{r echo=FALSE}
+dat_long <- mydat %>% 
+  pivot_longer(cols=2:3, names_to="block",values_to="propVMS")
+
+dat.order <- data.frame(drvid=mydat$drvid[order.dendrogram(dat.dendro)])
+
+dat_long$drvid <- factor(dat_long$drvid,levels=dat.order$drvid)
+
+
+ordered.heatmap.plot <- ggplot(data = dat_long, aes(x = block, y = drvid)) +
+  geom_tile(aes(fill = propVMS)) +
+  scale_fill_gradient2() +
+  theme(axis.text.y = element_blank())
+
+dendro.plot <- ggdendrogram(data = dat.dendro, rotate = TRUE) + 
+  theme(axis.text.y = element_text(size = 6))
+
+png(here(outdir,paste0(cluster_year,'dendrogram_heatmap_area-clustered.png')))
+grid.newpage()
+print(ordered.heatmap.plot, vp = viewport(x = 0.4, y = 0.5, width = 0.8, height = 1.0))
+print(dendro.plot, vp = viewport(x = 0.90, y = 0.5, width = 0.2, height = 1.08))
+dev.off()
+
+
+grid.newpage()
+print(ordered.heatmap.plot, vp = viewport(x = 0.4, y = 0.5, width = 0.8, height = 1.0))
+print(dendro.plot, vp = viewport(x = 0.90, y = 0.5, width = 0.2, height = 1.08))
+```
+<br>
+#### final clusters
+
+```{r}
+k=4
+
+plot(dat.hclust,hang=-1, ylab="Dissimilarity")
+hclust.groups <- rect.hclust(dat.hclust, k=k)
+drvid_groups <- data.frame(vessels=as.character(),
+                           group=as.numeric(),
+                           crab_year=as.numeric())
+for(i in seq(1,k)){
+  vessel_list <- mydat$drvid[hclust.groups[[i]]]
+  tmp_df <- data.frame(vessels=vessel_list,
+                       group=rep(i,length(vessel_list)),
+                       crab_year=cluster_year)
+  drvid_groups <- rbind(drvid_groups, tmp_df)
+}
+```
+<br>
+
+Name groups
+```{r}
+get_home <- function(df, cutoff=0.10){
+  df <- mutate(df, max_sum = max(tmpn),prop_max = 1-tmpn/max_sum)
+  home_ports <- filter(df, prop_max < cutoff)$area
+  home_out <- paste0(home_ports, collapse="/")
+  return(home_out)
+}
+```
+<br>
+
+
+```{r}
+for(i in seq(1,k)){
+  tmp_drvids <- filter(drvid_groups, group == i)
+  tmp_dat <- mydat_counts %>%
+    filter(drvid %in% tmp_drvids$vessels) %>%
+    group_by(area) %>%
+    summarise(tmpn = sum(nvms, na.rm=TRUE))
+  home_area <- get_home(tmp_dat, cutoff=0.7)
+  if(i==1){
+    home_names <- data.frame(vessels=tmp_drvids$vessels,
+                             area=rep(home_area,times=length(tmp_drvids$vessels)))
+  } else{
+    tmp_names <-data.frame(vessels=tmp_drvids$vessels,
+                             area=rep(home_area,times=length(tmp_drvids$vessels)))
+    home_names <- rbind(home_names, tmp_names)
+  }
+}
+
+drvid_groups <- left_join(drvid_groups, home_names, by="vessels")
+
+#write it out
+plotdat <- left_join(drvid_groups,mydat,by=c("vessels"="drvid"))
+write.csv(plotdat,here::here(outdir,paste0(cluster_year,"_k",k,"clusters_area.csv")))
+```
+<br>
+
+Condensed heat map
+```{r}
+plotdat.summary <- mydat_counts %>%
+  left_join(plotdat %>% dplyr::select(vessels,group,area) %>% rename("group_area"=area) ,by=c("drvid"="vessels"))%>%
+  group_by(group,group_area, area) %>%
+  summarise(groupVMS=sum(nvms)) %>%
+  pivot_wider(names_from=area,values_from=groupVMS, values_fill=0)
+plotdat_prop <- prop.table(as.matrix(plotdat.summary[,3:4]),margin=1) %>%
+  bind_cols(dplyr::select(plotdat.summary,group,group_area)) %>%
+  pivot_longer(cols=1:2,names_to="area")
+
+labeldat <- data.frame(x=0.75,y=seq(1,k),nv=(plotdat %>% group_by(group) %>% summarise(n.vessels=length(unique(vessels))))[,"n.vessels"])
+
+ggplot(data = plotdat_prop, aes(x = area, y = as.factor(group))) +
+  geom_tile(aes(fill = value)) +
+  geom_text(data=labeldat,aes(x,y,label=n.vessels), size=4, color="grey30") +
+  scale_fill_gradient2() +
+  theme(axis.text.y = element_text(size = 9)) + theme_bw()
+```
+
+
+## Sub-clusters by length
+
+
+
+### park
+```{r}
+# Remove any records within the same trip that have the same time stamp. Depending on how "NA" speeds were filtered, there may be no duplicate locations.
 vms_nodup <- vms[c(which(!(duplicated(subset(vms,select=c(Rec_ID, UTCDATETIM)),fromLast=TRUE)))),]
 message('removed ', round((1-(dim(vms_nodup)[1]/dim(vms)[1]))*100,3), "% of all VMS records.")
 ```
