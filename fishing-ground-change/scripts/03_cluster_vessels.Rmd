@@ -54,6 +54,7 @@ User Inputs:
 crab_years <- seq(2011,2018)
 cluster_year <- 2014
 outdir <- "project-dat/vms/interpolation_60min/NaN_speed_filter"
+write  <- FALSE
 ```
 
 
@@ -139,10 +140,11 @@ for(y in crab_years){
   } else{
     vms_out %<>% bind_rows(tmpout[[1]])
   }
-  
+  if(write){
   png(here(outdir,paste0(y,'block_assignments.png')))
   print(tmpout[[2]])
   dev.off()
+  }
 }
 ```
 
@@ -270,16 +272,17 @@ ordered.heatmap.plot <- ggplot(data = dat_long, aes(x = block, y = drvid)) +
 dendro.plot <- ggdendrogram(data = dat.dendro, rotate = TRUE) + 
   theme(axis.text.y = element_text(size = 6))
 
-png(here(outdir,paste0(cluster_year,'dendrogram_heatmap_block-clustered.png')))
+grid.newpage()
+print(ordered.heatmap.plot, vp = viewport(x = 0.4, y = 0.5, width = 0.8, height = 1.0))
+print(dendro.plot, vp = viewport(x = 0.90, y = 0.5, width = 0.2, height = 1.08))
+
+if(write){
+  png(here(outdir,paste0(cluster_year,'dendrogram_heatmap_block-clustered.png')))
 grid.newpage()
 print(ordered.heatmap.plot, vp = viewport(x = 0.4, y = 0.5, width = 0.8, height = 1.0))
 print(dendro.plot, vp = viewport(x = 0.90, y = 0.5, width = 0.2, height = 1.08))
 dev.off()
-
-
-grid.newpage()
-print(ordered.heatmap.plot, vp = viewport(x = 0.4, y = 0.5, width = 0.8, height = 1.0))
-print(dendro.plot, vp = viewport(x = 0.90, y = 0.5, width = 0.2, height = 1.08))
+}
 ```
 <br>
 
@@ -334,10 +337,12 @@ for(i in seq(1,k)){
 }
 
 drvid_groups <- left_join(drvid_groups, home_names, by="vessels")
-
-#write it out
 plotdat <- left_join(drvid_groups,mydat,by=c("vessels"="drvid"))
+
+if(write){
+#write it out
 write.csv(plotdat,here::here(outdir,paste0(cluster_year,"_k",k,"clusters_blocks.csv")))
+}
 ```
 <br>
 
@@ -433,16 +438,18 @@ ordered.heatmap.plot <- ggplot(data = dat_long, aes(x = block, y = drvid)) +
 dendro.plot <- ggdendrogram(data = dat.dendro, rotate = TRUE) + 
   theme(axis.text.y = element_text(size = 6))
 
+grid.newpage()
+print(ordered.heatmap.plot, vp = viewport(x = 0.4, y = 0.5, width = 0.8, height = 1.0))
+print(dendro.plot, vp = viewport(x = 0.90, y = 0.5, width = 0.2, height = 1.08))
+
+
+if(write){
 png(here(outdir,paste0(cluster_year,'dendrogram_heatmap_area-clustered.png')))
 grid.newpage()
 print(ordered.heatmap.plot, vp = viewport(x = 0.4, y = 0.5, width = 0.8, height = 1.0))
 print(dendro.plot, vp = viewport(x = 0.90, y = 0.5, width = 0.2, height = 1.08))
 dev.off()
-
-
-grid.newpage()
-print(ordered.heatmap.plot, vp = viewport(x = 0.4, y = 0.5, width = 0.8, height = 1.0))
-print(dendro.plot, vp = viewport(x = 0.90, y = 0.5, width = 0.2, height = 1.08))
+}
 ```
 <br>
 #### final clusters
@@ -484,7 +491,7 @@ for(i in seq(1,k)){
     filter(drvid %in% tmp_drvids$vessels) %>%
     group_by(area) %>%
     summarise(tmpn = sum(nvms, na.rm=TRUE))
-  home_area <- get_home(tmp_dat, cutoff=0.7)
+  home_area <- get_home(tmp_dat, cutoff=0.8)
   if(i==1){
     home_names <- data.frame(vessels=tmp_drvids$vessels,
                              area=rep(home_area,times=length(tmp_drvids$vessels)))
@@ -496,10 +503,12 @@ for(i in seq(1,k)){
 }
 
 drvid_groups <- left_join(drvid_groups, home_names, by="vessels")
-
-#write it out
 plotdat <- left_join(drvid_groups,mydat,by=c("vessels"="drvid"))
-write.csv(plotdat,here::here(outdir,paste0(cluster_year,"_k",k,"clusters_area.csv")))
+
+if(write){
+#write it out
+write.csv(plotdat,here::here(outdir,paste0(cluster_year,"_k",k,"clusters_area.csv")), row.names=FALSE)
+}
 ```
 <br>
 
@@ -521,15 +530,125 @@ ggplot(data = plotdat_prop, aes(x = area, y = as.factor(group))) +
   geom_text(data=labeldat,aes(x,y,label=n.vessels), size=4, color="grey30") +
   scale_fill_gradient2() +
   theme(axis.text.y = element_text(size = 9)) + theme_bw()
+
+if(write){
+png(here(outdir,paste0(cluster_year,'group_heatmap_area-clustered.png')))
+ggplot(data = plotdat_prop, aes(x = area, y = as.factor(group))) +
+  geom_tile(aes(fill = value)) +
+  geom_text(data=labeldat,aes(x,y,label=n.vessels), size=4, color="grey30") +
+  scale_fill_gradient2() +
+  theme(axis.text.y = element_text(size = 9)) + theme_bw()
+dev.off()
+}
 ```
 
 
 ## Sub-clusters by length
 
+Vessel lengths can vary by year. Here, clusters are subdivided by the vessel lengths reported in the year *beginning* each crab season (in other words, crab_year - 1). 
+```{r include=FALSE}
+rm(vms,tmpvms,tmpout,vms_out,vms_per_area,vms_per_block)
+```
+<br>
+
+### data
+
+```{r fishtix}
+for(y in crab_years){
+  tmpy <- y-1
+  tmptix <-  read_rds(here::here('../data','processed','fish tickets',paste0(y,'fishtix_vlengths.rds'))) %>%
+    dplyr::select(Rec_ID,drvid,year,jdate,DCRB_lbs,DCRB_revenue,FINAL_LENGTH) %>%
+    filter(drvid %in% drvid_groups$vessels) %>%
+    mutate(for_crab_year=y)
+  if(y==crab_years[1]){
+    tix <- tmptix
+  } else{
+    tix %<>% bind_rows(tmptix)
+  }
+}
+
+str(tix)
+```
+
+make just a vessel length key.
+```{r}
+lkey <- tix %>% dplyr::select(drvid,FINAL_LENGTH,for_crab_year) %>% distinct()
+```
+
+
+### by area
+
+For each year, copy over the groups data frame, then assign a year-specific vessel size category (small, large)
+```{r}
+for(i in seq(1,length(crab_years))){
+  y <- crab_years[i]
+  tmpdat <- drvid_groups %>% 
+    rename("group_year"=crab_year) %>%
+    mutate(crab_year=y) %>%
+    left_join(lkey, by=c("vessels"="drvid","crab_year"="for_crab_year"))
+  if(i==1){
+    drvid_groups_annual <- tmpdat
+  } else{
+    drvid_groups_annual %<>% bind_rows(tmpdat)
+  }
+}
+
+drvid_groups_annual %<>% mutate(vessel_size=ifelse(FINAL_LENGTH < 40, "small","large"))
+```
+
+Split groups
+```{r}
+drvid_subgroups <- drvid_groups_annual %>% 
+  filter(!is.na(FINAL_LENGTH)) %>%
+  group_by(crab_year,group,vessel_size) %>%
+  summarise(n=n()) %>%
+  unite(col="subgroup",c(group,vessel_size), sep="-",remove=FALSE)
+
+ggplot(drvid_subgroups, aes(x=crab_year,y=n, col=subgroup)) +
+  geom_point() + geom_path() + 
+  labs(subtitle=paste0("cluster sizes (k=",k,")"), x="crab year",y="n. vessels")
+
+if(write){
+write.csv(drvid_subgroups, here('project-dat','vessel_groups',paste0('k',k,'_NaNspeedfilter_',cluster_year,'clusterYR_byArea_sample-sizes.csv')))
+}
+```
+<br>
+
+which group-years are confidential? write out a non-confidential groups key.
+```{r}
+if(write){
+subgroup_out <- drvid_subgroups %>% 
+  filter(n>2) %>%
+  dplyr::select(crab_year,subgroup,group,vessel_size) %>%
+  left_join(drvid_groups_annual, by=c("group","crab_year","vessel_size")) %>%
+  rename("drvid"=vessels)
+
+write.csv(subgroup_out, here('project-dat','vessel_groups',paste0('k',k,'_NaNspeedfilter_',cluster_year,'clusterYR_byArea_noncon-group-key.csv')))
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 ### park
-```{r}
+```{r eval=FALSE}
 # Remove any records within the same trip that have the same time stamp. Depending on how "NA" speeds were filtered, there may be no duplicate locations.
 vms_nodup <- vms[c(which(!(duplicated(subset(vms,select=c(Rec_ID, UTCDATETIM)),fromLast=TRUE)))),]
 message('removed ', round((1-(dim(vms_nodup)[1]/dim(vms)[1]))*100,3), "% of all VMS records.")

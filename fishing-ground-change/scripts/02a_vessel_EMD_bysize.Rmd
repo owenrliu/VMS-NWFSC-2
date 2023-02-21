@@ -1,0 +1,193 @@
+---
+title: "EMD by vessel"
+author: "M. Fisher"
+date: "2/20/2023"
+output: html_document
+---
+
+Calculate the year-over-year Earth Mover's Distance for Dungeness crab fishing grounds.
+
+For year-over-year comparisons of fishing grounds based only on vessel size, we do not need to restrict the analysis to vessels assigned to a group from the 2013-14 crab season. Instead, we just need vessels with VMS in at least two successive seasons.
+
+This script includes options to remove Dungeness crab vessels based on (1) the number of fishing trips they took in a given year, and/or (2) an exvessel revenue cut-off. This is in addition to the filters that were already imposed in creating the fishing ground data: 
+
+- landings in a given state (e.g., California)
+- trips targeting Dungeness crab
+- vessels that have five or more relocations per crab season
+
+
+However, for the analysis as it stands, I am not going to apply any additional filters beyond those already used in script 01.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+
+library(tidyverse)
+library(magrittr)
+library(here)
+library(raster)
+library(adehabitatHR)
+library(move)
+library(pryr)
+```
+
+
+User inputs
+```{r}
+crab_years <- seq(2011,2018)
+kernel_g <- 75
+udsize       <- 0.90
+cut_length <- 40  # all vessels below this length are "small"
+
+
+indir   <- 'project-dat/vms/interpolation_60min/NaN_speed_filter'
+outdir  <- 'project-dat/vms/interpolation_60min/NaN_speed_filter/vessel90ud'
+
+filter=FALSE
+filter_trips=5
+filter_revenue=5000
+```
+
+
+
+## Data
+
+VMS
+```{r read_vms}
+for(y in crab_years){
+  tmpvms <-  read_rds(here::here(indir,paste0(y,'season_crabfishing.rds')))
+  if(y==crab_years[1]){
+    vms <- tmpvms
+  } else{
+    vms %<>% bind_rows(tmpvms)
+  }
+}
+
+str(vms)
+```
+
+
+Fish tickets
+```{r read_fishtix}
+for(y in crab_years){
+  tmpy <- y-1
+  tmptix <-  read_rds(here::here('../data','processed','fish tickets',paste0(tmpy,'fishtix_vlengths.rds'))) %>%
+  dplyr::select(Rec_ID,drvid,year,FINAL_LENGTH) %>% distinct()
+  if(y==crab_years[1]){
+    tix <- tmptix
+  } else{
+    tix %<>% bind_rows(tmptix)
+  }
+}
+
+str(tix)
+```
+
+
+
+make just a vessel length key. since vessel lengths can vary by year, vessel lengths are assigned according to the year at the *beginning* each crab season (in other words, crab_year - 1). 
+```{r}
+lkey <- tix %>% left_join(vms %>% dplyr::select(Rec_ID,drvid,crab_year) %>% distinct()) %>%
+  filter(year!=crab_year) %>%
+  dplyr::select(drvid,FINAL_LENGTH,crab_year) %>% distinct() %>%
+  mutate(vessel_size=ifelse(FINAL_LENGTH < cut_length,"small","large"))
+
+lkey.filtered <- lkey %>% filter(!is.na(FINAL_LENGTH))
+```
+
+
+## Filtering
+
+### trips per vessel
+
+### exvessel revenue
+
+## Earth Mover's Distance per vessel
+
+The Earth Mover's Distance calculation takes a utilization distribution as: A Raster, RasterStack, RasterBrick, SpatialPoints, SpatialPointsDataFrame. This code first constructs the utilization distribution, and then saves it uses a Spatial Points DataFrame. That object can be called back in to calculate EMD.
+
+### create utilization distribution
+
+
+```{r}
+for(d in unique(vms$drvid)){
+  # filter VMS data
+  tmpvms <- filter(vms, crab_year %in% crab_years & drvid == d) %>%
+    dplyr::select(drvid,crab_year,X_COORD, Y_COORD)
+  # create the Spatial Points Data frame
+  tmpvms.sp <- SpatialPointsDataFrame(coords=tmpvms %>% dplyr::select(X_COORD,Y_COORD), data=tmpvms %>% dplyr::select(crab_year), proj4string = CRS("+init=epsg:32610"))
+  tmpyrs <- unique(tmpvms.sp$crab_year)
+  tmpout <- list()
+  # create a list of raster layers
+  for(j in seq(1,length(tmpyrs))){
+    y <- tmpyrs[j]
+    # create utilization distribution, with grid size of 'kernel_g'
+    tmpud <- kernelUD(tmpvms.sp[tmpvms.sp$crab_year==y,], grid=kernel_g)
+    # convert estUD object to a raster
+    tmpras <- raster(as(tmpud[[1]],"SpatialPixelsDataFrame"))
+    # set any points outside the 90% line to NA, then recalculate the probability surface
+    tmpras[tmpras > udsize] <- NA; newras <- tmpras/cellStats(tmpras,sum)
+    tmpout[[j]] <- newras
+  }
+  names(tmpout) <- tmpyrs
+  # save the list(by year) of 90% UD rasters as an RDS
+  write_rds(tmpout, here::here(outdir,paste0(d,"_",udsize*100,"ud_RasterLayer_",kernel_g,"grid_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs.rds")))
+}
+rm(tmpout, tmpvms,tmpvms.sp)
+```
+<br>
+
+Get filenames from above.
+```{r}
+file_vec <- list.files(path=here(outdir),pattern="RasterLayer")
+```
+
+Read back in the 90% UD lists, and find the year-over-year EMD for each vessel.
+```{r}
+# for(i in seq(1,length(file_vec))){
+for(i in seq(1,10)){
+  # get drvid & rds name
+  f <- file_vec[[i]]
+  d <- strsplit(f,split="_")[[1]][1]
+  # read in rds
+  ras_list <- readRDS(here::here(outdir,f))
+  tmpyrs <- names(ras_list)
+  
+  # empty data frame for EMD
+  tmpdat <- matrix(nrow=length(tmpyrs),ncol=length(tmpyrs),dimnames=list(tmpyrs,tmpyrs),data=0)
+ 
+  # get emd for consecutive years
+  sstart <- Sys.time()
+  message("calculating emd...")
+  for(j in seq(1,length(ras_list)-1)){
+    k=j+1
+    while(k < (length(ras_list)+1)){
+      tmpdat[j,k] <- emd(ras_list[[j]],ras_list[[k]])
+    }
+  }
+  
+  # get unique values from EMD matrix. coerce to dataframe.
+  ind <- which(upper.tri(tmpdat, diag = FALSE), arr.ind = TRUE)
+  tmpdat.df <- data.frame(drvid=d,
+                          crab_year_1 = tmpyrs[ind[,1]],
+                          crab_year_2 = tmpyrs[ind[,2]],
+                          emd=tmpdat[ind])
+  
+  if(i==1){
+    emd_dat <- tmpdat.df
+  } else{
+    emd_dat %<>% rbind(tmpdat.df)
+  }
+  rm(ras_list,ras_list,tmpdat,ind,tmpdat.df)
+  message(d, " done.\n")
+  Sys.time()-sstart
+  
+}
+```
+
+```{r}
+write.csv(emd_dat,here::here('project-dat','statistics',paste0('EMD_annual_per_vessel_',udsize*100,'ud_',kernel_g,'grid_', crab_years[1],'-',substr(tail(crab_years,1),3,4), 'crabYrs.csv')))
+
+```
+<br>

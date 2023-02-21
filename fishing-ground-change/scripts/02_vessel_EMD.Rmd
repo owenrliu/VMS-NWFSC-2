@@ -1,0 +1,50 @@
+---
+title: "EMD by vessel"
+author: "M. Fisher"
+date: "2/20/2023"
+output: html_document
+---
+
+Calculate the year-over-year Earth Mover's Distance for Dungeness crab fishing grounds.
+
+For year-over-year comparisons of fishing grounds based only on vessel size, we do not need to restrict the analysis to vessels with VMS in the 2013-14 season. Instead, I just need vessels with VMS in at least two successive seasons. Then I can conduct the district-based analysis on the 2013-14 subset. 
+
+In widening the sample size for the size-based year-over-year comparisons, I want to focus on Dungeness commercial fishing vessels which took more than 5 Dungeness trips in a given year. 
+
+This script will establish the exvessel revenue cutoff, and then generate a list of vessels to track in the size-based year-over-year comparison.
+
+
+The following filters were already imposed in creating the fishing ground data: 
+
+- landings in a given state (e.g., California)
+- trips targeting Dungeness crab
+- vessels that have five or more relocations per crab season
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+
+library(tidyverse)
+library(here)
+library(raster)
+library(adehabitatHR)
+library(move)
+library(pryr)
+```
+
+
+User inputs
+```{r}
+yrs <- seq(2016,2017)
+g <- 75
+
+
+indir <- 'project-dat/vms/interpolation_60min/NaN_speed_filter'
+outdir <- 'project-dat/vms/interpolation_60min/NaN_speed_filter/vessel90ud'
+```
+
+
+
+
+

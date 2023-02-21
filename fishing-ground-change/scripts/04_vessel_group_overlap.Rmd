@@ -1,0 +1,319 @@
+---
+title: "Generate Spatial Points Data Frames for Vessel Groups"
+output: html_document
+---
+
+**Author: M.Fisher**
+
+
+
+Generate SpatialPointsDataFrame for each vessel group, to be used for home range estimation. Will also produce sample size information for each cluster.
+
+```{r setup, include=FALSE}
+rm(list=ls())
+
+library(raster)
+library(adehabitatHR)
+library(lubridate)
+library(ggmap)
+library(ggplot2)
+library(gridExtra)
+library(tidyr)
+library(dplyr)
+library(reshape2)
+library(maps)
+library(rgdal)
+library(rgeos)
+library(here)
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+<br>
+
+Input
+```{r}
+yrs <- c(2012,2013,2014,2015,2016,2017)
+k=5
+p=90
+cluster_year=2013
+tfs <- c("annual","Central","North")
+indir <- "HomeRange/R_Output"
+clustdir<-"HomeRange/R_Output/kmeans_groups/fishing_blocks"
+outdir <- "HomeRange/R_Output/home_range/by_district"
+```
+<br>
+
+### Data
+```{r}
+for(y in yrs){
+  tmp_vms <- read.csv(here::here(indir,paste0("VMS_Outputs_DCRB_10d_lookback_crab",y,"_interpolated_regular_fishingloc.csv")))
+  if(y < 2016){
+    tmp_vms<- tmp_vms %>%
+      filter(DCRB..lbs. > 0) %>%
+      dplyr::select(Rec_ID,pacfin_port_code,port_group_code,drvid,agency_code,removal_type_code,date,year, UTCDATETIM,westcoastdate,westcoastdate_notime,X_COORD,Y_COORD,LATITUDE,LONGITUDE,NGDC_M,avg_speed_recalc,in_port,to_rm) %>%
+      rename(tdate=date,tyear=year)
+  } else{
+    tmp_vms<- tmp_vms %>%
+      filter(DCRB_lbs > 0) %>%
+      dplyr::select(Rec_ID,pacfin_port_code,port_group_code,drvid,agency_code,removal_type_code,tdate,tyear, UTCDATETIM,westcoastdate,westcoastdate_notime,X_COORD,Y_COORD,LATITUDE,LONGITUDE,NGDC_M,avg_speed_recalc,in_port,to_rm)
+  }
+  tmp_vms <- mutate(tmp_vms, crab_year=y)
+  print(y)
+  if(y==yrs[1]){
+    vms <- tmp_vms
+  } else{
+    tmp_vms <- tmp_vms[,colnames(vms)]
+    vms <- rbind(vms,tmp_vms)
+  }
+}
+dim(vms)
+colnames(vms)
+```
+<br>
+
+
+Cluster key
+```{r}
+cluster_key <- read.csv(here::here(clustdir,paste0("districts_",cluster_year,"_k",k,"groups_data_vl.csv")))
+if("X" %in% colnames(cluster_key)){cluster_key <- dplyr::select(cluster_key,-X)}
+head(cluster_key)
+```
+<br>
+
+Season dates
+```{r}
+season_dates_df <- read.csv(here::here("Input_Data/dcrb_season_dates.csv")) %>%
+  mutate(open_date=ifelse(grepl("Jan",open) | grepl("Feb",open)| grepl("Mar",open) | grepl("Apr",open)| grepl("May",open),paste0(open,"-",crab_year+1), paste0(open,"-",crab_year))) %>%
+  mutate(open_date=dmy(open_date)) %>%
+  mutate(region=ifelse(pcgroup %in% c("CCA","ERA","BGA"), "north","central")) %>%
+  dplyr::select(region,crab_year,open_date) %>%
+  distinct() %>%
+  # grab the earliest date the district opened
+  group_by(region,crab_year) %>%
+  summarise(region_open=min(open_date)) %>%
+  # Add 42 days (6 weeks)
+  mutate(cutoff6w = region_open + days(42))
+```
+<br>
+
+
+### Functions
+The following functions will be called for each year / time frame of data.
+```{r}
+filterVMS <- function(vms_data, yrs, timeframe, season_dates=season_dates_df){
+  # filter for D. crab trips
+  dcrb_vms <- filter(vms_data, removal_type_code %in% c("C","D","U") & crab_year %in% yrs)
+  if(timeframe=="annual"){
+    return(dcrb_vms)
+  } else{
+    crab_season <- filter(season_dates,crab_year %in% yrs)
+    if(timeframe=="Central"){
+      crab_season <- filter(crab_season,region=="central")
+    } else if(timeframe=="North"){
+      crab_season <- filter(crab_season,region=="north")
+    } else{stop("unrecognized time frame")}
+    dcrb_vms$tdate <- parse_date_time(dcrb_vms$tdate, orders=c("ymd","mdy"), tz="America/Los_Angeles")
+    dcrb_vms <- left_join(dcrb_vms, crab_season,by=c("crab_year")) %>%
+      mutate(first6w=ifelse(tdate <= cutoff6w, "Y","N")) %>%
+      filter(first6w=="Y") %>%
+      dplyr::select(-first6w,-cutoff6w,-region_open,-region)
+    return(dcrb_vms)
+  }
+}
+
+
+create_spdf <- function(vms_data, clusters, yrs=c(2012,2013)){
+  # filter VMS data
+  myvms <- filter(vms_data, crab_year %in% yrs)
+  # add clusters to vms data by vessel ID
+  clusters <- dplyr::select(clusters,vessels,group_recode,district)
+  clusters$vessels <- as.character(clusters$vessels); myvms$drvid <- as.character(myvms$drvid)
+  myvms <- left_join(myvms, clusters,by=c("drvid"="vessels"))
+  # remove vessels which don't have clusters assigned
+  myvms <- filter(myvms, !is.na(group_recode))
+  
+  # matrix with coordinates
+  vms_coords <- dplyr::select(myvms, LONGITUDE, LATITUDE)
+  # data frame with IDs
+  vms_ids <- dplyr::select(myvms, group_recode, district)
+  vms_ids$group_recode <- as.character(vms_ids$group_recode)
+  # create the Spatial Points Data frame
+  vms_sp <- SpatialPointsDataFrame(coords=vms_coords, data=dplyr::select(vms_ids, group_recode), proj4string = CRS("+init=epsg:4326"))
+  
+  sample_size <- myvms %>%
+    group_by(group_recode) %>%
+    summarise(n.vessels = length(unique(drvid)), n.trips = length(unique(Rec_ID))) %>%
+    arrange(n.vessels,n.trips)
+  
+  return(list(vms_sp,sample_size))
+}
+```
+<br>
+
+
+### SpatialPoints Data Frame
+
+```{r}
+for(y in c(yrs)){
+  for(t in tfs){
+    vms_filter <- filterVMS(vms_data=vms, yrs=c(y), timeframe=t, season_dates=season_dates_df)
+    tmpsp <- create_spdf(vms_data=vms_filter, clusters=cluster_key, yrs=c(y))
+    if(t=="annual"){
+      saveRDS(tmpsp[[1]], file=here::here(outdir,paste0(y,"_crab_spdf_espg4326.rds")))
+    } else{
+      saveRDS(tmpsp[[1]], file=here::here(outdir,paste0(y,"_crab_spdf_",t,"_espg4326.rds")))
+    }
+    if(y==yrs[1] & t==tfs[1]){
+      ss_df <- tmpsp[[2]] %>%
+        mutate(timeframe=t, crab_year=y)
+    } else{
+      ss_df <- ss_df %>%
+        bind_rows(mutate(tmpsp[[2]],timeframe=t, crab_year=y))
+    }
+  }
+}
+```
+<br>
+
+
+### Sample Sizes
+```{r eval=FALSE}
+ss_df_wide <- ss_df %>%
+  dplyr::select(-n.trips) %>%
+  pivot_wider(names_from=crab_year,values_from=n.vessels,values_fill=list(n.vessels = 0)) %>%
+  separate(col=group_recode,into=c("cluster","size"),sep="_",remove=FALSE) %>%
+  left_join(dplyr::select(cluster_key,group,district) %>% distinct() %>% mutate(group=as.character(group)),
+            by=c("cluster"="group")) %>%
+  arrange(cluster,size,timeframe)
+
+write.csv(ss_df_wide,here::here(clustdir,paste0("districts_",cluster_year,"_k",k,"_groups_vl_sizes.csv")))
+```
+<br>
+
+### Home range (90%)
+
+These files will mostly be used for plotting, so I'll stick to the 90% home range here.
+```{r}
+for(y in yrs){
+  for(t in tfs){
+    if(t=="annual"){
+      tmpsp <- readRDS(file=here::here(outdir,paste0(y,"_crab_spdf_espg4326.rds")))
+    } else{
+      tmpsp <- readRDS(file=here::here(outdir,paste0(y,"_crab_spdf_",t,"_espg4326.rds")))
+    }
+    vms_ud <- kernelUD(tmpsp, grid=350, h=0.08, same4all=TRUE)
+    vms_ud95 <- getverticeshr(vms_ud, percent=p)
+    if(t=="annual"){
+      saveRDS(vms_ud95, here::here(outdir,paste0(y,"_crab_ud",p,"_espg4326.rds")))
+    } else{
+      saveRDS(vms_ud95, here::here(outdir,paste0(y,"_crab_ud",p,"_",t,"_espg4326.rds")))
+    }
+  }
+  cat("finished 90% ud for ",y,".\n")
+}
+```
+<br>
+
+#### Generate graphs for each vessel cluster, for each time frame (faceted by year)
+
+Basemap
+```{r}
+data(stateMapEnv)
+states_df <- map_data("state") %>%
+  filter(region %in% c("california"))
+```
+<br>
+
+Port Coordinates
+```{r warning=FALSE}
+setwd(here::here())
+group_mean_coords <- read.csv(here::here("../Networks/Participation_Networks/input_data","pcgroup_mean_coords.csv"))
+group_mean_coords[7,5:6] <- c(-121.6042,37.79039)
+
+pcgroup_df <- pcgroup_df %>%
+  recode(`San Francisco`="S.F.") %>%
+  filter(pcgroup_df,port_group %in% c("Crescent City","Eureka","Fort Bragg","Bodega Bay","S.F."))
+```
+<br>
+
+
+```{r eval=FALSE}
+mymap <- ggplot() +
+  geom_polygon(data=states_df, aes(x=long, y=lat, group=group, fill=region),color="grey67", fill="grey67",linetype=1) +
+  geom_point(data=pcgroup_geo_df, aes(x=Lon,y=Lat), col="black") +
+  geom_text(data=pcgroup_geo_df,aes(x=Lon_label,y=Lat_label,label=port_group))
+  
+for(t in tfs){
+  if(t=="annual"){
+  base_ud <- readRDS(here::here(outdir,paste0("2013_crab_ud",p,"_espg4326.rds")))
+  nat_ud <- readRDS(here::here(outdir,paste0("2014_crab_ud",p,"_espg4326.rds")))
+  hab_ud <- readRDS(here::here(outdir,paste0("2015_crab_ud",p,"_espg4326.rds")))
+  } else{
+  base_ud <- readRDS(here::here(outdir,paste0("2013_crab_ud",p,"_",t,"_espg4326.rds")))
+  nat_ud <- readRDS(here::here(outdir,paste0("2014_crab_ud",p,"_",t,"_espg4326.rds")))
+  hab_ud <- readRDS(here::here(outdir,paste0("2015_crab_ud",p,"_",t,"_espg4326.rds")))    
+  }
+  for(g in unique(cluster_key$group_recode)){
+    tmp_base <- base_ud[base_ud$id == g,]
+    tmp_nat <- nat_ud[nat_ud$id == g,]
+    tmp_hab <- nat_ud[hab_ud$id == g,]
+    ss <- ss_df_wide %>% filter(group_recode==g & timeframe==t)
+    basemap <- mymap +
+      geom_polygon(data=fortify(tmp_base), aes(x=long,y=lat, group=group), color="darkblue",fill="darkblue",alpha=0.3, size=1) +
+      ggtitle(paste0(g," - ",t)) +
+      theme_void() +
+      labs(caption=paste0("n=",ss$`2013`)) +
+      theme(legend.position="none",plot.caption=element_text(size=11),panel.border=element_rect(color="black", fill="transparent"),
+            plot.margin=margin(l=0,r=0,unit="cm")) +
+      coord_fixed(xlim=c(-124.5,-117.5), ylim=c(34,42))
+    if(g %in% hab_ud$id){
+    natmap <- mymap +
+      geom_polygon(data=fortify(tmp_nat), aes(x=long,y=lat, group=group), color="darkgreen",fill="darkgreen",alpha=0.3, size=1) +
+      ggtitle("") +
+      labs(caption=paste0("n=",ss$`2013`)) +
+      theme_void() +
+      theme(legend.position="none",plot.caption=element_text(size=11),panel.border=element_rect(color="black", fill="transparent"),
+            plot.margin=margin(l=0,r=0,unit="cm")) +
+      coord_fixed(xlim=c(-124.5,-117.5), ylim=c(34,42))
+    } else{natmap=NULL}
+    if(g %in% hab_ud$id){
+      habmap <- mymap +
+        geom_polygon(data=fortify(tmp_hab), aes(x=long,y=lat, group=group), color="darkred",fill="darkred",alpha=0.3, size=1) +
+        ggtitle("") +
+      labs(caption=paste0("n=",ss$`2013`)) +
+        theme_void() +
+        theme(legend.position="none",plot.caption=element_text(size=11),panel.border=element_rect(color="black", fill="transparent"),
+              plot.margin=margin(l=0,r=0,unit="cm")) +
+        coord_fixed(xlim=c(-124.5,-117.5), ylim=c(34,42))
+    } else{habmap=NULL}
+    
+    if(is.null(natmap)){
+      png(here::here("HomeRange/R_Output/plots/home_range/base13",paste0(g,"_",t,"_hr_espg4326.png")))
+      print(basemap)
+      dev.off()
+    } else if(is.null(habmap)){
+      png(here::here("HomeRange/R_Output/plots/home_range/base13",paste0(g,"_",t,"_hr_espg4326.png")))
+      grid.arrange(grobs=list(basemap,natmap),ncol=2)
+    } else{
+      png(here::here("HomeRange/R_Output/plots/home_range/base13",paste0(g,"_",t,"_hr_espg4326.png")))
+      grid.arrange(grobs=list(basemap,natmap,habmap),ncol=3)
+      dev.off()
+    }
+  }
+}
+```
+<br>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
