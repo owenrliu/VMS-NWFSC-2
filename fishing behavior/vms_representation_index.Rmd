@@ -31,7 +31,7 @@ plot_theme <-   theme_minimal()+
 theme_set(plot_theme)
 ```
 
-# Introduction
+## Introduction
 
 The purpose of this document is to produce a number of plots that describe the relationships between variables in the cleaned, interpolated VMS data for all years from 2009-2018. Speficially, we explore differences in patterns of landings and effort over time, between VMS and non-VMS-equipped vessels, and between large and small vessels.
 
@@ -51,6 +51,10 @@ fishtix %<>% filter(ticket_day_of_season>=0)
 # vms_rep <- read_rds(here('fishing behavior','vms_proportional_landings_key.rds'))
 vms_tickets <- read_rds(here('fishing behavior','fish_tickets_with_vms.rds'))
 recid_crabseason <- fishtix %>% select(Rec_ID,crab_season) %>% distinct()
+
+
+fishtix_long <- read_rds(here::here('data','processed','fish tickets','fish_tickets_long_allspecies.rds'))
+fishtix_long %<>% filter(ticket_day_of_season>=0)
 
 # import vms data as well, to pull out trip duration in days
 # vms <- purrr::map_df(2009:2019, function(yr){
@@ -102,6 +106,9 @@ In this section, we summarize the data on broad scales to look at total landings
 
 ```{r}
 fishtix <- fishtix %>% left_join(vms_tickets) %>% 
+  mutate(has_vms=replace_na(has_vms,0))
+
+fishtix_long %<>% left_join(vms_tickets) %>% 
   mutate(has_vms=replace_na(has_vms,0))
 ```
 
@@ -312,7 +319,7 @@ Size comparison
 
 ```{r}
 vessel_size_comp <-  fishtix %>%
-  filter(drvid %in% vessel_list) %>% 
+  mutate(has_vms=drvid %in% vms_fishtix_vessels) %>% 
   distinct(drvid,crab_season,has_vms,FINAL_LENGTH) %>% 
   rename(vessel_size=FINAL_LENGTH)
 
@@ -329,6 +336,7 @@ ggsave(here::here('fishing behavior','plots','vessel_size_vms_comp.png'),vessel_
 In-season dynamics (cumulative CPUE)
 ```{r}
 vessel_size_cpue_comp <- fishtix %>% 
+  mutate(has_vms=drvid %in% vms_fishtix_vessels) %>% 
   mutate(is_small=FINAL_LENGTH<=40) %>%
   mutate(is_small=ifelse(is_small,"<40 ft.",">40 ft.")) %>% 
   dplyr::select(drvid,is_small,has_vms,crab_season,ticket_day_of_season,DCRB_revenue) %>% 
@@ -348,7 +356,7 @@ vessel_size_cpue_comp <- fishtix %>%
   drop_na()
 
 vessel_size_cpue_plot <- vessel_size_cpue_comp %>% 
-  ggplot(aes(ticket_day_of_season,y=mean_prop,ymax=upper,ymin=lower,color=has_vms,fill=has_vms))+
+  ggplot(aes(ticket_day_of_season,y=mean_prop,ymax=upper,ymin=lower,color=has_vms))+
   geom_pointrange(size=0.5,alpha=0.7)+
   facet_wrap(~is_small,nrow=2)+
   scale_x_continuous(limits = c(0,225))+
@@ -359,4 +367,48 @@ vessel_size_cpue_plot
 ggsave(here::here('fishing behavior','plots','vessel_size_vms_cumulative_cpue.png'),vessel_size_cpue_plot,w=6,h=4)
 ```
 
+## Participation Comparison
+
+Compare participation using an inverse Simpson index on fisheries
+
+```{r}
+vms_fishtix_spp_grps <- fishtix_long %>%
+  mutate(has_vms=drvid %in% vms_fishtix_vessels) %>%
+  left_join(all_fishtix_spp) %>%
+  group_by(drvid,crab_season,has_vms,spp_grp) %>% 
+  summarise(tot_rev_grp=sum(tot_revenue_spp)) %>% 
+  ungroup()
+
+vms_participation_diversity <- vms_fishtix_spp_grps %>%
+  group_by(drvid,has_vms,crab_season) %>% 
+  mutate(prop_rev=tot_rev_grp/sum(tot_rev_grp)) %>% 
+  summarise(revenue_diversity=1/sum(prop_rev^2)) %>% 
+  ungroup() %>% 
+  group_by(crab_season,has_vms) %>% 
+  summarise(mean_div=mean(revenue_diversity,na.rm=T),
+            sd_div=sd(revenue_diversity,na.rm=T)) %>% 
+  ungroup()
+
+vms_participation_diversity_plot <- vms_participation_diversity %>% 
+  filter(crab_season!="2019-2020") %>% 
+  ggplot(aes(crab_season,mean_div,ymax=mean_div+sd_div,ymin=mean_div-sd_div,fill=has_vms))+
+  geom_col(position=position_dodge())+
+  geom_linerange(position=position_dodge(0.9))+
+  ylim(0,2.5)+
+  labs(x='Crab Season',fill="Vessel Has VMS",col="Vessel Has VMS",
+       y='Revenue Diversity')+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5))
+
+vms_participation_diversity_plot
+ggsave(here::here('fishing behavior','plots','vms_revenue_diversity_comparison.png'),vms_participation_diversity_plot,w=6,h=4)
+```
+
+Join the 3 previous plots
+
+```{r,fig.width=8,fig.height=8}
+r1 <- plot_grid(vessel_size_cpue_plot+guides(color='none'),vessel_size_plot,nrow=1,labels=c('a','b'))
+vms_comp_plots <- plot_grid(r1,vms_participation_diversity_plot,nrow=2,labels=c('','c'))
+vms_comp_plots
+ggsave(here::here('fishing behavior','plots','vms_comparisons.png'),vms_comp_plots,w=8,h=8)
+```
 

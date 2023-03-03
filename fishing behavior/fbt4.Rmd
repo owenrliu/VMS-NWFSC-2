@@ -94,6 +94,9 @@ trip_duration_key <- vms %>%
 #vessel size
 vessel_sizes <- read_rds(here::here('fishing behavior','vessel_sizes.rds')) %>% group_by(drvid,crab_season) %>% slice(1)
 
+# vessels in both VMS and fish ticket data
+vms_fishtix_vessels <- intersect(unique(fishtix$drvid),unique(vms$drvid))
+
 # consumer price index (for inflation adjustments)
 #https://www.minneapolisfed.org/about-us/monetary-policy/inflation-calculator/consumer-price-index-1913-
 cpi <- read_csv(here('data','raw','cpi_2021.csv'),col_types='idc')
@@ -284,7 +287,7 @@ dat.pca <- FactoMineR::PCA(dat_for_pca,graph=FALSE)
 
 ```
 
-```{r}
+```{r,fig.height=5,fig.width=6}
 # names for groups
 clustnames <- tibble(partition=dat_clust$Best.partition) %>%
   mutate(partition=case_when(
@@ -472,7 +475,7 @@ variable_name_matches <- tibble(
 
 We apply this procedure to our data, using our four groups and growing 1000 trees.
 
-```{r}
+```{r,fig.width=4.5,fig.height=5}
 dat_nolabs <- dat_clustered %>% 
   na.omit() %>% 
   select(-(1:2)) %>% 
@@ -1194,7 +1197,7 @@ tot_profit_season_plot <- total_rev_landings_season %>%
 tot_profit_season_plot
 ```
 
-```{r}
+```{r,fig.height=5,fig.width=4.5}
 # heatwave vs. non heatwave years
 heatwave_profit <- fishtix_plus %>%
   filter(crab_season != "2008-2009") %>%
@@ -1406,7 +1409,7 @@ summary(mhw_outside_revenue_aov)
 mhw_outside_revenue_tukey <- TukeyHSD(mhw_outside_revenue_aov)$`is_heatwave:partition` %>% as_tibble(rownames = "comp")
 ```
 
-```{r}
+```{r,fig.width=4.5,fig.height=5}
 heatwave_non_dcrb_barplot <- mhw_outside_revenue %>%  
   group_by(is_heatwave,partition) %>%
   # group_by(crab_season,partition) %>% 
@@ -1423,7 +1426,7 @@ heatwave_non_dcrb_barplot <- mhw_outside_revenue %>%
         panel.grid.minor=element_blank(),
         axis.title=element_text(family="sans",size=10,color="black"),
         legend.position = c(0.2,0.8),
-        axis.text.x = element_text(angle=45,vjust=0.75))+
+        axis.text.x = element_text(size=10,angle=45,vjust=0.75))+
   # manually annotate signif diffs
   annotate("text",x=2,y=425,label="*",size=8)+
   annotate("text",x=3,y=250,label="*",size=8)+
@@ -1578,7 +1581,7 @@ summary(mhw_homerange_aov)
 mhw_homerange_tukey <- TukeyHSD(mhw_homerange_aov)$`is_heatwave:partition` %>% as_tibble(rownames = "comp")
 ```
 
-```{r}
+```{r, fig.width=4.5, fig.height=5}
 mhw_homeranges_plot <-mhw_homeranges_summ %>% 
   ggplot(aes(partition,homerange_area,fill=is_heatwave,col=is_heatwave))+
   scale_fill_manual(values=c("#3B4992FF","#EE0000FF"))+
