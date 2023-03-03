@@ -93,6 +93,20 @@ permitsfiles <- list.files(here::here('data','raw','vessel registration'),full.n
 permits <- purrr::map_df(permitsfiles,function(fl){
   read_csv(fl,col_types='ddcddccdcccccdddcccccccddll')
 }) %>% distinct()
+
+
+#2020-2021 data differs from other years:
+permitsfiles_2020_2021 <- list.files(here::here('data','raw','vessel registration 2020_2021' ),full.names = T)
+permits_2020_2021 <- purrr::map_df(permitsfiles_2020_2021,function(fl){
+  read_csv(fl,col_types='ddcddccdcccccdddccccccddllcl')
+}) %>% distinct()
+#remove column that doesn't appear in earlier years, and move one column to mathc earlier years
+permits_2020_2021 <- permits_2020_2021 %>% 
+  select(-IS_USED_FOR_CORRECTION) %>% 
+  relocate(VESSEL_OWNER_PHONE_NUMBER, .after = VESSEL_OWNER_ADDRESS_ZIP)
+
+# join old and new permits
+permits <- rbind(permits,permits_2020_2021)
 ```
 
 ## Subset Permit Data

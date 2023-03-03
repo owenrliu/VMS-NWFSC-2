@@ -507,7 +507,7 @@ testtrips <- vms_wfilters %>%
   # jitter a tiny bit
   st_jitter()
 
-#plot
+#plot -- maybe some issues with bounding box here
 testtrip_plots <- purrr::map(random_trips, function(x){
   testtrip <- testtrips %>% filter(Rec_ID==x)
   bbox <- st_bbox(testtrip)
