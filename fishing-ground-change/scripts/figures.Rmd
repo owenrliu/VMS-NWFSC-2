@@ -1,0 +1,288 @@
+---
+title: "VMS Main Text Figures"
+author: "M Fisher"
+date: "2023-03-07"
+output: html_document
+---
+## Description
+
+Create figures for main text
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library(tidyverse)
+library(magrittr)
+library(here)
+library(raster)
+library(adehabitatHR)
+library(move)
+library(pryr)
+library(vegan)
+library(cowplot)
+library(plotrix)
+library(janitor)
+library(PNWColors)
+
+source(here('R','getmode.R'))
+```
+
+User inputs
+```{r}
+keep_years <- seq(2013,2018)
+```
+
+
+## Data
+
+Vessel length keys
+```{r}
+vlengths <- read_csv(here('project-dat','vessel_groups','length_key_dcrb_vms_vessels.csv'))
+```
+
+Clustering groups
+```{r}
+vgroups <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
+```
+
+Earth mover's distance (by vessel)
+```{r}
+emd.dat <- read_csv(here('project-dat','statistics','EMD_annual_per_vessel_90ud_75grid_2011-18crabYrs.csv'))
+```
+
+
+BA index (by cluster)
+
+### fix missing vessel sizes
+if a fishing vessel is missing vessel sizes, use the most common size over all the other years.
+```{r}
+# split data set 
+emd.dat.noVS <- filter(emd.dat, is.na(vessel_size))
+emd.dat.VS <- filter(emd.dat, !is.na(vessel_size))
+
+# get most common vessel sizes
+VS_mode <- emd.dat.VS %>%
+  group_by(drvid) %>%
+  summarise(vessel_size=getmode(vessel_size),
+            n_sizes=length(unique(vessel_size)))
+# any vessels span size classes across years?
+VS_mode %>% filter(n_sizes>1)
+
+# add in vessel sizes
+emd.dat.noVS %<>% dplyr::select(-vessel_size) %>%
+  left_join(VS_mode,by="drvid") %>% dplyr::select(-n_sizes)
+
+
+# rejoin data sets
+emd.dat <- bind_rows(emd.dat.VS, emd.dat.noVS) %>% arrange(drvid,crab_year_1)
+(length((emd.dat %>% filter(is.na(vessel_size)))$vessel_size)/dim(emd.dat[1]))
+```
+
+### add vessel groups
+```{r}
+emd.dat.groups <- emd.dat %>% dplyr::select(-vessel_size) %>% 
+  left_join(vgroups %>% dplyr::select(drvid,group,subgroup,vessel_size,area) %>% distinct(),by=c("drvid")) %>%
+  filter(!is.na(group))
+```
+
+
+
+## Figure 2
+
+
+### wrangle data
+```{r}
+# combine crab years
+emd.dat %<>% unite(col="crab_years",crab_year_1, crab_year_2, sep="_",remove=FALSE)
+```
+
+Calculate mean + standard error of each vessel group per year, and across all years
+```{r}
+## small / large vessels
+emd_means_overall <- emd.dat %>%
+  filter(crab_year_1 %in% keep_years & crab_year_2 %in% keep_years) %>%
+  filter(!is.na(vessel_size)) %>%
+  group_by(vessel_size) %>%
+  summarize(mean.emd=mean(emd),sd.emd=std.error(emd),.groups='drop') %>%
+  mutate(crab_years="Overall",group="All Vessels")
+emd_means <- emd.dat %>%
+  filter(crab_year_1 %in% keep_years & crab_year_2 %in% keep_years) %>%
+  filter(!is.na(vessel_size)) %>%
+  group_by(vessel_size,crab_years) %>%
+  summarize(mean.emd=mean(emd),sd.emd=std.error(emd),.groups='drop') %>%
+  mutate(group="All Vessels") %>%
+  rbind(emd_means_overall)
+emd_means$crab_years <- factor(emd_means$crab_years, levels=c("Overall","2013_2014","2014_2015","2015_2016","2016_2017","2017_2018"))
+
+## vessel clusters
+emd_group_means_overall <- emd.dat.groups %>%
+  filter(crab_year_1 %in% keep_years & crab_year_2 %in% keep_years) %>%
+  group_by(vessel_size,group,subgroup,area) %>%
+  summarize(mean.emd=mean(emd),sd.emd=std.error(emd),.groups='drop') %>%
+  ungroup() %>%
+  mutate(`Vessel Group`=ifelse(area=="central","Central",
+                         ifelse(area=="northern","Northern",
+                                ifelse(area=="central/northern" & group==3 ,"Central/Northern","Diversified Northern"))),
+         crab_years="Overall") %>%
+  rename(`Vessel Size`=vessel_size)
+
+emd_group_means <- emd.dat.groups %>%
+  filter(crab_year_1 %in% keep_years & crab_year_2 %in% keep_years) %>%
+  group_by(vessel_size,group,subgroup,area,crab_years) %>%
+  summarize(mean.emd=mean(emd),sd.emd=std.error(emd),.groups='drop') %>%
+  ungroup() %>%
+  mutate(`Vessel Group`=ifelse(area=="central","Central",
+                         ifelse(area=="northern","Northern",
+                                ifelse(area=="central/northern" & group==3 ,"Central/Northern","Diversified Northern")))) %>%
+  rename(`Vessel Size`=vessel_size)
+emd_group_means %<>%
+  rbind(dplyr::select(emd_group_means_overall, colnames(emd_group_means)))
+emd_group_means$`Vessel Group` <- factor(emd_group_means$`Vessel Group`,levels=c("Central","Northern","Central/Northern","Diversified Northern"))
+emd_group_means$crab_years <- factor(emd_group_means$crab_years, levels=c("Overall","2013_2014","2014_2015","2015_2016","2016_2017","2017_2018"))
+```
+<br>
+
+### t test
+```{r fig.height=4, fig.width=4}
+ggplot(data=emd.dat,aes(x=emd)) + geom_histogram()
+```
+The data is not normal. conduct a wilcoxon test for each comparison
+```{r}
+wilcox.lengths.out <- list()
+sig.lengths.out <- data.frame(crab_years=as.character(),
+                              pval=as.numeric())
+i=1
+for(y in unique(emd.dat$crab_years)){
+  testdat <- emd.dat %>% filter(crab_years==y & !is.na(vessel_size))
+  wilcox.lengths.out[[i]] <- wilcox.test(emd~vessel_size,testdat)
+  sig.lengths.out %<>% bind_rows(data.frame(crab_years=y,
+                                 pval=round(wilcox.lengths.out[[i]]$p.value,5)))
+  i = i +1
+}
+names(wilcox.lengths.out) <- unique(emd.dat$crab_years)
+wilcox.lengths.out
+
+sig.lengths.out %<>% mutate(significance=ifelse(pval<0.05,"*","")) %>%
+  mutate(y=(max(emd_means$mean.emd)+max(emd_means$sd.emd))/1000) %>% filter(crab_years %in% emd_means$crab_years)
+```
+
+again, on the overall data
+```{r}
+testdat <- emd.dat %>% filter(!is.na(vessel_size))
+overall.wilcox <- wilcox.test(emd~vessel_size,testdat)
+overall.wilcox
+
+sig.lengths.out %<>% bind_rows(data.frame(crab_years="Overall",
+                                         pval=overall.wilcox$p.value,
+                                         significance="*",
+                                         y=unique(sig.lengths.out$y)))
+```
+
+
+### plot
+```{r}
+plot.all <- ggplot(emd_means, aes(x=crab_years,y=mean.emd/1000)) +
+  geom_point(size=2, aes(col=vessel_size,pch=vessel_size)) +
+  geom_errorbar(aes(ymin=(mean.emd-sd.emd)/1000,ymax=(mean.emd+sd.emd)/1000,col=vessel_size,pch=vessel_size),width=0.25)+
+  geom_text(data=sig.lengths.out, aes(x=crab_years,y=y,label=significance),size=10) +
+  geom_vline(xintercept=1.5, size=2) +
+  scale_color_manual(values=pnw_palette("Starfish",7)[c(1,4)]) +
+  xlab("Crab Year Comparison") + ylab("Earth Mover's Distance (x1000)") +
+  theme_bw() + theme(panel.grid.major.x=element_blank(),
+                     panel.grid.minor.x=element_blank(),
+                     axis.text.y=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.5,size=14),
+                     axis.title=element_text(size=16),
+                     
+                     legend.position="none")
+plot.all
+```
+```{r}
+plot.gr <- ggplot(emd_group_means, aes(x=crab_years,y=mean.emd/1000, col=`Vessel Size`,pch=`Vessel Size`)) +
+  geom_point(size=2) +
+  facet_wrap(~`Vessel Group`) +
+  geom_errorbar(aes(ymin=(mean.emd-sd.emd)/1000,ymax=(mean.emd+sd.emd)/1000),width=0.25)+
+  geom_vline(xintercept=1.5, size=2) +
+  scale_color_manual(values=pnw_palette("Starfish",7)[c(1,4)]) +
+  xlab("Crab Year Comparison") + ylab("") +
+  theme_bw() + theme(panel.grid.major.x=element_blank(),
+                     panel.grid.minor.x=element_blank(),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.5,size=13),
+                     axis.text.y=element_text(size=13),
+                     strip.text=element_text(size=16),
+                     axis.title=element_text(size=16),
+                     legend.title=element_text(size=16),
+                     legend.text=element_text(size=13))
+plot.gr
+```
+
+```{r}
+png(here::here('project-dat','figures',"2013-18_EMDmeans.png"),width=750,height=400)
+plot_grid(plot.all,plot.gr,rel_widths=c(0.55,1),labels="auto")
+dev.off()
+```
+<br>
+
+## Non-confidential Figure 2
+
+Remove confidential data points from the vessel group means
+```{r}
+emd_group_means_noncon <- emd_group_means %>%
+  separate(crab_years, into=c('crab_year_1','crab_year_2'), remove=FALSE, sep='_') %>%
+  mutate(timeframe='annual') %>%
+  left_join(con_data,by=c('district','vessel_cat'='size','timeframe', 'crab_year_1'='crab_year')) %>%
+  dplyr::select(-group_recode,-cluster) %>%
+  rename(nv_1=nv) %>%
+  left_join(con_data,by=c('district','vessel_cat'='size','timeframe', 'crab_year_2'='crab_year')) %>%
+  dplyr::select(-group_recode,-cluster) %>%
+  rename(nv_2=nv) %>%
+  filter(is.na(nv_1) & is.na(nv_2))
+```
+<br>
+
+```{r}
+plot.gr.nc <- ggplot(emd_group_means_noncon, aes(x=crab_years,y=mean.emd/1000, col=`Vessel Size`,pch=`Vessel Size`)) +
+  geom_point(size=2) +
+  facet_wrap(~district) +
+  geom_errorbar(aes(ymin=(mean.emd-sd.emd)/1000,ymax=(mean.emd+sd.emd)/1000),width=0.25)+
+  geom_vline(xintercept=1.5, size=2) +
+  scale_color_manual(values=pnw_palette("Starfish",7)[c(1,4)]) +
+  xlab("Crab Year Comparison") + ylab("") +
+  theme_bw() + theme(panel.grid.major.x=element_blank(),
+                     panel.grid.minor.x=element_blank(),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.5,size=13),
+                     axis.text.y=element_text(size=13),
+                     strip.text=element_text(size=16),
+                     axis.title=element_text(size=16),
+                     legend.title=element_text(size=16),
+                     legend.text=element_text(size=13))
+plot.gr.nc
+```
+
+```{r}
+png(here::here("HomeRange","R_Output","plots","emd","2013-18_EMDmeans_noncon.png"),width=750,height=400)
+plot_grid(plot.all,plot.gr.nc,rel_widths=c(0.55,1),labels="auto")
+dev.off()
+```
+<br>
+
+
+## Supplement to Fig. 2: EMD Density per year
+```{r}
+myplot <- ggplot(mydat,aes(x=emd/1000,fill=crab_years)) +
+  geom_density(alpha=.5) +
+  facet_grid(cols=vars(crab_years)) +
+  scale_fill_manual(values=rev(pnw_palette("Moth",10)[1:5])) +
+  xlab("Earth Mover's Distance (x1000)") + ylab("Density") +
+  theme_bw() + theme(legend.position="none",panel.grid.minor=element_blank(),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.5,size=10),
+                     axis.title=element_text(size=14),
+                     strip.text=element_text(size=14))
+myplot
+png(here::here("HomeRange","R_Output","plots","emd","EMD_allIDs_density_2013-18.png"),width=600,height=400)
+myplot
+dev.off()
+```
+

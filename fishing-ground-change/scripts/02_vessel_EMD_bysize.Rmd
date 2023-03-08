@@ -21,7 +21,7 @@ However, for the analysis as it stands, I am not going to apply any additional f
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-rm(list=ls())
+
 
 library(tidyverse)
 library(magrittr)
@@ -94,6 +94,8 @@ lkey <- tix %>% left_join(vms %>% dplyr::select(Rec_ID,drvid,crab_year) %>% dist
   mutate(vessel_size=ifelse(FINAL_LENGTH < cut_length,"small","large"))
 
 lkey.filtered <- lkey %>% filter(!is.na(FINAL_LENGTH))
+
+write_csv(lkey.filtered,here('project-dat','vessel_groups','length_key_dcrb_vms_vessels.csv'))
 ```
 
 
@@ -146,48 +148,50 @@ file_vec <- list.files(path=here(outdir),pattern="RasterLayer")
 Read back in the 90% UD lists, and find the year-over-year EMD for each vessel.
 ```{r}
 # for(i in seq(1,length(file_vec))){
-for(i in seq(1,10)){
+for(i in seq(202,length(file_vec))){
   # get drvid & rds name
   f <- file_vec[[i]]
   d <- strsplit(f,split="_")[[1]][1]
+  message(d)
   # read in rds
-  ras_list <- readRDS(here::here(outdir,f))
+  ras_list <- read_rds(here::here(outdir,f))
   tmpyrs <- names(ras_list)
-  
-  # empty data frame for EMD
-  tmpdat <- matrix(nrow=length(tmpyrs),ncol=length(tmpyrs),dimnames=list(tmpyrs,tmpyrs),data=0)
- 
-  # get emd for consecutive years
-  sstart <- Sys.time()
-  message("calculating emd...")
-  for(j in seq(1,length(ras_list)-1)){
-    k=j+1
-    while(k < (length(ras_list)+1)){
-      tmpdat[j,k] <- emd(ras_list[[j]],ras_list[[k]])
+  if(length(tmpyrs) > 1){
+    # empty data frame for EMD
+    tmpdat <- matrix(nrow=length(tmpyrs),ncol=length(tmpyrs),dimnames=list(tmpyrs,tmpyrs),data=0)
+    
+    # get emd for consecutive years
+    sstart <- Sys.time()
+    message("calculating emd...")
+    for(j in seq(1,length(ras_list)-1)){
+      k=j+1
+      message("working on ",names(ras_list)[j],"...")
+        tmpdat[j,k] <- emd(ras_list[[j]],ras_list[[k]])
     }
+    
+    # get unique values from EMD matrix. coerce to dataframe.
+    ind <- which(upper.tri(tmpdat, diag = FALSE), arr.ind = TRUE)
+    tmpdat.df <- data.frame(drvid=d,
+                            crab_year_1 = tmpyrs[ind[,1]],
+                            crab_year_2 = tmpyrs[ind[,2]],
+                            emd=tmpdat[ind]) %>%
+      mutate(tmpdiff=as.numeric(crab_year_2)-as.numeric(crab_year_1)) %>%
+      filter(tmpdiff == 1) %>% dplyr::select(-tmpdiff)
+    message(d, " done.\n")
+    print(Sys.time()-sstart)
+    # 
+    
+    if(!(exists("emd_dat"))){
+      emd_dat <- tmpdat.df
+    } else{
+      emd_dat %<>% rbind(tmpdat.df)
+    }
+    rm(ras_list,tmpdat,ind)
+    
   }
-  
-  # get unique values from EMD matrix. coerce to dataframe.
-  ind <- which(upper.tri(tmpdat, diag = FALSE), arr.ind = TRUE)
-  tmpdat.df <- data.frame(drvid=d,
-                          crab_year_1 = tmpyrs[ind[,1]],
-                          crab_year_2 = tmpyrs[ind[,2]],
-                          emd=tmpdat[ind])
-  
-  if(i==1){
-    emd_dat <- tmpdat.df
-  } else{
-    emd_dat %<>% rbind(tmpdat.df)
-  }
-  rm(ras_list,ras_list,tmpdat,ind,tmpdat.df)
-  message(d, " done.\n")
-  Sys.time()-sstart
-  
 }
-```
 
-```{r}
-write.csv(emd_dat,here::here('project-dat','statistics',paste0('EMD_annual_per_vessel_',udsize*100,'ud_',kernel_g,'grid_', crab_years[1],'-',substr(tail(crab_years,1),3,4), 'crabYrs.csv')))
+write.csv(emd_dat,here::here('project-dat','statistics',paste0('EMD_annual_per_vessel_',udsize*100,'ud_',kernel_g,'grid_', crab_years[1],'-',substr(tail(crab_years,1),3,4), 'crabYrs-part4.csv')))
 
 ```
 <br>
