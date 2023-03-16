@@ -1,13 +1,28 @@
 ---
 title: "Generate Spatial Points Data Frames for Vessel Groups"
-output: html_document
+date: "2/20/2023"
+output: 
+  html_document:
+    toc: yes
+    toc_float: yes
 ---
 
 **Author: M.Fisher**
 
+Calculate the overlap in Dungeness crab fishing grounds between vessel groups, for (1) the full season, (2) the first six weeks of the northern district opening, and (3) the first six weeks of the central district opening.
+
+Unlike the EMD script 02, this analysis **is** restricted to vessels assigned to a group from the 2013-14 crab season. 
+
+This script includes options to remove Dungeness crab vessels based on (1) the number of fishing trips they took in a given year, and/or (2) an exvessel revenue cut-off. This is in addition to the filters that were already imposed in creating the fishing ground data: 
+
+- landings in a given state (e.g., California)
+- trips targeting Dungeness crab
+- vessels that have five or more relocations per crab season
 
 
-Generate SpatialPointsDataFrame for each vessel group, to be used for home range estimation. Will also produce sample size information for each cluster.
+However, for the analysis as it stands, I am not going to apply any additional filters beyond those already used in script 01.
+
+
 
 ```{r setup, include=FALSE}
 rm(list=ls())
@@ -37,9 +52,10 @@ k=5
 p=90
 cluster_year=2013
 tfs <- c("annual","Central","North")
-indir <- "HomeRange/R_Output"
-clustdir<-"HomeRange/R_Output/kmeans_groups/fishing_blocks"
-outdir <- "HomeRange/R_Output/home_range/by_district"
+
+indir   <- 'project-dat/vms/interpolation_60min/NaN_speed_filter'
+outdir  <- 'project-dat/vms/interpolation_60min/NaN_speed_filter/group90ud'
+
 ```
 <br>
 
