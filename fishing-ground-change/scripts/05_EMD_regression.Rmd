@@ -1,0 +1,152 @@
+---
+title: "Regression of Fishing Ground Change"
+author: "M. Fisher"
+date: "3/17/2023"
+output: html_document
+---
+
+# Description
+
+Conduct a regression to answer the questions: 
+
+**Is year-over-year change in fishing grounds associated with season delays?**
+
+**Is year-over-year change in fishing grounds associated with the length of a season delay?**
+
+For...
+
+- all vessels
+
+- large vessels only
+
+- any of the vessel groups
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library(tidyverse)
+library(magrittr)
+library(here)
+library(vegan)
+library(cowplot)
+library(plotrix)
+library(MASS)
+library(janitor)
+library(PNWColors)
+
+source(here('R','getmode.R'))
+```
+
+User inputs
+```{r}
+keep_years <- seq(2013,2018)
+```
+
+
+## Data
+
+Vessel length keys
+```{r}
+vlengths <- read_csv(here('project-dat','vessel_groups','length_key_dcrb_vms_vessels.csv'))
+```
+
+Clustering groups
+```{r}
+vgroups <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
+```
+
+Earth mover's distance (by vessel)
+```{r}
+emd.dat <- read_csv(here('project-dat','statistics','EMD_annual_per_vessel_90ud_75grid_2011-18crabYrs.csv'))
+```
+
+### fix missing vessel sizes
+
+```{r}
+emd.dat %<>% left_join(vlengths,by=c("drvid","crab_year_1"="crab_year"))
+```
+
+if a fishing vessel is missing vessel sizes, use the most common size over all the other years. leave the final length as NA so that we can tell which sizes were interpolated.
+```{r}
+# split data set 
+emd.dat.noVS <- filter(emd.dat, is.na(vessel_size))
+emd.dat.VS <- filter(emd.dat, !is.na(vessel_size))
+
+# get most common vessel sizes
+VS_mode <- emd.dat.VS %>%
+  group_by(drvid) %>%
+  summarise(vessel_size=getmode(vessel_size),
+            n_sizes=length(unique(vessel_size)))
+# any vessels span size classes across years?
+VS_mode %>% filter(n_sizes>1)
+
+# add in vessel sizes
+emd.dat.noVS %<>% dplyr::select(-vessel_size) %>%
+  left_join(VS_mode,by="drvid") %>% dplyr::select(-n_sizes)
+
+
+# rejoin data sets
+emd.dat <- bind_rows(emd.dat.VS, emd.dat.noVS) %>% arrange(drvid,crab_year_1)
+(length((emd.dat %>% filter(is.na(vessel_size)))$vessel_size)/dim(emd.dat[1]))
+```
+
+### add vessel groups
+```{r}
+emd.dat.groups <- emd.dat %>% dplyr::select(-vessel_size) %>% 
+  left_join(vgroups %>% dplyr::select(drvid,group,subgroup,vessel_size,area) %>% distinct(),by=c("drvid")) %>%
+  filter(!is.na(group))
+```
+
+combine crab years
+```{r}
+emd.dat %<>% unite(col="crab_years",crab_year_1, crab_year_2, sep="_",remove=FALSE)
+emd.dat.groups %<>% unite(col="crab_years",crab_year_1, crab_year_2, sep="_",remove=FALSE)
+```
+
+
+
+
+
+
+
+
+
+## Prepare for regression
+
+How skewed is our response variable (EMD)?
+
+For all vessels: very skewed, with lots of zeros.
+```{r fig.height=3,fig.width=4}
+ggplot(emd.dat, aes(x=emd)) + geom_histogram() +
+  theme_bw()
+```
+
+
+For large / small vessels:
+```{r fig.height=3,fig.width=7}
+ggplot(emd.dat %>% filter(!is.na(vessel_size)), aes(x=emd)) + geom_histogram() +
+  facet_grid(cols=vars(vessel_size)) +
+  theme_bw()
+```
+
+Take a quick look at the log-transformed data
+```{r fig.height=3,fig.width=7}
+ggplot(emd.dat %>% filter(!is.na(vessel_size)), aes(x=emd)) + geom_histogram() +
+  facet_grid(cols=vars(vessel_size)) +
+  theme_bw() + scale_x_log10() + labs(x="log10(emd)")
+```
+
+Ok, apply a Box-Cox transformation, and then test for normality.
+```{r}
+indat <- emd.dat %>% filter(!is.na(vessel_size))
+b.emd <- boxcox(lm(emd~vessel_size, data = indat))
+
+
+ggplot(indat, aes(x=emd^(-0.2))) + geom_histogram() +
+  facet_grid(cols=vars(vessel_size)) +
+  theme_bw()
+
+shapiro.test((indat$emd)^(-0.2))
+qqnorm((indat$emd)^(-0.2))
+```

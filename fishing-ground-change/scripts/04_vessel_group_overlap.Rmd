@@ -1,6 +1,6 @@
 ---
-title: "Generate Spatial Points Data Frames for Vessel Groups"
-date: "2/20/2023"
+title: "BA Overlap of Vessel Groups, with Bootstrapping"
+date: "3/20/2023"
 output: 
   html_document:
     toc: yes
@@ -25,21 +25,21 @@ However, for the analysis as it stands, I am not going to apply any additional f
 
 
 ```{r setup, include=FALSE}
-rm(list=ls())
-
 library(raster)
 library(adehabitatHR)
 library(lubridate)
 library(ggmap)
 library(ggplot2)
 library(gridExtra)
-library(tidyr)
-library(dplyr)
-library(reshape2)
+library(tidyverse)
+library(magrittr)
 library(maps)
 library(rgdal)
 library(rgeos)
 library(here)
+
+source(here('R','subset_vms.R'))
+source(here('R','create_vms_spdf.R'))
 
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -47,11 +47,16 @@ knitr::opts_chunk$set(echo = TRUE)
 
 Input
 ```{r}
-yrs <- c(2012,2013,2014,2015,2016,2017)
-k=5
-p=90
+crab_years <- c(2012,2013,2014,2015,2016,2017,2018)
+k=5   # number of clusters
+p=90  # % utilization distribution
+kud_grid <- 75  # grid size
+overlap.method <- "BA"
 cluster_year=2013
-tfs <- c("annual","Central","North")
+tfs <- c("annual","central","northern")
+
+save_SPDF <- TRUE # save an SPDF for each group, in addition to the 90% UD? 
+
 
 indir   <- 'project-dat/vms/interpolation_60min/NaN_speed_filter'
 outdir  <- 'project-dat/vms/interpolation_60min/NaN_speed_filter/group90ud'
@@ -59,176 +64,146 @@ outdir  <- 'project-dat/vms/interpolation_60min/NaN_speed_filter/group90ud'
 ```
 <br>
 
-### Data
-```{r}
-for(y in yrs){
-  tmp_vms <- read.csv(here::here(indir,paste0("VMS_Outputs_DCRB_10d_lookback_crab",y,"_interpolated_regular_fishingloc.csv")))
-  if(y < 2016){
-    tmp_vms<- tmp_vms %>%
-      filter(DCRB..lbs. > 0) %>%
-      dplyr::select(Rec_ID,pacfin_port_code,port_group_code,drvid,agency_code,removal_type_code,date,year, UTCDATETIM,westcoastdate,westcoastdate_notime,X_COORD,Y_COORD,LATITUDE,LONGITUDE,NGDC_M,avg_speed_recalc,in_port,to_rm) %>%
-      rename(tdate=date,tyear=year)
+## Data
+
+VMS
+```{r read_vms}
+for(y in crab_years){
+  tmpvms <-  read_rds(here::here(indir,paste0(y,'season_crabfishing.rds')))
+  if(y==crab_years[1]){
+    vms <- tmpvms
   } else{
-    tmp_vms<- tmp_vms %>%
-      filter(DCRB_lbs > 0) %>%
-      dplyr::select(Rec_ID,pacfin_port_code,port_group_code,drvid,agency_code,removal_type_code,tdate,tyear, UTCDATETIM,westcoastdate,westcoastdate_notime,X_COORD,Y_COORD,LATITUDE,LONGITUDE,NGDC_M,avg_speed_recalc,in_port,to_rm)
-  }
-  tmp_vms <- mutate(tmp_vms, crab_year=y)
-  print(y)
-  if(y==yrs[1]){
-    vms <- tmp_vms
-  } else{
-    tmp_vms <- tmp_vms[,colnames(vms)]
-    vms <- rbind(vms,tmp_vms)
+    vms %<>% bind_rows(tmpvms)
   }
 }
-dim(vms)
-colnames(vms)
+
+str(vms)
 ```
-<br>
 
 
-Cluster key
+Group key
 ```{r}
-cluster_key <- read.csv(here::here(clustdir,paste0("districts_",cluster_year,"_k",k,"groups_data_vl.csv")))
-if("X" %in% colnames(cluster_key)){cluster_key <- dplyr::select(cluster_key,-X)}
-head(cluster_key)
+vgroups <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv')) %>%
+  filter(crab_year %in% crab_years)
+str(vgroups)
 ```
 <br>
 
 Season dates
 ```{r}
-season_dates_df <- read.csv(here::here("Input_Data/dcrb_season_dates.csv")) %>%
-  mutate(open_date=ifelse(grepl("Jan",open) | grepl("Feb",open)| grepl("Mar",open) | grepl("Apr",open)| grepl("May",open),paste0(open,"-",crab_year+1), paste0(open,"-",crab_year))) %>%
-  mutate(open_date=dmy(open_date)) %>%
-  mutate(region=ifelse(pcgroup %in% c("CCA","ERA","BGA"), "north","central")) %>%
-  dplyr::select(region,crab_year,open_date) %>%
-  distinct() %>%
-  # grab the earliest date the district opened
-  group_by(region,crab_year) %>%
-  summarise(region_open=min(open_date)) %>%
-  # Add 42 days (6 weeks)
-  mutate(cutoff6w = region_open + days(42))
+season_dates_df <- read_csv(here::here('project-dat','dcrb_season_starts.csv'))
+```
+```{r}
+season_dates_df %<>%
+  mutate(port_area_start_date = mdy(season_start_date)) %>%
+  dplyr::select(-season_start_date) %>%
+  mutate(cutoff6w = port_area_start_date + days(42))
+str(season_dates_df)
 ```
 <br>
 
+## Create utilization distributions
 
-### Functions
-The following functions will be called for each year / time frame of data.
+### for each group
+these will be used for mapping
 ```{r}
-filterVMS <- function(vms_data, yrs, timeframe, season_dates=season_dates_df){
-  # filter for D. crab trips
-  dcrb_vms <- filter(vms_data, removal_type_code %in% c("C","D","U") & crab_year %in% yrs)
-  if(timeframe=="annual"){
-    return(dcrb_vms)
-  } else{
-    crab_season <- filter(season_dates,crab_year %in% yrs)
-    if(timeframe=="Central"){
-      crab_season <- filter(crab_season,region=="central")
-    } else if(timeframe=="North"){
-      crab_season <- filter(crab_season,region=="north")
-    } else{stop("unrecognized time frame")}
-    dcrb_vms$tdate <- parse_date_time(dcrb_vms$tdate, orders=c("ymd","mdy"), tz="America/Los_Angeles")
-    dcrb_vms <- left_join(dcrb_vms, crab_season,by=c("crab_year")) %>%
-      mutate(first6w=ifelse(tdate <= cutoff6w, "Y","N")) %>%
-      filter(first6w=="Y") %>%
-      dplyr::select(-first6w,-cutoff6w,-region_open,-region)
-    return(dcrb_vms)
-  }
-}
-
-
-create_spdf <- function(vms_data, clusters, yrs=c(2012,2013)){
+sample_sizes <- data.frame(timeframe=as.character(),
+                           subgroup=as.character(),
+                           crab_year=as.character(),
+                           n.vessels=as.numeric(),
+                           n.trips=as.numeric())
+for(t in tfs){
   # filter VMS data
-  myvms <- filter(vms_data, crab_year %in% yrs)
-  # add clusters to vms data by vessel ID
-  clusters <- dplyr::select(clusters,vessels,group_recode,district)
-  clusters$vessels <- as.character(clusters$vessels); myvms$drvid <- as.character(myvms$drvid)
-  myvms <- left_join(myvms, clusters,by=c("drvid"="vessels"))
-  # remove vessels which don't have clusters assigned
-  myvms <- filter(myvms, !is.na(group_recode))
+  tmp.vms <- subsetVMS(dat=vms, crab_years=crab_years, cut=t, seasons=season_dates_df)
   
-  # matrix with coordinates
-  vms_coords <- dplyr::select(myvms, LONGITUDE, LATITUDE)
-  # data frame with IDs
-  vms_ids <- dplyr::select(myvms, group_recode, district)
-  vms_ids$group_recode <- as.character(vms_ids$group_recode)
-  # create the Spatial Points Data frame
-  vms_sp <- SpatialPointsDataFrame(coords=vms_coords, data=dplyr::select(vms_ids, group_recode), proj4string = CRS("+init=epsg:4326"))
+  for(g in unique(vgroups$subgroup)){
+    # create spatial points data frame, with crab year as ID variable
+    g.vms <- create_groups_vms_spdf(dat=tmp.vms, crab_years=crab_years, group_id=g, list_by="year", clusters=vgroups)
+    g.vms.sp <- g.vms[[1]]
+    ## save SPDF
+    write_rds(g.vms.sp, here::here(outdir,paste0(g,"_SPDF_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs.rds")))
+    ## save sample sizes
+    sample_sizes %<>% bind_rows(g.vms[[2]] %>% mutate(crab_year=as.character(crab_year),timeframe=t))
+    rm(g.vms)
+    
+    tmpyrs <- unique(g.vms.sp$crab_year)
+    tmpout <- list()
+    # create a list of raster layers
+    for(i in seq(1,length(tmpyrs))){
+      y <- tmpyrs[i]
+      # create utilization distribution, with grid size of 'kernel_g'
+      tmpud <- kernelUD(g.vms.sp[g.vms.sp$crab_year==y,], grid=kud_grid)
+      # convert estUD object to a raster
+      tmpras <- raster(as(tmpud[[1]],"SpatialPixelsDataFrame"))
+      # set any points outside the 90% line to NA, then recalculate the probability surface
+      tmpras[tmpras > (p/100)] <- NA; newras <- tmpras/cellStats(tmpras,sum)
+      tmpout[[i]] <- newras
+    }
+    names(tmpout) <- tmpyrs
+    # save the list(by year) of 90% UD rasters as an RDS
+    write_rds(tmpout, here::here(outdir,paste0(g,"_",p,"ud_RasterLayer_",kud_grid,"grid_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs.rds")))
+    
+    rm(tmpout, g.vms.sp)
+  }
   
-  sample_size <- myvms %>%
-    group_by(group_recode) %>%
-    summarise(n.vessels = length(unique(drvid)), n.trips = length(unique(Rec_ID))) %>%
-    arrange(n.vessels,n.trips)
-  
-  return(list(vms_sp,sample_size))
 }
 ```
-<br>
+
+Save sample sizes
+```{r}
+write_csv(sample_sizes,here(outdir,paste0('sample_sizes_',substr(tail(crab_years,1),3,4), 'crabYrs.csv')))
+```
 
 
-### SpatialPoints Data Frame
+### for each year
+these will be used for calculating overlap
+```{r}
+ba.dat <- data.frame(group1=as.character(),
+                     group2=as.character(),
+                     crab_year=as.character(),
+                     timeframe=as.character(),
+                     BAindex=as.numeric())
+
+
+for(t in tfs){
+  # filter VMS data
+  tmp.vms <- subsetVMS(dat=vms, crab_years=crab_years, cut=t, seasons=season_dates_df)
+  
+  for(y in crab_years){
+    # create spatial points data frame, with crab year as ID variable
+    yr.vms <- create_groups_vms_spdf(dat=tmp.vms, crab_years=y, group_id=NA, list_by="group", clusters=vgroups)
+    
+    yr.vms.sp <- yr.vms[[1]]; rm(yr.vms)
+    
+    yr.overlap <- kerneloverlap(yr.vms.sp[,1], method=overlap.method, percent=p, grid=kud_grid, h="href", conditional=F) 
+    
+    ba.dat %<>% bind_rows(as.data.frame(yr.overlap) %>%
+                             rownames_to_column(var="group1") %>%
+                             pivot_longer(2:(dim(yr.overlap)[2]+1), names_to="group2",values_to="BAindex") %>%
+                             mutate(crab_year=as.character(y),
+                                    timeframe=as.character(t)))
+    
+    
+  }
+    
+    
+  
+}
+```
+
 
 ```{r}
-for(y in c(yrs)){
-  for(t in tfs){
-    vms_filter <- filterVMS(vms_data=vms, yrs=c(y), timeframe=t, season_dates=season_dates_df)
-    tmpsp <- create_spdf(vms_data=vms_filter, clusters=cluster_key, yrs=c(y))
-    if(t=="annual"){
-      saveRDS(tmpsp[[1]], file=here::here(outdir,paste0(y,"_crab_spdf_espg4326.rds")))
-    } else{
-      saveRDS(tmpsp[[1]], file=here::here(outdir,paste0(y,"_crab_spdf_",t,"_espg4326.rds")))
-    }
-    if(y==yrs[1] & t==tfs[1]){
-      ss_df <- tmpsp[[2]] %>%
-        mutate(timeframe=t, crab_year=y)
-    } else{
-      ss_df <- ss_df %>%
-        bind_rows(mutate(tmpsp[[2]],timeframe=t, crab_year=y))
-    }
-  }
-}
+write_csv(ba.dat, here(outdir,paste0("BAoverlap_rawPairwise_",substr(tail(crab_years,1),3,4), 'crabYrs_noncon.csv')))
 ```
-<br>
 
 
-### Sample Sizes
-```{r eval=FALSE}
-ss_df_wide <- ss_df %>%
-  dplyr::select(-n.trips) %>%
-  pivot_wider(names_from=crab_year,values_from=n.vessels,values_fill=list(n.vessels = 0)) %>%
-  separate(col=group_recode,into=c("cluster","size"),sep="_",remove=FALSE) %>%
-  left_join(dplyr::select(cluster_key,group,district) %>% distinct() %>% mutate(group=as.character(group)),
-            by=c("cluster"="group")) %>%
-  arrange(cluster,size,timeframe)
 
-write.csv(ss_df_wide,here::here(clustdir,paste0("districts_",cluster_year,"_k",k,"_groups_vl_sizes.csv")))
-```
-<br>
+## Bootstrapping
 
-### Home range (90%)
 
-These files will mostly be used for plotting, so I'll stick to the 90% home range here.
-```{r}
-for(y in yrs){
-  for(t in tfs){
-    if(t=="annual"){
-      tmpsp <- readRDS(file=here::here(outdir,paste0(y,"_crab_spdf_espg4326.rds")))
-    } else{
-      tmpsp <- readRDS(file=here::here(outdir,paste0(y,"_crab_spdf_",t,"_espg4326.rds")))
-    }
-    vms_ud <- kernelUD(tmpsp, grid=350, h=0.08, same4all=TRUE)
-    vms_ud95 <- getverticeshr(vms_ud, percent=p)
-    if(t=="annual"){
-      saveRDS(vms_ud95, here::here(outdir,paste0(y,"_crab_ud",p,"_espg4326.rds")))
-    } else{
-      saveRDS(vms_ud95, here::here(outdir,paste0(y,"_crab_ud",p,"_",t,"_espg4326.rds")))
-    }
-  }
-  cat("finished 90% ud for ",y,".\n")
-}
-```
-<br>
+
+
+
 
 #### Generate graphs for each vessel cluster, for each time frame (faceted by year)
 
