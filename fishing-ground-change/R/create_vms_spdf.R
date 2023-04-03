@@ -20,8 +20,7 @@ create_groups_vms_spdf <- function(dat, crab_years, group_id=NA, list_by="year",
     vms.sub <- filter(dat, crab_year %in% crab_years)
     vms.sub <- clusters %>%
       filter(crab_year %in% crab_years) %>%
-      dplyr::select(drvid,subgroup, crab_year,area) %>%
-      rename(subgroup_area=area) %>%
+      dplyr::select(drvid,subgroup, crab_year,group_area) %>%
       left_join(vms.sub,by=c("drvid","crab_year"),multiple="all") %>%
       filter(!is.na(LONGITUDE))
     
@@ -52,8 +51,7 @@ create_groups_vms_spdf <- function(dat, crab_years, group_id=NA, list_by="year",
     vms.sub <- filter(dat, crab_year %in% crab_years)
     vms.sub <- clusters %>%
       filter(crab_year %in% crab_years & subgroup==group_id) %>%
-      dplyr::select(drvid,subgroup, crab_year,area) %>%
-      rename(subgroup_area=area) %>%
+      dplyr::select(drvid,subgroup, crab_year,group_area) %>%
       left_join(vms.sub,by=c("drvid","crab_year"),multiple="all") %>%
       filter(!is.na(LONGITUDE))
     

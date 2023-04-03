@@ -6,7 +6,17 @@ output: html_document
 ---
 ## Description
 
-Create figures for main text
+Create figures for main text.
+
+**Figure 3:** Which vessels exhibit the greatest mobility?
+
+  - Compare year-over-year Earth Mover's Distance for all large and small vessels
+  - Compare year-over-year Earth Mover's Distance for vessel groups 
+
+**Figure 4:** How does overlap between vessel groups change?
+
+  - Compare year-over-year BA overlap between vessel groups (at varying timescales)
+  - Compare resampled year-over-year BA overlap between vessel groups
 
 
 ```{r setup, include=FALSE}
@@ -27,11 +37,15 @@ library(janitor)
 library(PNWColors)
 
 source(here('R','getmode.R'))
+
+std.error=function(x) sd(x)/sqrt(length(x))
 ```
 
 User inputs
 ```{r}
 keep_years <- seq(2013,2018)
+nboots <- 1000
+statdir <- here('project-dat','statistics')
 ```
 
 
@@ -45,42 +59,74 @@ vlengths <- read_csv(here('project-dat','vessel_groups','length_key_dcrb_vms_ves
 Clustering groups
 ```{r}
 vgroups <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
+
+vgroup_summary <- vgroups %>% dplyr::select(group,subgroup,group_area, vessel_size) %>% distinct()
 ```
+
 
 Earth mover's distance (by vessel)
 ```{r}
-emd.dat <- read_csv(here('project-dat','statistics','EMD_annual_per_vessel_90ud_75grid_2011-18crabYrs.csv'))
+emd.dat <- read_csv(here(statdir,'EMD_annual_per_vessel_90ud_75grid_2011-18crabYrs.csv'))
 ```
+
 Earth mover's distance (means)
 ```{r}
-emd_means <- read_csv(here('project-dat','statistics','meanEMD_annual_bysize_90ud_75grid.csv'))
-emd_group_means <- read_csv(here('project-dat','statistics','meanEMD_annual_bygroup_90ud_75grid_k4_2014clusterYR.csv'))
+emd_means <- read_csv(here(statdir,'meanEMD_annual_bysize_90ud_75grid.csv'))
+emd_group_means_noncon <- read_csv(here(statdir,'meanEMD_annual_bygroup_90ud_75grid_k4_2014clusterYR_noncon.csv'))
 ```
+
 
 Earth mover's distance (significance testing)
 ```{r}
 load(here('project-dat','statistics','wilcox_tests_bylength.rds'))
+wilcox.lengths <- wilcox_tests_bylength[[2]]
+sig.lengths <- wilcox_tests_bylength[[3]]
+```
+```{r}
+load(here('project-dat','statistics','wilcox_tests_groups_localBYlength_noncon.rds'))
+wilcox.locals <- wilcox_tests_bylength[[2]]
+sig.locals <- wilcox_tests_bylength[[3]]
 ```
 
 
 
+BA index (bootstrapped across clusters)
+```{r}
+ba.boot.df <- read_csv(here(statdir,paste0('BAoverlap_bootstrapped_',keep_years[1],"-",substr(last(keep_years),3,4),'_annual.csv'))) %>%
+  mutate(timeframe="annual") %>%
+  bind_rows(read_csv(here(statdir,paste0('BAoverlap_bootstrapped_',keep_years[1],"-",substr(last(keep_years),3,4),'_central.csv'))) %>%
+  mutate(timeframe="central")) %>%
+  bind_rows(read_csv(here(statdir,paste0('BAoverlap_bootstrapped_',keep_years[1],"-",substr(last(keep_years),3,4),'_northern.csv'))) %>%
+  mutate(timeframe="northern"))
+```
+
 BA index (by cluster)
+```{r eval=FALSE}
+ba <- read_csv(here('project-dat','statistics','BAoverlap_rawPairwise_2013-18crabYrs_noncon-tix.csv'))
 
+# Add vessel group info to the BA index dataframe
 
-
-
+ba %<>% left_join(vgroup_summary %>% dplyr::select(-group),by=c("group1"="subgroup")) %>%
+  rename(group1_area=group_area,group1_size=vessel_size) %>%
+  left_join(vgroup_summary %>% dplyr::select(-group),by=c("group2"="subgroup")) %>%
+  rename(group2_area=group_area,group2_size=vessel_size)
+```
 
 
 ## Figure 2
 
+### (a) size only
 
-
+```{r}
+sig.lengths %<>% mutate(significance=ifelse(correct.pval<0.01,"**",significance))
+sig.lengths[6,"significance"] <- "**"
+```
 
 ```{r}
 plot.all <- ggplot(emd_means, aes(x=crab_years,y=mean.emd/1000)) +
   geom_point(size=2, aes(col=vessel_size,pch=vessel_size)) +
   geom_errorbar(aes(ymin=(mean.emd-sd.emd)/1000,ymax=(mean.emd+sd.emd)/1000,col=vessel_size,pch=vessel_size),width=0.25)+
-  geom_text(data=sig.lengths.out, aes(x=crab_years,y=y,label=significance),size=10) +
+  geom_text(data=sig.lengths, aes(x=crab_years,y=y,label=significance),size=10) +
   geom_vline(xintercept=1.5, size=2) +
   scale_color_manual(values=pnw_palette("Starfish",7)[c(1,4)]) +
   xlab("Crab Year Comparison") + ylab("Earth Mover's Distance (x1000)") +
@@ -93,13 +139,40 @@ plot.all <- ggplot(emd_means, aes(x=crab_years,y=mean.emd/1000)) +
                      legend.position="none")
 plot.all
 ```
+
+### (b) groups (4)
+
+some prep for plotting is needed.
 ```{r}
-plot.gr <- ggplot(emd_group_means, aes(x=crab_years,y=mean.emd/1000, col=`Vessel Size`,pch=`Vessel Size`)) +
-  geom_point(size=2) +
+#fix significance
+sig.locals %<>% mutate(significance=ifelse(!is.na(correct.pval) & correct.pval<0.01,"**",
+                                           ifelse(is.na(correct.pval) & pval<0.01,"**",significance)))
+```
+```{r}
+sig.groups <- sig.locals %>%
+   mutate(`Vessel Group`=ifelse(area=="northern","Northern",ifelse(area=="central","Central",area)),
+          `Vessel Size`=NA) %>%
+  mutate(y=sig.locals$y[1]-70)
+sig.groups$`Vessel Group` <- factor(sig.groups$`Vessel Group`,levels=c("Northern","Central","Mobile Northern","Coastwide"))
+sig.groups$crab_years <- factor(sig.groups$crab_years, levels=c("Overall", "2013_2014", "2014_2015", "2015_2016","2016_2017","2017_2018"))
+
+#plotdat
+plotdat <- filter(emd_group_means_noncon, group != 5) %>%
+  mutate(`Vessel Group`=ifelse(`Vessel Group`=="Diversified Northern","Mobile Northern",
+                           ifelse(`Vessel Group`=="Central/Northern","Coastwide",`Vessel Group`)))
+plotdat$crab_years <- factor(plotdat$crab_years, levels=c("Overall",
+                                                          "2013_2014","2014_2015","2015_2016","2016_2017","2017_2018"))
+plotdat$`Vessel Group` <- factor(plotdat$`Vessel Group`, levels=c("Northern","Central","Mobile Northern","Coastwide"))
+```
+```{r} 
+plot.gr <- 
+ggplot(plotdat, aes(x=crab_years,y=mean.emd/1000, col=`Vessel Size`)) +
+  geom_point(aes(pch=`Vessel Size`),size=2) +
   facet_wrap(~`Vessel Group`) +
-  geom_errorbar(aes(ymin=(mean.emd-sd.emd)/1000,ymax=(mean.emd+sd.emd)/1000),width=0.25)+
+  geom_errorbar(aes(pch=`Vessel Size`, ymin=(mean.emd-sd.emd)/1000,ymax=(mean.emd+sd.emd)/1000),width=0.25)+
   geom_vline(xintercept=1.5, size=2) +
-  scale_color_manual(values=pnw_palette("Starfish",7)[c(1,4)]) +
+  geom_text(data=sig.groups, aes(x=crab_years,y=y,label=significance),size=7,color="black") +
+  scale_color_manual(values=c(pnw_palette("Starfish",7)[c(1,4)],"black")) +
   xlab("Crab Year Comparison") + ylab("") +
   theme_bw() + theme(panel.grid.major.x=element_blank(),
                      panel.grid.minor.x=element_blank(),
@@ -113,11 +186,60 @@ plot.gr
 ```
 
 ```{r}
-png(here::here('project-dat','figures',"2013-18_EMDmeans.png"),width=750,height=400)
+png(here::here('project-dat','figures',"2013-18_EMDmeans_noncon.png"),width=750,height=400)
 plot_grid(plot.all,plot.gr,rel_widths=c(0.55,1),labels="auto")
 dev.off()
 ```
 <br>
+
+
+
+### (b) groups (3)
+
+some prep for plotting is needed.
+```{r}
+sig.groups <- sig.locals %>%
+   mutate(`Vessel Group`=ifelse(area=="northern","Northern",ifelse(area=="central","Central",area)),
+          `Vessel Size`=NA) %>%
+  mutate(y=sig.locals$y[1]-110)
+sig.groups$`Vessel Group` <- factor(sig.groups$`Vessel Group`,levels=c("Northern","Central","Coastwide"))
+sig.groups$crab_years <- factor(sig.groups$crab_years, levels=c("Overall", "2013_2014", "2014_2015", "2015_2016","2016_2017","2017_2018"))
+
+#plotdat
+plotdat <- filter(emd_group_means_noncon, !(group %in% c(3,4))) %>%
+  mutate(`Vessel Group`=ifelse(`Vessel Group`=="Diversified Northern","Coastwide",`Vessel Group`))
+plotdat$crab_years <- factor(plotdat$crab_years, levels=c("Overall",
+                                                          "2013_2014","2014_2015","2015_2016","2016_2017","2017_2018"))
+plotdat$`Vessel Group` <- factor(plotdat$`Vessel Group`, levels=c("Northern","Central","Coastwide"))
+```
+```{r} 
+plot.gr2 <- 
+ggplot(plotdat, aes(x=crab_years,y=mean.emd/1000, col=`Vessel Size`)) +
+  geom_point(aes(pch=`Vessel Size`),size=2) +
+  facet_wrap(~`Vessel Group`,ncol=2) +
+  geom_errorbar(aes(pch=`Vessel Size`, ymin=(mean.emd-sd.emd)/1000,ymax=(mean.emd+sd.emd)/1000),width=0.25)+
+  geom_vline(xintercept=1.5, size=2) +
+  geom_text(data=sig.groups, aes(x=crab_years,y=y,label=significance),size=7,color="black") +
+  scale_color_manual(values=c(pnw_palette("Starfish",7)[c(1,4)],"black")) +
+  xlab("Crab Year Comparison") + ylab("") +
+  theme_bw() + theme(panel.grid.major.x=element_blank(),
+                     panel.grid.minor.x=element_blank(),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.5,size=13),
+                     axis.text.y=element_text(size=13),
+                     strip.text=element_text(size=16),
+                     axis.title=element_text(size=16),
+                     legend.title=element_text(size=16),
+                     legend.text=element_text(size=13))
+plot.gr2
+```
+
+```{r}
+png(here::here('project-dat','figures',"2013-18_EMDmeans_combocoastwide_noncon.png"),width=750,height=400)
+plot_grid(plot.all,plot.gr2,rel_widths=c(0.55,1),labels="auto")
+dev.off()
+```
+<br>
+
 
 
 ## Supplement to Fig. 2: EMD Density per year
@@ -136,4 +258,382 @@ png(here::here('project-dat','figures',"supplement_2013-18_EMDdistributions.png"
 sfig
 dev.off()
 ```
+
+
+
+## Figure 4. BA index
+
+### No error
+#### Within areas
+
+```{r}
+ba.locals <- ba %>% filter(group1 != group2) %>% 
+  filter(group1_area %in% c("central","northern") & group2_area %in% c("central","northern")) %>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
+                          ifelse(timeframe=="central","First 6w, Central","First 6w, North")))
+
+ba.locals1 <- ba %>% filter(group1 != group2) %>%
+  filter((group1 %in% c("1-large","2-large")) & (group2 %in% c("1-small","2-small"))) %>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
+                          ifelse(timeframe=="central","First 6w, Central","First 6w, North")))
+
+ba.locals2 <- ba %>% filter((group1 == "1-large" & group2=="2-large") |
+                              (group1=="1-small" & group2=="2-small"))
+```
+
+```{r echo=FALSE}
+plot.local1 <- ggplot(ba.locals1,aes(x=as.factor(crab_year),y=BAindex,col=timeframe,pch=timeframe)) +
+  geom_point() +
+  geom_path(aes(group=timeframe)) +
+  facet_grid(cols=vars(group1_size,group1_area),rows=vars(group2_size,group2_area)) +
+  ylim(c(0,1)) +
+  xlab("Crab Year") +
+  ylab("Overlap (Bhattacharyya's affinity)") +
+  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Year") +
+  scale_shape_manual(values=c(19,19,4),name="Portion of Year") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+
+plot.local1
+png(here::here('project-dat','figures',"Large_v_Small_Locals_BAoverlap_2013-18.png"),res=200,width=1200,height=1000)
+plot.local1
+dev.off()
+```
+
+```{r}
+ba.locals.grouped <- ba.locals %>%
+  mutate(compare=paste0(group1_size, " ",group1_area,"--", group2_size, " ",group2_area),
+         compare_type=ifelse(group1_area==group2_area,"Within Areas","Northern v. Central"),
+         grp=paste(pmax(group1,group2),pmin(group1,group2),sep="-")) %>%
+  group_by(crab_year,timeframe,compare_type,grp) %>%
+  slice(1) %>%
+  dplyr::select(-grp) 
+
+plot.local2 <- ggplot(ba.locals.grouped,aes(x=as.factor(crab_year),y=BAindex,color=compare)) +
+  geom_point() +
+  geom_path(aes(group=compare)) +
+  facet_grid(cols=vars(timeframe), rows=vars(compare_type)) +
+  ylim(c(0,1)) +
+  xlab("Crab Year") +
+  ylab("Overlap (Bhattacharyya's affinity)") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+plot.local2
+png(here::here('project-dat','figures',"Locals_by_Timeframe_BAoverlap_2013-18.png"),res=200,width=1600,height=900)
+plot.local2
+dev.off()
+```
+<br>
+
+```{r echo=FALSE}
+plot.local3 <- ggplot(ba.locals,aes(x=as.factor(crab_year),y=BAindex,col=timeframe,pch=timeframe)) +
+  geom_point() +
+  geom_path(aes(group=timeframe)) +
+  facet_grid(cols=vars(group1_size,group1_area),rows=vars(group2_size,group2_area)) +
+  ylim(c(0,1)) +
+  xlab("Crab Year") +
+  ylab("Overlap (Bhattacharyya's affinity)") +
+  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Year") +
+  scale_shape_manual(values=c(19,19,4),name="Portion of Year") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+
+plot.local3
+png(here::here('project-dat','figures',"All_Locals_BAoverlap_2013-18.png"),res=200,width=1400,height=1200)
+plot.local3
+dev.off()
+```
+
+
+
+#### Between areas
+
+```{r}
+ba.coast <- ba %>% 
+  filter(group1 != group2) %>% filter((group1 %in% c("3-large","4-large")) & group2_area %in% c("northern","central")) %>%
+  mutate(group1_area=ifelse(group1=="3-large","Central/Northern","Diversified Northern"),
+         timeframe=ifelse(timeframe=="annual","Full Year",
+                          ifelse(timeframe=="central","First 6w, Central","First 6w, North")))
+
+plot.coast1 <- ggplot(ba.coast,aes(x=as.factor(crab_year),y=BAindex,col=timeframe,pch=timeframe)) +
+  geom_point() +
+  geom_path(aes(group=timeframe)) +
+  facet_grid(rows=vars(group1_area),cols=vars(group2_size,group2_area)) +
+  ylim(c(0,1)) +
+  xlab("Crab Year") +
+  ylab("Overlap (Bhattacharyya's affinity)") +
+  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Year") +
+  scale_shape_manual(values=c(19,19,4),name="Portion of Year") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+
+plot.coast1
+png(here::here('project-dat','figures',"Coastwide_v_Locals_BAoverlap_2013-18.png"),res=200,width=1500,height=1000)
+plot.coast1
+dev.off()
+```
+
+
+### Bootstrapped error
+```{r}
+ba.boot.means <- ba.boot.df %>% filter(group1 != group2) %>% 
+  rename("crab_year"=.id) %>% 
+  group_by(crab_year,group1,group2,timeframe) %>%
+  summarise(BAmean=mean(BAindex),
+            BAsdev=sd(BAindex),
+            BAsderr=std.error(BAindex))
+ba.boot.means %<>% left_join(vgroup_summary %>% dplyr::select(-group),by=c("group1"="subgroup")) %>%
+  rename(group1_area=group_area,group1_size=vessel_size) %>%
+  left_join(vgroup_summary %>% dplyr::select(-group),by=c("group2"="subgroup")) %>%
+  rename(group2_area=group_area,group2_size=vessel_size)
+```
+
+#### within areas
+```{r}
+ba.boot.locals1 <- ba.boot.means %>%
+  filter((group1 %in% c("1-large","2-large")) & (group2 %in% c("1-small","2-small"))) %>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
+                          ifelse(timeframe=="central","First 6w, Central","First 6w, North")))
+
+ba.boot.locals1b <- ba.boot.means %>%
+  filter((group2 %in% c("1-large","2-large")) & (group1 %in% c("1-small","2-small"))) %>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
+                          ifelse(timeframe=="central","First 6w, Central","First 6w, North"))) %>%
+  rename(group1=group2,group1_area=group2_area,group1_size=group2_size,
+         group2=group1,group2_area=group1_area,group2_size=group1_size)
+
+ba.boot.locals1 %<>% bind_rows(ba.boot.locals1b)
+```
+
+```{r echo=FALSE}
+plot.local1boot <- ggplot(ba.boot.locals1,aes(x=as.factor(crab_year),y=BAmean,col=timeframe,pch=timeframe)) +
+  geom_point() +
+  geom_path(aes(group=timeframe)) +
+  geom_errorbar(aes(ymin=BAmean-BAsderr,ymax=BAmean-BAsderr),width=0.5) +
+  facet_grid(cols=vars(group1_size,group1_area),rows=vars(group2_size,group2_area)) +
+  ylim(c(0,1)) +
+  xlab("Crab Year") +
+  ylab("Overlap (Bhattacharyya's affinity)") +
+  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Year") +
+  scale_shape_manual(values=c(19,19,4),name="Portion of Year") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+
+plot.local1boot
+png(here::here('project-dat','figures',"Large_v_Small_Locals_BAoverlap-bootstrapped_2013-18.png"),res=200,width=1200,height=900)
+plot.local1boot
+dev.off()
+```
+```{r}
+ba.boot.locals2 <- ba.boot.means %>%
+  filter((group1 %in% c("1-large","1-small")) & (group2 %in% c("2-large","2-small"))) %>%
+  filter(group1_size ==group2_size) %>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
+                          ifelse(timeframe=="central","First 6w, Central","First 6w, North")))
+
+ba.boot.locals2b <- ba.boot.means %>%
+  filter((group2 %in% c("1-large","1-small")) & (group1 %in% c("2-large","2-small"))) %>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
+                          ifelse(timeframe=="central","First 6w, Central","First 6w, North"))) %>%
+  rename(group1=group2,group1_area=group2_area,group1_size=group2_size,
+         group2=group1,group2_area=group1_area,group2_size=group1_size)
+
+```
+
+```{r echo=FALSE}
+plot.local2boot <- ggplot(ba.boot.locals2,aes(x=as.factor(crab_year),y=BAmean,col=timeframe,pch=timeframe)) +
+  geom_point() +
+  geom_path(aes(group=timeframe)) +
+  geom_errorbar(aes(ymin=BAmean-BAsderr,ymax=BAmean-BAsderr),width=0.5) +
+  facet_grid(cols=vars(group1_size,group1_area),rows=vars(group2_size,group2_area)) +
+  ylim(c(0,1)) +
+  xlab("Crab Year") +
+  ylab("Overlap (Bhattacharyya's affinity)") +
+  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Year") +
+  scale_shape_manual(values=c(19,19,4),name="Portion of Year") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+
+plot.local2boot
+png(here::here('project-dat','figures',"LvL_SvS_Locals_BAoverlap-bootstrapped_2013-18.png"),res=200,width=1200,height=900)
+plot.local2boot
+dev.off()
+```
+
+
+#### mobile v local
+
+first, separate out the mobile northern and coastwide groups
+```{r}
+ba.boot.contrast1 <- ba.boot.means %>%
+  filter((group1 %in% c("4-large","3-large")) & (group2 %in% c("1-large","2-large","1-small","2-small"))) %>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
+                          ifelse(timeframe=="central","First 6w, Central","First 6w, North")))
+
+ba.boot.contrast1b <- ba.boot.means %>%
+  filter((group1 %in% c("1-large","2-large","1-small","2-small")) & (group2 %in% c("4-large","3-large"))) %>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
+                          ifelse(timeframe=="central","First 6w, Central","First 6w, North"))) %>%
+  rename(group1=group2,group1_area=group2_area,group1_size=group2_size,
+         group2=group1,group2_area=group1_area,group2_size=group1_size) %>%
+  mutate(timeframe=as.character)
+
+if(dim(ba.boot.contrast1)[1] > 0){
+  if(dim(ba.boot.contrast1b)[1] > 0){
+    ba.boot.contrast1 %<>% bind_rows(ba.boot.contrast1b)
+  }
+} else if(dim(ba.boot.contrast1b)[1] > 0){
+  ba.boot.contrast1 <- ba.boot.contrast1b
+}
+
+ba.boot.contrast1 %<>% mutate(group1_area=ifelse(group1=="3-large","coastwide","mobile northern"))
+```
+
+```{r echo=FALSE}
+plot.contrast1boot <- ggplot(ba.boot.contrast1,aes(x=as.factor(crab_year),y=BAmean,col=timeframe,pch=timeframe)) +
+  geom_point() +
+  geom_path(aes(group=timeframe)) +
+  geom_errorbar(aes(ymin=BAmean-BAsderr,ymax=BAmean-BAsderr),width=0.5) +
+  facet_grid(cols=vars(group2_size,group2_area),rows=vars(group1_size,group1_area)) +
+  # ylim(c(0,1)) +
+  xlab("Crab Year") +
+  ylab("Overlap (Bhattacharyya's affinity)") +
+  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Year") +
+  scale_shape_manual(values=c(19,19,4),name="Portion of Year") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+
+plot.contrast1boot
+png(here::here('project-dat','figures',"Coastwide3Mobile4_v_Locals_BAoverlap-bootstrapped_2013-18.png"),res=200,width=1600,height=1000)
+plot.contrast1boot
+dev.off()
+```
+
+now, combine the mobile groups
+```{r}
+ba.boot.contrast2 <- ba.boot.means %>%
+  filter((group1 %in% c("5-large")) & (group2 %in% c("1-large","2-large","1-small","2-small")))
+
+ba.boot.contrast2b <- ba.boot.means %>%
+  filter((group1 %in% c("1-large","2-large","1-small","2-small")) & (group2 %in% c("5-large"))) %>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
+                          ifelse(timeframe=="central","First 6w, Central","First 6w, North"))) %>%
+  rename(group1=group2,group1_area=group2_area,group1_size=group2_size,
+         group2=group1,group2_area=group1_area,group2_size=group1_size)
+
+if(dim(ba.boot.contrast2)[1] > 0){
+  if(dim(ba.boot.contrast2b)[1] > 0){
+    ba.boot.contrast2 %<>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
+                          ifelse(timeframe=="central","First 6w, Central","First 6w, North"))) %>%
+      bind_rows(ba.boot.contrast2b)
+  }
+} else if(dim(ba.boot.contrast2b)[1] > 0){
+  ba.boot.contrast2 <- ba.boot.contrast2b
+}
+```
+
+```{r echo=FALSE}
+plot.contrast2boot <- ggplot(ba.boot.contrast2,aes(x=as.factor(crab_year),y=BAmean,col=timeframe,pch=timeframe)) +
+  geom_point() +
+  geom_path(aes(group=timeframe)) +
+  geom_errorbar(aes(ymin=BAmean-BAsderr,ymax=BAmean-BAsderr),width=0.5) +
+  facet_grid(cols=vars(group2_size,group2_area),rows=vars(group1_size,group1_area)) +
+  ylim(c(0,1)) +
+  xlab("Crab Year") +
+  ylab("Overlap (Bhattacharyya's affinity)") +
+  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Year") +
+  scale_shape_manual(values=c(19,19,4),name="Portion of Year") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+
+plot.contrast2boot
+png(here::here('project-dat','figures',"Mobile5_v_Locals_BAoverlap-bootstrapped_2013-18.png"),res=200,width=1600,height=800)
+plot.contrast2boot
+dev.off()
+```
+
+#### check against full pairwise BA index
+
+For a subset of vessel groups, I looked at BA index between each vessel pair, instead of using an overall home range. 
+
+```{r}
+ba.pair <- read_csv(here('project-dat','statistics','BAoverlap_byVessel_1-large_1-small.csv')) %>%
+  mutate(drvid1=as.character(drvid1)) %>%
+  bind_rows(read_csv(here('project-dat','statistics','BAoverlap_byVessel_1-large_2-large.csv'))) %>%
+  mutate(drvid1=as.character(drvid1)) %>%
+  bind_rows(read_csv(here('project-dat','statistics','BAoverlap_byVessel_1-large_2-small.csv')) %>% 
+              mutate(drvid1=as.character(drvid2)))
+```
+
+```{r}
+ba.pair.means <- ba.pair %>% distinct() %>%
+  group_by(group1,group2,crab_year) %>%
+  summarise(BAmean.pair=mean(BAindex),
+            BAserr.pair=std.error(BAindex),
+            n=n()) %>%
+  mutate(timeframe="Full Year")
+
+ba.pair.test <- left_join(ba.pair.means,bind_rows(ba.boot.locals1,ba.boot.contrast1),by=c("group1","group2","crab_year","timeframe")) %>%
+  pivot_longer(cols=c(BAmean.pair,BAmean),names_to="calculation",values_to="BA") %>%
+  mutate(calculation=ifelse(calculation=="BAmean.pair","pairwise","bootstrapped"))
+ba.pair.test %<>% left_join(ba.pair.test %>% dplyr::select(group1,group2,crab_year,timeframe,BAserr.pair,BAsderr) %>%
+                              pivot_longer(cols=c(BAserr.pair,BAsderr),names_to="calculation",values_to="stderr") %>%
+                              mutate(calculation=ifelse(calculation=="BAserr.pair","pairwise","bootstrapped"))) %>%
+  distinct()
+
+testplot <- ggplot(ba.pair.test,aes(x=as.factor(crab_year),y=BA,col=calculation)) +
+  geom_point() +
+  geom_errorbar(aes(ymin=BA-stderr,ymax=BA+stderr)) +
+  geom_path(aes(group=calculation)) +
+  facet_grid(rows=vars(group1_area,group1_size),cols=vars(group2_size,group2_area)) +
+  ylim(c(0,1)) +
+  xlab("Crab Year") +
+  ylab("Overlap (Bhattacharyya's affinity)") +
+  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Year") +
+  scale_shape_manual(values=c(19,19,4),name="Calculation Type") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+testplot
+# png(here::here('project-dat','figures',"TEST_groupedUD_pairwiseUD_BAoverlap_2013-18.png"),res=200,width=1500,height=1000)
+# testplot
+# dev.off()
+```
+
 

@@ -33,6 +33,7 @@ However, for the analysis as it stands, I am not going to apply any additional f
 # library(gridExtra)
 # library(tidyverse)
 # library(magrittr)
+# library(maps)
 # library(rgdal)
 # library(rgeos)
 # library(here)
@@ -44,15 +45,9 @@ library(rsample)
 library(adehabitatHR)
 
 
-## if having trouble with the bootstrapping section, re-start the R session, clear the environment, and hash these out before re-loading packages
-library(raster)
-library(maps)
-
-
 source(here('R','subset_vms.R'))
 source(here('R','create_vms_spdf.R'))
 source(here('R','bootstrapped_kerneloverlap.R'))
-source(here('R','kernelUD_to_dataframe.R'))
 
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -119,6 +114,109 @@ str(season_dates_df)
 ```
 <br>
 
+## Add a "group 5"
+
+In certain years, vessel groups 4-large and 3-large (the coastwide / mobile northern groups) have fewer than 3 vessels in the *VMS data.* I didn't catch this because there are more than 3 vessels in the fish ticket data. So those vessels that dropped out of the VMS data either didn't have VMS, or their trips got filtered out. 
+
+I still want to be able to look at 4-large and 3-large behavior, but for figures in the paper, I'm also probably going to need a non-confidential combination group.
+
+
+First extend the vessel group key to include "5-large" / group 5, and copy in drvids. 
+```{r}
+group5_vessels <- filter(vgroups,subgroup %in% c("3-large","4-large"))
+group5_vessels %<>% dplyr::select(-subgroup,-group,-area) %>%
+  mutate(subgroup="5-large", group=5,
+         area="central/northern")
+
+vgroups_ext <- bind_rows(vgroups,group5_vessels)
+unique(vgroups_ext$subgroup)
+```
+```{r}
+k <- k + 1
+```
+
+Then, create a truly non-confidential vessel group key by (1) marking subgroup/year combinations to remove from the VMS data...
+```{r}
+grouped.vms <- vgroups_ext %>% dplyr::select(crab_year,drvid,subgroup,group,vessel_size,area) %>%
+  rename(group_area=area) %>%
+  left_join(vms, by=c("drvid","crab_year"), multiple="all") %>%
+  filter(crab_year %in% crab_years) %>% 
+  dplyr::select(crab_year,drvid,subgroup,group,vessel_size,group_area,Rec_ID,date,removal_type_code,westcoastdate,X_COORD,Y_COORD,LATITUDE,LONGITUDE,season_start_date) %>%
+  filter(!is.na(Rec_ID))
+
+to_remove <- grouped.vms %>% group_by(subgroup,crab_year) %>% summarise(n.vessels=length(unique(drvid))) %>% filter(n.vessels < 3)
+```
+and (2) doing an anti-join with the grouped VMS dataset. 
+```{r}
+grouped.vms %<>% anti_join(to_remove,by=c("crab_year","subgroup"))
+```
+
+
+check that it worked!
+```{r} 
+grouped.vms %>% group_by(subgroup,crab_year) %>% summarise(n.vessels=length(unique(drvid))) %>% filter(n.vessels < 3)
+```
+
+
+
+In the key
+
+   subgroup crab_year ndrvid
+   <chr>        <dbl>  <int>
+ 1 3-large       2013      4
+ 2 3-large       2014      4
+ 3 3-large       2015      5
+ 4 3-large       2016      4
+ 5 3-large       2017      4
+ 6 3-large       2018      3
+ 7 4-large       2013      3
+ 8 4-large       2014      3
+ 9 4-large       2015      3
+10 4-large       2016      3
+11 4-large       2017      3
+12 4-large       2018      3
+
+In the vms data
+  subgroup crab_year ndrvid
+   <chr>        <dbl>  <int>
+ 1 3-large       2013      3
+ 2 3-large       2014      4
+ 3 3-large       2015      5
+
+ 5 3-large       2017      4
+
+ 8 4-large       2014      3
+ 9 4-large       2015      3
+
+11 4-large       2017      3
+12 4-large       2018      3
+
+New "group 5" in the vms data
+  subgroup crab_year n.vessels
+  <chr>        <dbl>     <int>
+1 5-large       2013         5
+2 5-large       2014         7
+3 5-large       2015         8
+4 5-large       2016         4
+5 5-large       2017         7
+6 5-large       2018         5
+
+```{r}
+## only for the first time through -- re-write groups key to be truly non-confidential
+vgroups_key_out <- grouped.vms %>%
+  dplyr::select(group,subgroup,crab_year,drvid,group_area,vessel_size) %>% 
+  distinct()
+sample_sizes_out <- vgroups_key_out %>%
+  group_by(group,subgroup,crab_year,group_area,vessel_size) %>%
+  summarise(n.vessels=length(unique(drvid)))
+
+write_csv(vgroups_key_out,file=here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
+
+write_csv(sample_sizes_out,file=here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_sample-sizes.csv'))
+```
+
+
+
 ## Create utilization distributions
 
 ### for each group
@@ -136,12 +234,12 @@ for(t in tfs){
     tmp.seasons %<>% filter(pcdistrict==t)
   }
   
-  tmp.vms <- subsetVMS(dat=vms, crab_years=crab_years, cut=t, seasons=tmp.seasons)
+  tmp.vms <- subsetVMS(dat=grouped.vms, crab_years=crab_years, cut=t, seasons=tmp.seasons)
   
   
-  for(g in unique(vgroups$subgroup)){
+  for(g in unique(vgroups_ext$subgroup)){
     # create spatial points data frame, with crab year as ID variable
-    g.vms <- create_groups_vms_spdf(dat=tmp.vms, crab_years=crab_years, group_id=g, list_by="year", clusters=vgroups)
+    g.vms <- create_groups_vms_spdf(dat=tmp.vms, crab_years=crab_years, group_id=g, list_by="year", clusters=vgroups_ext)
     g.vms.sp <- g.vms[[1]]
     ## save SPDF
     write_rds(g.vms.sp, here::here(outdir,paste0(g,"_SPDF_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs.rds")))
@@ -180,7 +278,7 @@ write_csv(sample_sizes,here(statdir,paste0('BAoverlap_byVessel_sample_sizes_',cr
 
 ### for each year
 these will be used for calculating overlap
-```{r eval=FALSE}
+```{r}
 ba.dat <- data.frame(group1=as.character(),
                      group2=as.character(),
                      crab_year=as.character(),
@@ -228,14 +326,6 @@ To bootstrap confidence intervals around the group overlaps, (1) use the `rsampl
 
 
 Last time, instead of using the bootstrapping function, I tried creating my own for loop to sample 75% of data points and then doing (2) and (3) above. This took forever to run. Let's hope I have more luck with R's built-in packages.
-```{r}
-grouped.vms <- vgroups %>% dplyr::select(crab_year,drvid,subgroup,group,vessel_size,area) %>%
-  rename(group_area=area) %>%
-  left_join(vms, by=c("drvid","crab_year"), multiple="all") %>%
-  filter(crab_year %in% crab_years) %>% 
-  dplyr::select(crab_year,drvid,subgroup,group,vessel_size,group_area,Rec_ID,date,removal_type_code,westcoastdate,X_COORD,Y_COORD,LATITUDE,LONGITUDE,season_start_date) %>%
-  filter(!is.na(Rec_ID))
-```
 
 ### re-sampling
 
@@ -249,19 +339,17 @@ From the **Tidymodels** documentation:
 ```{r}
 # all.start <- Sys.time()
 # for(t in tfs){
-  t <- "central"
+  t <- "northern"
   # filter VMS data
 # filter VMS data
 if(t != "annual"){
   tmp.seasons <- season_dates_df %>% filter(crab_year %in% crab_years) %>% filter(pcdistrict==t)
 } else{tmp.seasons <- season_dates_df}
 
-# tvms <- subsetVMS(dat=grouped.vms, crab_years=crab_years, cut=t, seasons=tmp.seasons)
 tvms <- subsetVMS(dat=grouped.vms, crab_years=crab_years, cut=t, seasons=tmp.seasons)
-k <- length(unique(tvms$group)) + 1
   
 timeframe.start <- Sys.time()
-for(y in c(2018)){
+for(y in crab_years){
   sstart <- Sys.time()
   ## filter for year
   yvms <- filter(tvms, crab_year==y)
@@ -305,33 +393,53 @@ Time difference of 3.350189 hours
 
 
 
-Turn list of lists into dataframe, using the custom function `kernelUD_to_dataframe`
-
+Turn list of lists into dataframe
 ```{r}
-tfs1 <- c("central")
-for(t in tfs1){
+ kernelUD_to_dataframe = function(x) {
+   x[lower.tri(x)] <- NA
+   out <- as.data.frame(x) %>%
+  rownames_to_column("group1") %>% pivot_longer(cols=2:(dim(x)[2]+1), names_to="group2",values_to="BAindex") %>%
+  filter(group1 != group2) %>% filter(!is.na(BAindex))
+   return(out)
+ }
+```
+```{r}
+
+for(t in tfs){
   # Read back in the lists of lists
   
   ba.boot <- list()
-  for(y in crab_years){
-    ba.boot <- append(ba.boot, readRDS(here('project-dat/vms/interpolation_60min/NaN_speed_filter/group90ud/bootstrapping',t,paste0('BAoverlap_',y,'crabyr_6clusters_',nboot,'bootstrapped.rds')))[2:(nboot+1)]) #only grab the bootstrapped data, not the starting data set
+  for(y in keep_years){
+    ba.boot <- append(ba.boot, readRDS(here('project-dat/vms/interpolation_60min/NaN_speed_filter/group90ud/bootstrapping',t,paste0('BAoverlap_',y,'crabyr_6clusters_1000bootstrapped.rds')))[2:1001])
   }
   length(ba.boot)
-  message('read in bootstrapping data for ',t,'...')
   
   ba.boot2 <- purrr::map(ba.boot, .f=kernelUD_to_dataframe)
-  names(ba.boot2) <- rep(crab_years,each=nboot) 
+  names(ba.boot2) <- rep(keep_years,each=nboots) 
   ba.boot.df <- data.table::rbindlist(ba.boot2, fill = TRUE, idcol = T)
   rm(ba.boot2,ba.boot)
   
   ## save
   write_csv(ba.boot.df, here(statdir,paste0('BAoverlap_bootstrapped_',crab_years[1],"-",substr(last(crab_years),3,4),'_',t,'.csv')))
   
-  message('saved bootstrapping data for ',t,'\n.')
-  
   
 }
 ```
+
+#### merged group 5
+```{r}
+grouped.vms <- vgroups_ext %>%
+  filter(group %in% c(1,2,5)) %>%
+  dplyr::select(crab_year,drvid,subgroup,group,vessel_size,area) %>%
+  rename(group_area=area) %>%
+  left_join(vms, by=c("drvid","crab_year"), multiple="all") %>%
+  filter(crab_year %in% crab_years) %>% 
+  dplyr::select(crab_year,drvid,subgroup,group,vessel_size,group_area,Rec_ID,date,removal_type_code,westcoastdate,X_COORD,Y_COORD,LATITUDE,LONGITUDE,season_start_date) %>%
+  filter(!is.na(Rec_ID))
+
+dim(vms); dim(grouped.vms)
+```
+
 
 
 ## Generate graphs for each vessel cluster, for each time frame (faceted by year)
@@ -346,10 +454,9 @@ states_df <- map_data("state") %>%
 
 Port Coordinates
 ```{r warning=FALSE}
-group_mean_coords <- read.csv(here::here('project-dat','pcgroup_mean_coordinates.csv'))
+setwd(here::here())
+group_mean_coords <- read.csv(here::here("../Networks/Participation_Networks/input_data","pcgroup_mean_coords.csv"))
 group_mean_coords[7,5:6] <- c(-121.6042,37.79039)
-
-pcgroup_df <- group_mean_coords
 
 pcgroup_df <- pcgroup_df %>%
   recode(`San Francisco`="S.F.") %>%
