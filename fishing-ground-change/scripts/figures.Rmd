@@ -8,10 +8,17 @@ output: html_document
 
 Create figures for main text.
 
-**Figure 3:** Which vessels exhibit the greatest mobility?
+**Figure 2:** Which vessels exhibit the greatest mobility?
 
   - Compare year-over-year Earth Mover's Distance for all large and small vessels
   - Compare year-over-year Earth Mover's Distance for vessel groups 
+  
+  
+**Figure 3:** Map the utilization distributions from each vessel group
+
+  - Small Local vessel groups
+  - Large Local vessel groups
+  - Cross-district pool (Coastwide + Mobile Northern)
 
 **Figure 4:** How does overlap between vessel groups change?
 
@@ -36,7 +43,13 @@ library(plotrix)
 library(janitor)
 library(PNWColors)
 
+library(maps)
+library(rgdal)
+library(rgeos)
+library(grid); library(gridExtra)
+
 source(here('R','getmode.R'))
+source(here('R/map_fishing_stacked_2sizes.R'))
 
 std.error=function(x) sd(x)/sqrt(length(x))
 ```
@@ -44,12 +57,34 @@ std.error=function(x) sd(x)/sqrt(length(x))
 User inputs
 ```{r}
 keep_years <- seq(2013,2018)
-nboots <- 1000
-statdir <- here('project-dat','statistics')
+statdir    <- here('project-dat','statistics')
+uddir      <- here('project-dat','vms','interpolation_60min','NaN_speed_filter','group90ud')
+metadir    <- here('project-dat')
+
+nboots   <- 1000  # re-sampling parameter
+k        <- 5   # number of clusters
+
+
+
+## change the resolution of the map figure
+png_res = 200 # suggested:200
+## offset of each coastline from the others; this should change with res
+offset = 2.5  # suggested:2.5
+## size of port group labels on maps; this should change with res
+pg_label_size = 4  # suggested:4
 ```
 
 
 ## Data
+
+port group points
+```{r}
+pg <- read.csv(here::here(metadir,'pcgroup_mean_coordinates.csv'))
+coordinates(pg) <- c("Lon", "Lat")
+proj4string(pg) <- CRS("+init=epsg:4326") # WGS 84
+pg_df <- as.data.frame(pg)
+```
+
 
 Vessel length keys
 ```{r}
@@ -61,6 +96,8 @@ Clustering groups
 vgroups <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
 
 vgroup_summary <- vgroups %>% dplyr::select(group,subgroup,group_area, vessel_size) %>% distinct()
+vgroup_annual_summary <- vgroups %>% dplyr::select(subgroup,group_area,vessel_size,crab_year) %>% 
+  distinct() %>% arrange(subgroup)
 ```
 
 
@@ -113,6 +150,23 @@ ba %<>% left_join(vgroup_summary %>% dplyr::select(-group),by=c("group1"="subgro
 ```
 
 
+90% Utilization Distributions, as rasters, saved into a list of lists. A list of rasters (by year) was saved for each vessel group from script `04b_vessel_group_overlap.Rmd`
+```{r}
+udlist <- list()
+for(i in seq(1,length(vgroup_summary$subgroup))){
+  g <- vgroup_summary$subgroup[i]
+  tmpuds <- readRDS(here(uddir,paste0(g,"_90ud_SpatialPolygonsGetVerticesHR_250grid_2013-18crabYrs.rds")))
+  udlist[[i]] <- tmpuds
+}
+
+names(udlist) <- vgroup_summary$subgroup
+```
+<br>
+
+
+## Figure 1
+
+
 ## Figure 2
 
 ### (a) size only
@@ -120,6 +174,8 @@ ba %<>% left_join(vgroup_summary %>% dplyr::select(-group),by=c("group1"="subgro
 ```{r}
 sig.lengths %<>% mutate(significance=ifelse(correct.pval<0.01,"**",significance))
 sig.lengths[6,"significance"] <- "**"
+sig.lengths$crab_years <- factor(sig.lengths$crab_years, levels=c("Overall", "2013_2014", "2014_2015", "2015_2016","2016_2017","2017_2018"))
+emd_means$crab_years <- factor(emd_means$crab_years, levels=c("Overall", "2013_2014", "2014_2015", "2015_2016","2016_2017","2017_2018"))
 ```
 
 ```{r}
@@ -194,7 +250,7 @@ dev.off()
 
 
 
-### (b) groups (3)
+### (b) groups (2+pool)
 
 some prep for plotting is needed.
 ```{r}
@@ -240,6 +296,52 @@ dev.off()
 ```
 <br>
 
+### groups (4+pool)
+
+some prep for plotting is needed.
+```{r}
+sig.groups <- sig.locals %>%
+   mutate(`Vessel Group`=ifelse(area=="northern","Northern",ifelse(area=="central","Central",area)),
+          `Vessel Size`=NA) %>%
+  mutate(y=sig.locals$y[1]-75)
+sig.groups$`Vessel Group` <- factor(sig.groups$`Vessel Group`,levels=c("Northern","Central","Coastwide"))
+sig.groups$crab_years <- factor(sig.groups$crab_years, levels=c("Overall", "2013_2014", "2014_2015", "2015_2016","2016_2017","2017_2018"))
+
+#plotdat
+plotdat <- emd_group_means_noncon %>%
+  mutate(`Vessel Group`=ifelse(subgroup=="3-large","Coastwide",
+                               ifelse(subgroup=="4-large","Mobile Northern",
+                                      ifelse(subgroup=="5-large","cross-district pool",`Vessel Group`))))
+plotdat$crab_years <- factor(plotdat$crab_years, levels=c("Overall",
+                                                          "2013_2014","2014_2015","2015_2016","2016_2017","2017_2018"))
+plotdat$`Vessel Group` <- factor(plotdat$`Vessel Group`, levels=c("Mobile Northern","Coastwide","cross-district pool","Northern","Central"))
+```
+```{r} 
+plot.gr3 <- 
+ggplot(plotdat, aes(x=crab_years,y=mean.emd/1000, col=`Vessel Size`)) +
+  geom_point(aes(pch=`Vessel Size`),size=2) +
+  facet_wrap(~`Vessel Group`,ncol=3) +
+  geom_errorbar(aes(pch=`Vessel Size`, ymin=(mean.emd-sd.emd)/1000,ymax=(mean.emd+sd.emd)/1000),width=0.25)+
+  geom_vline(xintercept=1.5, size=2) +
+  geom_text(data=sig.groups, aes(x=crab_years,y=y,label=significance),size=7,color="black") +
+  scale_color_manual(values=c(pnw_palette("Starfish",7)[c(1,4)],"black")) +
+  xlab("Crab Year Comparison") + ylab("") +
+  theme_bw() + theme(panel.grid.major.x=element_blank(),
+                     panel.grid.minor.x=element_blank(),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.5,size=13),
+                     axis.text.y=element_text(size=13),
+                     strip.text=element_text(size=16),
+                     axis.title=element_text(size=16),
+                     legend.title=element_text(size=16),
+                     legend.text=element_text(size=13))
+plot.gr3
+```
+
+```{r}
+png(here::here('project-dat','figures',"2013-18_EMDmeans_comboPLUScoastwide_noncon.png"),res=200,width=2500,height=1000)
+plot_grid(plot.all,plot.gr3,rel_widths=c(0.55,1),labels="auto")
+dev.off()
+```
 
 
 ## Supplement to Fig. 2: EMD Density per year
@@ -259,6 +361,73 @@ sfig
 dev.off()
 ```
 
+
+
+
+## Supplement to Fig. 2: Sample Size v. Std Err
+
+```{r}
+#plotdat
+plotdat <- emd_group_means_noncon %>%
+  mutate(`Vessel Group`=ifelse(subgroup=="3-large","Coastwide",
+                               ifelse(subgroup=="4-large","Mobile Northern",
+                                      ifelse(subgroup=="5-large","cross-district pool",
+                                             ifelse(group=="1","Local Central",
+                                                    ifelse(group=="2","Local Northern",`Vessel Group`))))))
+plotdat$crab_years <- factor(plotdat$crab_years, levels=c("Overall",
+                                                          "2013_2014","2014_2015","2015_2016","2016_2017","2017_2018"))
+plotdat$`Vessel Group` <- factor(plotdat$`Vessel Group`, levels=c("Mobile Northern","Coastwide","cross-district pool","Local Northern","Local Central"))
+
+suppfig <- ggplot(plotdat,aes(x=n.vessels,y=sd.emd, col=`Vessel Size`,pch=`Vessel Group`)) +
+  geom_point() +
+  scale_color_manual(values=c(pnw_palette("Starfish",7)[c(1,4)],"black")) +
+  ylab("EMD Std Error") + xlab("Number of Vessels in Group") + 
+  theme_bw() + theme(panel.grid.major.x=element_blank(),
+                     panel.grid.minor.x=element_blank(),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.5,size=13),
+                     axis.text.y=element_text(size=11),
+                     axis.title=element_text(size=13),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=11))
+suppfig
+png(here::here('project-dat','figures',"Supplement_2013-18_EMDstderrs_v_SampleSize.png"),res=200, width=1100,height=800)
+suppfig
+dev.off()
+```
+
+
+## Figure 3. Map UDs
+
+### map objects
+
+Create the basemap
+```{r}
+data(stateMapEnv)
+states_df <- map_data("state") %>%
+  filter(region %in% c("california"))
+states_df_sp <- states_df
+coordinates(states_df_sp) <- c("long", "lat")
+proj4string(states_df_sp) <- CRS("+init=epsg:4326") # WGS 84
+# states_geo <- spTransform(states_df_sp, CRS("+init=epsg:32610"))
+states_geo_df <- as.data.frame(states_df_sp)
+
+
+states_df_coast <- filter(states_df,long < -116) %>%
+  filter(!(long > -120 & lat > 32.5)) %>%
+  filter(!(long > -122.5 & lat > 38.5))
+```
+
+Check to make sure that the correct objects were read in above.
+```{r eval=FALSE}
+n_uds <- udlist$`2-small`
+y=2014
+nyr_ud <- n_uds[n_uds$id==y,]
+
+ggplot() +
+      geom_polygon(data=states_geo_df, aes(x=long, y=lat, group=group), fill="grey87",linetype=1) +
+      geom_point(data=pg_df, aes(x=Lon,y=Lat), color="black") +
+  geom_polygon(data=nyr_ud, aes(x=long,y=lat, group=group)) + ggtitle(y) + theme_void()
+```
 
 
 ## Figure 4. BA index
@@ -401,8 +570,15 @@ ba.boot.means <- ba.boot.df %>% filter(group1 != group2) %>%
 ba.boot.means %<>% left_join(vgroup_summary %>% dplyr::select(-group),by=c("group1"="subgroup")) %>%
   rename(group1_area=group_area,group1_size=vessel_size) %>%
   left_join(vgroup_summary %>% dplyr::select(-group),by=c("group2"="subgroup")) %>%
-  rename(group2_area=group_area,group2_size=vessel_size)
+  rename(group2_area=group_area,group2_size=vessel_size) %>%
+  mutate(group1_area=ifelse(group1=="5-large","cross-district",group1_area),
+         group2_area=ifelse(group2=="5-large","cross-district",group2_area))
 ```
+
+```{r}
+write_csv(ba.boot.means,file=here(statdir,paste0('meanBAoverlap_bootstrapped_',keep_years[1],"-",substr(last(keep_years),3,4),'_annual.csv')))
+```
+
 
 #### within areas
 ```{r}

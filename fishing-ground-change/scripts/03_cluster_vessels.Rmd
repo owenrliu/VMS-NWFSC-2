@@ -509,6 +509,8 @@ if(write){
 #write it out
 write.csv(plotdat,here::here(outdir,paste0(cluster_year,"_k",k,"clusters_area.csv")), row.names=FALSE)
 }
+
+plotdat <- read_csv(here::here(outdir,paste0(cluster_year,"_k",k,"clusters_area.csv")))
 ```
 <br>
 
@@ -523,7 +525,8 @@ plotdat_prop <- prop.table(as.matrix(plotdat.summary[,3:4]),margin=1) %>%
   bind_cols(dplyr::select(plotdat.summary,group,group_area)) %>%
   pivot_longer(cols=1:2,names_to="area")
 
-labeldat <- data.frame(x=0.75,y=seq(1,k),nv=(plotdat %>% group_by(group) %>% summarise(n.vessels=length(unique(vessels))))[,"n.vessels"])
+labeldat <- data.frame(x=0.75,y=seq(1,k),nv=(plotdat %>% group_by(group) %>% summarise(n.vessels=length(unique(vessels))))[,"n.vessels"]) %>%
+  mutate(x=ifelse(n.vessels==45,2.25,x))
 
 ggplot(data = plotdat_prop, aes(x = area, y = as.factor(group))) +
   geom_tile(aes(fill = value)) +
@@ -536,7 +539,8 @@ png(here(outdir,paste0(cluster_year,'group_heatmap_area-clustered.png')))
 ggplot(data = plotdat_prop, aes(x = area, y = as.factor(group))) +
   geom_tile(aes(fill = value)) +
   geom_text(data=labeldat,aes(x,y,label=n.vessels), size=4, color="grey30") +
-  scale_fill_gradient2() +
+  scale_fill_gradient2(name="Proportion\n Geolocations") +
+  xlab("Management Area") + ylab("Group ID") +
   theme(axis.text.y = element_text(size = 9)) + theme_bw()
 dev.off()
 }
@@ -741,8 +745,37 @@ write_csv(sample_sizes_out,file=here('project-dat','vessel_groups','k4_NaNspeedf
 ```
 
 
+Create a condensed heat map for specific groups
+```{r}
+plotdat.summary <- mydat_counts %>%
+  left_join(plotdat %>% dplyr::select(vessels,group,area) %>% rename("group_area"=area) ,by=c("drvid"="vessels"))%>%
+  group_by(group,group_area, area) %>%
+  summarise(groupVMS=sum(nvms)) %>%
+  pivot_wider(names_from=area,values_from=groupVMS, values_fill=0)
+plotdat_prop <- prop.table(as.matrix(plotdat.summary[,3:4]),margin=1) %>%
+  bind_cols(dplyr::select(plotdat.summary,group,group_area)) %>%
+  pivot_longer(cols=1:2,names_to="area")
 
+labeldat <- data.frame(x=0.75,y=seq(1,k),nv=(plotdat %>% group_by(group) %>% summarise(n.vessels=length(unique(vessels))))[,"n.vessels"]) %>%
+  mutate(x=ifelse(n.vessels==45,2.25,x))
 
+ggplot(data = plotdat_prop, aes(x = area, y = as.factor(group))) +
+  geom_tile(aes(fill = value)) +
+  geom_text(data=labeldat,aes(x,y,label=n.vessels), size=4, color="grey30") +
+  scale_fill_gradient2() +
+  theme(axis.text.y = element_text(size = 9)) + theme_bw()
+
+if(write){
+png(here(outdir,paste0(cluster_year,'group_heatmap_area-clustered.png')))
+ggplot(data = plotdat_prop, aes(x = area, y = as.factor(group))) +
+  geom_tile(aes(fill = value)) +
+  geom_text(data=labeldat,aes(x,y,label=n.vessels), size=4, color="grey30") +
+  scale_fill_gradient2(name="Proportion\n Geolocations") +
+  xlab("Management Area") + ylab("Group ID") +
+  theme(axis.text.y = element_text(size = 9)) + theme_bw()
+dev.off()
+}
+```
 
 
 

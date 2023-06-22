@@ -438,10 +438,40 @@ for(t in tfs){
 <br>
 
 
+## Basic correlation
+
+What is the distribution of BA indices?
+```{r fig.height=4, fig.width=4}
+ggplot(ba.boot.means,aes(x=BAmean)) + geom_histogram() + theme_bw()
+```
+
+There are five occurrences when `BAmean=0`. Remove these from the data.
+
+```{r fig.height=4, fig.width=4}
+ba.boot.means.n0 <- filter(ba.boot.means, BAmean!=0)
+ggplot(ba.boot.means.n0,aes(x=BAmean)) + geom_histogram() + theme_bw()
+```
 
 
 
 
+predictor variables: 
+- Nd=days of delay for northern management area
+- Cd=days of delay for central management area
+- V1=vessel group 1 
+- V2=vessel group 2 
+- H=heterogeneity in delays, within a management area?
+- Y=year
+
+```{r include=FALSE}
+him1e <- glm(ed ~ D*R+N, data = edata, family = quasibinomial('logit'))
+robust.se.him1e <- sqrt(diag(vcovHC(him1e , type="HC0")))
+coeftest(him1e, vcovHC(him1e , type="HC0"))
+
+him1l <- glm(ed ~ D*R+N, data = ldata, family = quasibinomial('logit'))
+robust.se.him1l <- sqrt(diag(vcovHC(him1l , type="HC0")))
+coeftest(him1l, vcovHC(him1l , type="HC0"))
+```
 
 
 
