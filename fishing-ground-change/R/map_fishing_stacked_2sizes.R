@@ -27,12 +27,12 @@ map_fishing_stacked2 <- function(north_uds,central_uds,key,keep_years,states_df_
         geom_polygon(data=n_uds, aes(x=long,y=lat, group=group), fill=north_fill,color=north_fill,alpha=0.3, size=0.5) +
         geom_polygon(data=fortify(c_uds), aes(x=long,y=lat, group=group), fill=central_fill,color=central_fill,alpha=0.3, size=0.5) +
         geom_text(data=pg_df, aes(x=Lon+j, y=Lat, label=port_group_label),size=4,
-                  nudge_x=c(1.5,1.3,1.7,1,1,1),nudge_y=c(0.25,rep(0,5)))
+                  nudge_x=c(1.2,1.1,1.6,1,1,0.8,1.4),nudge_y=c(0.25,rep(0,6)))
     }
   }
   
   # finalize plot area / theme
-  myplot <- myplot + theme_classic() +
+  myplot <- myplot + theme_void() +
     theme(plot.margin=margin(l=0,r=0.5,unit="cm"),
           plot.title = element_text(hjust=0.5))  +
     coord_fixed(xlim=c(-125,-120+j),ylim=c(34.2,43))

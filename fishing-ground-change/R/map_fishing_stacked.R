@@ -1,4 +1,4 @@
-map_fishing_stacked <- function(ud_list,key,keep_years,states_df_coast,offset=1.4,udcol=pnw_palette("Bay",n=5)[3],label_year=TRUE){
+map_fishing_stacked <- function(ud_list,key,keep_years,states_df_coast,offset=1.4,udcol=pnw_palette("Bay",n=5)[4],label_year=TRUE){
   myplot <- ggplot()
   j = 0
   for(i in seq(1,length(keep_years))){
@@ -13,7 +13,7 @@ map_fishing_stacked <- function(ud_list,key,keep_years,states_df_coast,offset=1.
       myplot <- myplot  +
         geom_path(data=new_coast,aes(x=long,y=lat,group=group),col="grey50") +
         geom_segment(aes(y=38.79, yend=38.79,x=-124,xend=-120), lty=3) +
-        geom_polygon(data=n_uds, aes(x=long,y=lat, group=group), fill=udcol,color=udcol,alpha=0.3, size=0.5)
+        geom_polygon(data=n_uds, aes(x=long,y=lat, group=group), fill=udcol,color=udcol,alpha=0.7, size=0.5)
       j = j + offset
     } else{
       myplot <- myplot  +
@@ -21,9 +21,9 @@ map_fishing_stacked <- function(ud_list,key,keep_years,states_df_coast,offset=1.
         geom_path(data=new_coast,aes(x=long,y=lat,group=group),col="grey50") +
         geom_point(data=pg_df, aes(x=Lon+j,y=Lat), color="black") +
         geom_segment(aes(y=38.79, yend=38.79,x=-124,xend=-120+j), lty=3) +
-        geom_polygon(data=n_uds, aes(x=long,y=lat, group=group), fill=udcol,color=udcol,alpha=0.3, size=0.5) +
+        geom_polygon(data=n_uds, aes(x=long,y=lat, group=group), fill=udcol,color=udcol,alpha=0.7, size=0.5) +
         geom_text(data=pg_df, aes(x=Lon+j, y=Lat, label=port_group_label),size=4,
-                  nudge_x=c(1.5,1.3,1.7,1,1,1),nudge_y=c(0.25,rep(0,5)))
+                  nudge_x=c(1.2,1.1,1.6,1,1,0.8,1.4),nudge_y=c(0.25,rep(0,6)))
     }
   }
   

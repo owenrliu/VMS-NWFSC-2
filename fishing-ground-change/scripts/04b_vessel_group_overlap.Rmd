@@ -145,7 +145,7 @@ for(ti in tfs){
     g.vms <- create_groups_vms_spdf(dat=tmp.vms, crab_years=crab_years, group_id=g, list_by="year", clusters=vgroups)
     g.vms.sp <- g.vms[[1]]
     ## save SPDF
-    write_rds(g.vms.sp, here::here(outdir,paste0(g,"_SPDF_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs.rds")))
+    write_rds(g.vms.sp, here::here(outdir,paste0(g,"_SPDF_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs_",ti,".rds")))
     ## save sample sizes
     sample_sizes %<>% bind_rows(g.vms[[2]] %>% mutate(crab_year=as.character(crab_year),timeframe=ti))
     rm(g.vms)
@@ -165,7 +165,7 @@ for(ti in tfs){
     }
     names(tmpout) <- tmpyrs
     # save the list(by year) of 90% UD rasters as an RDS
-    write_rds(tmpout, here::here(outdir,paste0(g,"_",p,"ud_RasterLayer_",kud_grid,"grid_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs.rds")))
+    write_rds(tmpout, here::here(outdir,paste0(g,"_",p,"ud_RasterLayer_",kud_grid,"grid_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs_",ti,".rds")))
     
     rm(tmpout, g.vms.sp)
   }
@@ -182,10 +182,10 @@ write_csv(sample_sizes,here(statdir,paste0('BAoverlap_byVessel_sample_sizes_',cr
 Oops - these are actually what I want for mapping.
 ```{r}
 for(g in unique(vgroups$subgroup)){
-  tmpsp <- readRDS(here::here(outdir,paste0(g,"_SPDF_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs.rds")))
+  tmpsp <- readRDS(here::here(outdir,paste0(g,"_SPDF_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs_annual.rds")))
   vms_ud <- kernelUD(tmpsp, grid=250, h=.06, same4all=TRUE)
   vms_udp <- getverticeshr(vms_ud, percent=p)
-  write_rds(vms_udp, file=here::here(outdir,paste0(g,"_",p,"ud_SpatialPolygonsGetVerticesHR_250grid_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs.rds")))
+  write_rds(vms_udp, file=here::here(outdir,paste0(g,"_",p,"ud_SpatialPolygonsGetVerticesHR_250grid_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs_annual.rds")))
 }
 ```
 

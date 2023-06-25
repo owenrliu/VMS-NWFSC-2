@@ -35,6 +35,8 @@
 **/*.html
 !scripts/process\ steps/post-process/QC_compare_processed_tix.html
 fishing-ground-change/project-dat/figures/QC/QC_map_ud_notes.docx
+fishing-ground-change/project-dat/figures/**2stack.png
+fishing-ground-change/project-dat/figures/**stacked.png
 
 ### R ###
 # History files

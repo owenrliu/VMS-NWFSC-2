@@ -1,0 +1,174 @@
+---
+title: 'QC: vessel representation'
+author: "M. Fisher"
+date: "6/23/2023"
+output: html_document
+---
+
+## Description
+
+Get some summary statistics of what vessels and fishing trips are / are not represented in the VMS data. Some of this script borrows from `vms_representation_index.Rmd` by Owen Liu.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(magrittr)
+library(here)
+library(grid); library(PNWColors)
+```
+
+
+User inputs
+```{r}
+keep_years <- seq(2013,2018)
+
+tixdir <- '../data/processed/fish tickets'
+vmsdir <- '../data/processed/matched/interpolation_60min'
+datdir <- 'project-dat/vms/interpolation_60min/NaN_speed_filter'
+
+```
+
+
+## Data
+
+The fish tickets
+```{r read_fishtix}
+for(y in c(keep_years, (last(keep_years)+1))){
+  tmpy <- y-1
+  tmptix <-  read_rds(here::here(tixdir,paste0(tmpy,'fishtix_vlengths.rds')))
+  if(y==(keep_years[1]-1)){
+    tix <- tmptix
+  } else{
+    tix %<>% bind_rows(tmptix)
+  }
+}
+
+str(tix)
+
+## add crab year, day of season, filter for ca commercial Dungeness crab landings
+tix %<>% filter(agency_code == "C") %>%
+  filter(TARGET_lbs == "DCRB") %>%
+  filter(removal_type_code=="C" | removal_type_code=="D" | removal_type_code=="U") %>%
+  # grab subset of columns
+  dplyr::select(Rec_ID,date, month, year, drvid, pacfin_port_code, port_group_code, agency_code, 
+                removal_type_code, removal_type_name, TARGET_lbs,
+                DCRB_lbs,DCRB_revenue,
+                FINAL_LENGTH) %>%
+  # add on crab season based on month of year, and filter
+  # mutate(date=as_date(date, c("ymd","mdy")),
+  #        year=year(date)) %>%
+  mutate(year=year(date)) %>%
+  mutate(crab_season=case_when(
+    month(date)>10 ~ paste0(year,"-",year+1),
+    month(date)<=10 ~ paste0(year-1,"-",year)),
+    crab_year=case_when(
+      month(date)>10 ~ year+1,
+      month(date)<=10 ~ year)) %>%
+  filter(crab_year %in% keep_years)
+```
+
+
+The interpolated VMS data
+```{r}
+for(y in c(keep_years, (last(keep_years)+1))){
+  tmpy <- y-1
+  tmpvms <-  read_rds(here::here(vmsdir,paste0(y,'interpolated.rds')))
+  if(y==(keep_years[1]-1)){
+    vms <- read_rds(here::here(vmsdir,paste0(y-1,"interpolated.rds"))) %>%
+      bind_rows(tmpvms)
+  } else{
+    vms %<>% bind_rows(tmpvms)
+  }
+}
+
+## add crab year, day of season; filter for california commercial Dungeness crab landings
+vms %<>% filter(agency_code == "C") %>%
+  filter(TARGET_lbs == "DCRB") %>%
+  filter(removal_type_code=="C" | removal_type_code=="D" | removal_type_code=="U") %>%
+  # grab subset of columns
+  dplyr::select(Rec_ID,date, pacfin_port_code, port_group_code, agency_code, 
+                removal_type_code, removal_type_name, TARGET_lbs,
+                VMS_RECNO,VESSEL_NAM,drvid,UTCDATETIM,westcoastdate,westcoastdate_notime,
+                X_COORD,Y_COORD, LATITUDE,LONGITUDE,NGDC_M,
+                AVG_SPEED,avg_speed_recalc,AVG_COURSE,DECLARATIO, in_port, is_interpolated,
+                DCRB_lbs,DCRB_revenue) %>%
+  # add on crab season based on month of year, and filter
+  # mutate(date=as_date(date, c("ymd","mdy")),
+  #        year=year(date)) %>%
+  mutate(year=year(date)) %>%
+  mutate(crab_season=case_when(
+    month(date)>10 ~ paste0(year,"-",year+1),
+    month(date)<=10 ~ paste0(year-1,"-",year)),
+    crab_year=case_when(
+      month(date)>10 ~ year+1,
+      month(date)<=10 ~ year)) %>%
+  filter(crab_year %in% keep_years)
+```
+
+
+The interpolated VMS data that was filtered for fishing locations
+```{r}
+for(y in keep_years){
+  tmpdat <- read_rds(here::here(datdir,paste0(y,'season_crabfishing.rds')))
+  if(y==keep_years[1]){dat <- tmpdat} else{dat %<>% bind_rows(tmpdat)}
+}
+```
+
+## Ex-vessel revenue
+
+What was the average ex-vessel revenue from commercial fishing trips targeting Dungeness crab, across the whole VMS data set?
+
+```{r}
+mean(vms$DCRB_revenue)
+sd(vms$DCRB_revenue)
+min(vms$DCRB_revenue)
+min(filter(vms,DCRB_revenue>0)$DCRB_revenue)
+```
+
+
+## Proportion of vessels / trips represented
+
+What proportion of California commercial Dungeness crab *fishing trips* are present in the **VMS** data, by year and overall?
+```{r} 
+vms_tickets <- dplyr::select(vms, Rec_ID, date, agency_code, drvid) %>% mutate(has_vms=1)
+tix2vms <- tix %>% left_join(vms_tickets) %>% 
+  mutate(has_vms=replace_na(has_vms,0))
+```
+```{r count trips}
+ntrips_by_year <- tix2vms %>% 
+  mutate(has_vms=ifelse(has_vms==0,"no_vms","has_vms")) %>%
+  group_by(crab_year,crab_season,agency_code,has_vms) %>% 
+  summarise(ntrips=n_distinct(Rec_ID)) %>%
+  pivot_wider(names_from=has_vms,values_from=ntrips) %>%
+  mutate(total_trips=has_vms+no_vms,
+         percent_vms=has_vms/total_trips*100)
+ntrips_by_year
+```
+
+
+What proportion of California commercial Dungeness crab *vessels* are present in the **VMS** data, by year and overall?
+```{r count vessels}
+nvessels_by_year <- tix2vms %>% 
+  mutate(has_vms=ifelse(has_vms==0,"no_vms","has_vms")) %>%
+  group_by(crab_year,crab_season,agency_code,has_vms) %>% 
+  summarise(nvessels=n_distinct(drvid)) %>%
+  pivot_wider(names_from=has_vms,values_from=nvessels) %>%
+  mutate(total_vessels=has_vms+no_vms,
+         percent_vms=has_vms/total_vessels*100)
+nvessels_by_year
+```
+
+
+
+What proportion of California commercial Dungeness crab *fishing trips* are present in the **fishing locations** data, by year and overall?
+```{r}
+```
+```{r count trips2}
+
+```
+
+
+
+
+

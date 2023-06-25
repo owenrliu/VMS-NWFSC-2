@@ -1,5 +1,5 @@
 ---
-title: "Mapping UDs"
+title: "Check Sensitivity of 90% UD Maps"
 author: "M. Fisher"
 date: "4/2/2023"
 output: html_document
@@ -7,7 +7,9 @@ output: html_document
 
 ## Description
 
-Map utilization distributions
+Figure 2 provides the 90% utilization distributions of vessel groups, by year. Since vessel fishing locations are confidential unless summarized to n=3 or more, we need to make sure that a particularly isolated part of the published utilization distribution is not wholly dependent on a single vessel. 
+
+For each vessel in the group, plot the utilization distribution with (e.g., what would be Figure 2) and without the vessel. If there is a significant change in the group UD without the vessel, Figure 2 may need to be adjusted.
 
 
 ```{r setup, include=FALSE}
@@ -21,7 +23,7 @@ library(rgeos)
 library(adehabitatHR)
 library(grid); library(PNWColors)
 
-source(here('R/map_fishing_stacked_2sizes.R'))
+source(here('R','map_fishing_stacked_2sizes.R'))
 source(here('R','create_vms_spdf.R'))
 ```
 
@@ -95,7 +97,8 @@ pg_df$port_group_label[which(pg_df$port_group_label=="San Francisco")] <- "\nSan
 
 vessel groups 
 ```{r}
-vgroups <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
+vgroups <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv')) %>%
+  filter(crab_year %in% keep_years)
 
 vgroup_summary <- vgroups %>% dplyr::select(group,subgroup,group_area, vessel_size) %>% distinct()
 vgroup_annual_summary <- vgroups %>% dplyr::select(subgroup,group_area,vessel_size,crab_year) %>% 
@@ -108,7 +111,7 @@ vgroup_annual_summary <- vgroups %>% dplyr::select(subgroup,group_area,vessel_si
 group_uds <- list()
 for(i in seq(1,length(vgroup_summary$subgroup))){
   g <- vgroup_summary$subgroup[i]
-  tmpuds <- readRDS(here(uddir,paste0(g,"_90ud_SpatialPolygonsGetVerticesHR_250grid_2013-18crabYrs.rds")))
+  tmpuds <- readRDS(here(uddir,paste0(g,"_90ud_SpatialPolygonsGetVerticesHR_250grid_2013-18crabYrs_annual.rds")))
   group_uds[[i]] <- tmpuds
 }
 
@@ -259,81 +262,34 @@ for(i in seq(1,length(vessels_sub))){
 ### cross-district pool
 
 
-
-
-
-
-
-
-
 ```{r}
-key_filter <- filter(vgroups_summary, subgroup %in% c("5-large"))
+g <- "5-large"
+key_sub <- filter(vgroups, subgroup == g)
+vessels_sub <- unique(key_sub$drvid)
+vms_sub <- filter(vms, (removal_type_code %in% c("C","D","U")) & (crab_year %in% keep_years) & (drvid %in% vessels_sub))
+dim(vms_sub)
 
-north_uds <- udlist[["5-large"]]
-# map_fishing_stacked <- function(north_uds,central_uds,key,keep_years,states_df_coast,label_year=TRUE){
-#   
-#   
-#   
-# }
-  
-  # prep to add to map
-  ncol=pnw_palette("Moth",n=7)[4]
-  
-  myplot_coast <- ggplot()
-  j = 0
-  for(i in seq(1,length(keep_years))){
-  yr <- as.numeric(keep_years[i])
-  n_uds <- north_uds[north_uds$id==yr,]
-  new_coast <- states_df_coast
-    if(i > 1){
-      n_uds <- fortify(n_uds) %>% mutate(long=long+j)
-      new_coast <- new_coast %>% mutate(long=long+j)
-    } 
-    if(i < length(keep_years)){
-      myplot_coast <- myplot_coast  +
-        geom_path(data=new_coast,aes(x=long,y=lat,group=group),col="grey50") +
-        geom_segment(aes(y=38.79, yend=38.79,x=-124,xend=-120), lty=3) +
-        geom_polygon(data=n_uds, aes(x=long,y=lat, group=group), fill=ncol,color=ncol,alpha=0.3, size=0.5)
-      j = j + offset
-    } else{
-    myplot_coast <- myplot_coast  +
-      geom_polygon(data=states_geo_df, aes(x=long+j, y=lat, group=group), fill="grey87",linetype=1) +
-      geom_path(data=new_coast,aes(x=long,y=lat,group=group),col="grey50") +
-    geom_point(data=pg_df, aes(x=Lon+j,y=Lat), color="black") +
-      geom_segment(aes(y=38.79, yend=38.79,x=-124,xend=-120+j), lty=3) +
-      geom_polygon(data=n_uds, aes(x=long,y=lat, group=group), fill=ncol,color=ncol,alpha=0.3, size=0.5) +
-      geom_text(data=pg_df, aes(x=Lon+j, y=Lat, label=port_group),size=pg_label_size,
-                nudge_x=c(1.5,1.3,1.7,1,1.1,1),nudge_y=c(0.25,rep(0,5)))
-    }
-  }
-  
-  # finalize plot area / theme
-  myplot_coast <- myplot_coast + theme_void() +
-    theme(legend.position="none",plot.margin=margin(l=0,r=0.5,unit="cm"),
-                         plot.title = element_text(hjust=0.5))  +
-        coord_fixed(xlim=c(-127,-120+j),ylim=c(33,43))
-  
-  if(label_year){
-    # data frame to label crab years
-    nyrs <- length(keep_years)
-    yrs_labels <- data.frame(yr = seq(as.numeric(first(keep_years)),as.numeric(last(keep_years)))) %>%
-      mutate(ymin=42.5,ymax=42.5) %>%
-      mutate(xmin=seq(-124, -124+((nyrs-1)*offset), by=offset),
-             xmax=xmin)
-    for(i in seq(1,nyrs)){
-      myplot_coast <- myplot_coast +  annotation_custom(grob = textGrob(label = yrs_labels$yr[i], hjust = 0, gp = gpar(cex = 1.2)),
-                                            ymin = yrs_labels$ymin[i], ymax = yrs_labels$ymax[i],
-                                            xmin = yrs_labels$xmin[i], xmax = yrs_labels$xmax[i])
-    }
-  } #end if(label_year)
+group_ud <- group_uds$`5-large`
 ```
 
 
-```{r}
-png(here::here('project-dat','figures',"change_90ud_annual_All_byRegion_stacked.png"),res=200,height=2000, width=1800)
-grid.arrange(grobs=list(myplot_sm,myplot_lg,myplot_coast),nrow=3)
-dev.off()
-```
+The dark blue on the map is the group's ud that is in the paper figure; the pink is the ud for the vessel.
 
+```{r}
+for(i in seq(1,length(vessels_sub))){
+  tmp_vessel <- vessels_sub[i]; print(tmp_vessel)
+  tmp_vms    <- filter(vms_sub, drvid != tmp_vessel)
+  message(dim(vms_sub)[1]-dim(tmp_vms)[1], " records removed out of ",dim(vms_sub)[1])
+  tmp_sp <- create_groups_vms_spdf(dat=tmp_vms, crab_years=keep_years, group_id=g, list_by="year", clusters=key_sub)[[1]]
+  vms_ud <- kernelUD(tmp_sp, grid=250, h=.06, same4all=TRUE)
+  vms_udp <- getverticeshr(vms_ud, percent=90)
+  
+  testplot <- map_fishing_stacked2(north_uds=group_ud,central_uds=vms_udp,key=key_sub,keep_years=keep_years,states_df_coast=states_df_coast,central_fill="pink")
+  png(here::here('project-dat','figures','QC',paste0("change_90ud_annual_LgCrossDistrict_stacked_rm",tmp_vessel,".png")),height=2000,width=1800,res=300)
+  print(testplot)
+  dev.off()
+  message("done.")
+}
+```
 
 
