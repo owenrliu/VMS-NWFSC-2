@@ -8,6 +8,10 @@ output: html_document
 
 Create figures for main text.
 
+**Figure 1:** cumulative landings by central / northern district for all study years
+
+  - Supplement: same graph for each vessel group
+
 **Figure 2:** Which vessels exhibit the greatest mobility?
 
   - Compare year-over-year Earth Mover's Distance for all large and small vessels
@@ -84,6 +88,15 @@ pg <- read.csv(here::here(metadir,'pcgroup_mean_coordinates.csv'))
 coordinates(pg) <- c("Lon", "Lat")
 proj4string(pg) <- CRS("+init=epsg:4326") # WGS 84
 pg_df <- as.data.frame(pg)
+```
+
+season start dates
+```{r}
+season_dates_df <- read_csv(here::here(metadir,"dcrb_season_starts.csv")) %>%
+  mutate(season_start_date=mdy(season_start_date),
+         season_end_date=ifelse(pcdistrict=="northern",paste0("7/15/",crab_year),
+                                paste0("6/30/",crab_year))) %>%
+  mutate(season_end_date=mdy(season_end_date))
 ```
 
 
@@ -166,6 +179,92 @@ names(udlist) <- vgroup_summary$subgroup
 
 
 ## Figure 1
+
+Read in fish tickets:
+```{r read_fishtix}
+for(y in c(keep_years, (last(keep_years)+1))){
+  tmpy <- y-1
+  tmptix <-  read_rds(here::here('../data','processed','fish tickets',paste0(tmpy,'fishtix_vlengths.rds')))
+  if(y==(keep_years[1]-1)){
+    tix <- tmptix
+  } else{
+    tix %<>% bind_rows(tmptix)
+  }
+}
+
+## add crab year, day of season, filter for ca commercial Dungeness crab landings
+tix %<>% filter(agency_code == "C") %>%
+  filter(TARGET_lbs == "DCRB") %>%
+  filter(removal_type_code=="C" | removal_type_code=="D" | removal_type_code=="U") %>%
+  # grab subset of columns
+  dplyr::select(Rec_ID,date, month, year, drvid, pacfin_port_code, port_group_code, agency_code, 
+                removal_type_code, removal_type_name, TARGET_lbs,
+                DCRB_lbs,DCRB_revenue,
+                FINAL_LENGTH) %>%
+  # add on crab season based on month of year, and filter
+  # mutate(date=as_date(date, c("ymd","mdy")),
+  #        year=year(date)) %>%
+  mutate(year=year(date)) %>%
+  mutate(crab_season=case_when(
+    month(date)>10 ~ paste0(year,"-",year+1),
+    month(date)<=10 ~ paste0(year-1,"-",year)),
+    crab_year=case_when(
+      month(date)>10 ~ year+1,
+      month(date)<=10 ~ year)) %>%
+  filter(crab_year %in% keep_years)
+```
+
+Remove the out-of-season landings, add the week of season
+```{r}
+tix %<>% mutate(region=ifelse(port_group_code %in% c("CCA","ERA","BGA"),"northern",
+                       ifelse(port_group_code %in% c("BDA","SFA","MNA","MRA"), "central", NA)),
+         woy=isoweek(date)) %>%
+  left_join(season_dates_df,by=c("crab_year","region"="pcdistrict"))
+
+subtix <- tix %>% filter(!is.na(region) & crab_year %in% keep_years) %>%
+  filter(time_length(interval(date,season_end_date),'days') >= 0) %>%
+  filter(!is.na(season_start_date)) %>%
+  mutate(timediff=season_start_date%--%date) %>% 
+  mutate(wos=time_length(timediff,'weeks')) %>% 
+  mutate(wos=floor(wos)) %>%
+  filter(wos>=0)
+```
+
+Get the cumulative sum of Dungeness crab landings by day of year
+```{r}
+subtix$woy <- factor(subtix$woy, levels=c(seq(46,53),seq(1,45)))
+                          
+weekly_dcrb <- subtix %>%
+  group_by(region,crab_year,woy) %>% 
+  summarise(weekly_DCRB_lbs=sum(DCRB_lbs)) %>%
+  group_by(region,crab_year) %>%
+  arrange(woy) %>%
+  mutate(cumul_DCRB_lbs=cumsum(weekly_DCRB_lbs))
+```
+```{r}
+plotdat <- weekly_dcrb
+# plotdat$woy <- as.factor(plotdat$woy)
+# plotdat$woy <- factor(plotdat$woy,levels=c(seq(46,53),seq(1,45)))
+fig1 <- plotdat %>%
+  mutate(region=ifelse(region=="central","Central","Northern")) %>%
+  ggplot(aes(x=woy,y=cumul_DCRB_lbs/10000, fill=region)) +
+  geom_col() +
+  scale_fill_manual(values=pnw_palette("Winter",2), name="") +
+  ylab("Cumulative Dungeness crab Landings (10k lbs)") + xlab("Week of Year") +
+  facet_grid(rows=vars(crab_year)) + theme_bw() +
+  theme(panel.grid.minor=element_blank(), panel.grid.major.x=element_blank(),
+        axis.text.x=element_text(family="sans",size=8,color="black",angle=90,hjust=1,vjust=0.5),
+        text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=12),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text.y=element_text(family="sans",size=8,color="black"))
+fig1
+```
+
+Save
+```{r}
+ggsave(here::here('project-dat','figures',paste0('Fig1_cumulativeDCRBlbs_',keep_years[1],'-',substr(last(keep_years),3,4),'_byregion.png')), fig1)
+```
 
 
 ## Figure 2
