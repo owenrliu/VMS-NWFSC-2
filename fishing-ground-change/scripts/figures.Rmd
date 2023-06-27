@@ -174,6 +174,20 @@ for(i in seq(1,length(vgroup_summary$subgroup))){
 }
 
 names(udlist) <- vgroup_summary$subgroup
+
+
+
+udlist2 <- list()
+for(i in c(2,4)){
+  g <- vgroup_summary$subgroup[i]
+  print(g)
+  tmpuds <- readRDS(here(uddir,paste0(g,"_90ud_SpatialPolygonsGetVerticesHR_250grid_2013-18crabYrs_annual_QCsub.rds")))
+  udlist2[[i]] <- tmpuds
+}
+
+names(udlist2) <- vgroup_summary$subgroup[c(2,4)]
+
+udlist2[[1]] <- vms_udp
 ```
 <br>
 
@@ -538,7 +552,7 @@ pg_df$port_group_label[which(pg_df$port_group_label=="San Francisco")] <- "\nSan
 
 Check to make sure that the correct objects were read in above.
 ```{r eval=FALSE}
-n_uds <- udlist$`2-small`
+n_uds <- udlist2$`1-small`
 y=2014
 nyr_ud <- n_uds[n_uds$id==y,]
 
@@ -614,6 +628,31 @@ Stack them all!
 ```{r}
 png(here::here('project-dat','figures',"change_90ud_annual_All_byRegion_stacked.png"),res=300,height=4000, width=1800)
 plot_grid(myplot_sm,myplot_lg,myplot_cd,nrow=3, labels=c("a","b","c"))
+dev.off()
+```
+
+
+
+
+
+Map small locals, according to QC
+```{r}
+key_filter <- filter(vgroup_summary, subgroup %in% c("1-small","2-small"))
+
+north_uds <- udlist2[["2-small"]]
+central_uds <- udlist2[["1-small"]]
+
+myplot_sm2 <- map_fishing_stacked2(north_uds=north_uds,central_uds=central_uds,key=key_filter,keep_years=keep_years,states_df_coast=states_df_coast)
+
+myplot_sm2 <- myplot_sm2  + annotate("rect",xmin=-125,xmax=-124.5,ymin=36,ymax=35.5,alpha=0.7,fill=pnw_palette("Bay",n=5)[1]) +
+  annotate("rect",xmin=-125,xmax=-124.5,ymin=34.9,ymax=35.4,alpha=0.7,fill=pnw_palette("Bay",n=5)[4]) +
+  annotate("text",x=-123.5,y=35.8,label="Local North") +
+  annotate("text",x=-123.38,y=35.2,label="Local Central")
+```
+
+```{r}
+png(here::here('project-dat','figures',"change_90ud_annual_SmLocal_byRegion_2stack_QCsub.png"),res=300, height=1500, width=1800)
+myplot_sm2
 dev.off()
 ```
 

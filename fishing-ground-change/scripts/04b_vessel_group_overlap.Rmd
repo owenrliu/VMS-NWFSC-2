@@ -190,6 +190,46 @@ for(g in unique(vgroups$subgroup)){
 ```
 
 
+### for each group - post QC
+Re-generate the mapping UDs from above, but without certain vessels / crab years identified in QC.
+
+First, read in the dataframe from manual QC and edit the groups dataframe. Then remove VMS data points according to the QC data.
+```{r}
+qc.dat <- read_csv(here('project-dat','map_qc_to_remove.csv'))
+vgroups_QCsub <- vgroups
+
+tmp.vms <- filter(vms, removal_type_code %in% c("C","D","U") & crab_year %in% crab_years)
+tmp.vms <- mutate(tmp.vms, position=ifelse(LATITUDE < 38.79, "below", "above"))
+tmp.vms <- anti_join(tmp.vms, dplyr::select(qc.dat,-subgroup), by=c("drvid","crab_year","position"))
+```
+
+Now re-generate the SPDFs and utilization distributions. These are all annual UDs, tagged as "QCsub" in the file names.
+```{r}
+sample_sizes_mapping <- data.frame(timeframe=as.character(),
+                           subgroup=as.character(),
+                           crab_year=as.character(),
+                           n.vessels=as.numeric(),
+                           n.trips=as.numeric())
+
+for(g in unique(vgroups_QCsub$subgroup)[c(2,4)]){
+  # create spatial points data frame, with crab year as ID variable
+  g.vms <- create_groups_vms_spdf(dat=tmp.vms, crab_years=crab_years, group_id=g, list_by="year", clusters=vgroups_QCsub)
+  g.vms.sp <- g.vms[[1]]
+  ## save SPDF
+  write_rds(g.vms.sp, here::here(outdir,paste0(g,"_SPDF_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs_annual_QCsub.rds")))
+  ## save sample sizes
+  sample_sizes_mapping %<>% bind_rows(g.vms[[2]] %>% mutate(crab_year=as.character(crab_year)))
+  rm(g.vms)
+  
+  vms_ud <- kernelUD(g.vms.sp, grid=250, h=.06, same4all=TRUE)
+  vms_udp <- getverticeshr(vms_ud, percent=p)
+  write_rds(vms_udp, file=here::here(outdir,paste0(g,"_",p,"ud_SpatialPolygonsGetVerticesHR_250grid_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs_annual_QCsub.rds")))
+  rm(tmpout, g.vms.sp, vms_udp,vms_ud)
+}
+```
+
+
+
 ### for each year
 these will be used for calculating overlap
 ```{r eval=FALSE}
