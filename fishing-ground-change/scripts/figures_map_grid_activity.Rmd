@@ -230,32 +230,122 @@ vms_by_grd_sf <- st_as_sf(vms_by_grd)
 ```
 
 ### plot n vms
+
+1 Small
+```{r}
+checkvms <- vms_by_grd_sf[vms_by_grd_sf$subgroup=="1-small" & !is.na(vms_by_grd_sf$GRID5KM_ID),]
+keep_years.a <- keep_years[which(keep_years %in% checkvms$crab_year)]
+
+myplot_list.a <- map_fishing_grid(vms_sf=vms_by_grd_sf, keep_group="1-small",
+                                keep_years=keep_years.a,
+                                states_df_coast=states_df_coast,
+                                max_vms=NA)
+```
+```{r}
+png(here::here('project-dat','figures',"change_5x5grid_annual_1Small.png"),res=300, height=1500, width=2000)
+plot_grid(plotlist=myplot_list.a,nrow=1,rel_widths=c(2,0.9,0.9,3.4), labels=c("a"))
+dev.off()
+```
+
+
+2 Small 
+```{r}
+checkvms <- vms_by_grd_sf[vms_by_grd_sf$subgroup=="2-small",]
+myplot_list.b <- map_fishing_grid(vms_sf=vms_by_grd_sf, keep_group="2-small",
+                                keep_years=keep_years,
+                                states_df_coast=states_df_coast,
+                                max_vms=2000)
+myplot_list.a <- myplot_list.a[which(!is.null(myplot_list.a))]
+```
+```{r}
+png(here::here('project-dat','figures',"change_5x5grid_annual_2Small.png"),res=300, height=1500, width=2500)
+plot_grid(plotlist=myplot_list.b,nrow=1,rel_widths=c(2,0.9,0.9,0.9,0.9,3.3), labels=c("b"))
+dev.off()
+```
+
+
+
+
 1 Large 
 ```{r}
 checkvms <- vms_by_grd_sf[vms_by_grd_sf$subgroup=="1-large",]
-myplot_list <- map_fishing_grid(vms_sf=vms_by_grd_sf, keep_group="1-large",
+myplot_list.c <- map_fishing_grid(vms_sf=vms_by_grd_sf, keep_group="1-large",
                                 keep_years=keep_years,
                                 states_df_coast=states_df_coast,
                                 max_vms=1000)
 ```
 
 ```{r}
-png(here::here('project-dat','figures',"change_5x5grid_annual_1Large.png"),res=300, height=1500, width=2800)
-plot_grid(plotlist=myplot_list,nrow=1,rel_widths=c(2,1,1,1,1,3.2))
+png(here::here('project-dat','figures',"change_5x5grid_annual_1Large.png"),res=300, height=1500, width=2500)
+plot_grid(plotlist=myplot_list.c,nrow=1,rel_widths=c(2,0.9,0.9,0.9,0.9,3.3), labels=c("c"))
 dev.off()
 ```
 
 2 Large
 ```{r}
-myplot_list <- map_fishing_grid(vms_sf=vms_by_grd_sf, keep_group="2-large",
+myplot_list.d <- map_fishing_grid(vms_sf=vms_by_grd_sf, keep_group="2-large",
                                 keep_years=keep_years,
                                 states_df_coast=states_df_coast,
                                 max_vms=1000)
 ```
 
 ```{r}
-png(here::here('project-dat','figures',"change_5x5grid_annual_2Large.png"),res=300, height=1500, width=2800)
-plot_grid(plotlist=myplot_list,nrow=1,rel_widths=c(2,1,1,1,1,3.2))
+png(here::here('project-dat','figures',"change_5x5grid_annual_2Large.png"),res=300, height=1500, width=2300)
+plot_grid(plotlist=myplot_list.d,nrow=1,rel_widths=c(1.6,0.8,0.8,0.8,0.8,3.3), labels=c("d"))
+dev.off()
+```
+
+
+5 Large
+```{r}
+myplot_list.e <- map_fishing_grid(vms_sf=vms_by_grd_sf, keep_group="5-large",
+                                keep_years=keep_years,
+                                states_df_coast=states_df_coast,
+                                max_vms=NA)
+```
+
+```{r}
+png(here::here('project-dat','figures',"change_5x5grid_annual_5Large.png"),res=300, height=1500, width=2300)
+plot_grid(plotlist=myplot_list.e,nrow=1,rel_widths=c(1.6,0.8,0.8,0.8,0.8,3.3), labels=c("e"))
+dev.off()
+```
+
+
+
+
+### plot n vms confidential
+```{r}
+vms_all_by_grd <- st_drop_geometry(vms_all_grd_match) %>%
+  as.data.frame() %>%
+  mutate(LATITUDE=st_coordinates(vms_all_grd_match_wgs84)[,2],
+         LONGITUDE=st_coordinates(vms_all_grd_match_wgs84)[,1]) %>%
+  group_by(crab_year,subgroup,vessel_size, GRID5KM_ID) %>%
+  summarise(n.vms=n(),
+            n.vessels=length(unique(drvid)))
+```
+
+```{r}
+grd_all_wgs84 <- grd_wgs84[grd_wgs84$GRID5KM_ID %in% vms_all_by_grd$GRID5KM_ID,]
+```
+
+```{r}
+vms_all_by_grd <- left_join(vms_all_by_grd, grd_all_wgs84,by="GRID5KM_ID")
+vms_all_by_grd_sf <- st_as_sf(vms_all_by_grd)
+```
+
+1 Small
+```{r}
+checkvms <- vms_all_by_grd_sf[vms_all_by_grd_sf$subgroup=="1-small" & !is.na(vms_all_by_grd_sf$GRID5KM_ID),]
+keep_years.a <- keep_years[which(keep_years %in% checkvms$crab_year)]
+
+myplot_list.a2 <- map_fishing_grid(vms_sf=vms_all_by_grd_sf, keep_group="1-small",
+                                keep_years=keep_years.a,
+                                states_df_coast=states_df_coast,
+                                max_vms=NA)
+```
+```{r}
+png(here::here('project-dat','figures',"change_5x5grid_annual_1Small_CONFIDENTIAL.png"),res=300, height=1500, width=2800)
+plot_grid(plotlist=myplot_list.a2,nrow=1,rel_widths=c(2,0.9,0.9,0.9,0.9,3.4), labels=c("a"))
 dev.off()
 ```
 

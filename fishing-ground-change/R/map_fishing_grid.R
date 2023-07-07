@@ -1,5 +1,5 @@
 map_fishing_grid <- function(vms_sf,keep_group,keep_years,states_df_coast,max_vms){
-  vms_sf <- vms_sf[vms_sf$subgroup==keep_group,]
+  vms_sf <- vms_sf[vms_sf$subgroup==keep_group & !is.na(vms_by_grd_sf$GRID5KM_ID),]
   if(!is.na(max_vms)){vms_sf <- vms_sf[vms_sf$n.vms < max_vms,]}
   myplot_list <- list()
   for(i in seq(1,length(keep_years))){
@@ -12,10 +12,10 @@ map_fishing_grid <- function(vms_sf,keep_group,keep_years,states_df_coast,max_vm
           geom_segment(aes(y=38.79, yend=38.79,x=-124.5,xend=-122), lty=3) +
           geom_point(data=pg_df, aes(x=Lon, y=Lat), color="black") +
           geom_sf(data=tmpvms_sf, aes(fill=n.vms), lwd=0, color=NA) + 
-          scale_fill_viridis_c(option="magma", direction=-1) +
+          scale_fill_viridis_c(option="magma", direction=-1, end=0.9) +
           ggtitle(yr) +
           theme_void() + 
-          theme(legend.position="none",plot.margin=margin(l=1,r=-2,unit="cm"),
+          theme(legend.position="none",plot.margin=margin(l=1,r=-3,unit="cm"),
                 plot.title = element_text(hjust=0.2,vjust=-5))
       } else{
       myplot <- ggplot()  +
@@ -23,10 +23,10 @@ map_fishing_grid <- function(vms_sf,keep_group,keep_years,states_df_coast,max_vm
         geom_segment(aes(y=38.79, yend=38.79,x=-124.5,xend=-122), lty=3) +
         geom_point(data=pg_df, aes(x=Lon, y=Lat), color="black") +
         geom_sf(data=tmpvms_sf, aes(fill=n.vms), lwd=0, color=NA) + 
-        scale_fill_viridis_c(option="magma", direction=-1) +
+        scale_fill_viridis_c(option="magma", direction=-1, end=0.9) +
         ggtitle(yr) +
         theme_void() + 
-        theme(legend.position="none",plot.margin=margin(l=-1,r=-2,unit="cm"),
+        theme(legend.position="none",plot.margin=margin(l=-2,r=-3,unit="cm"),
               plot.title = element_text(hjust=0.2,vjust=-5))
       }
     } else{
@@ -37,10 +37,10 @@ map_fishing_grid <- function(vms_sf,keep_group,keep_years,states_df_coast,max_vm
         geom_sf(data=tmpvms_sf, aes(fill=n.vms), lwd=0, color=NA) +
         geom_text(data=pg_df, aes(x=Lon, y=Lat, label=port_group_label),size=4,
                   nudge_x=c(1.2,1.1,1.6,1,1,0.8,1.4),nudge_y=c(0.25,rep(0,6))) + 
-        scale_fill_viridis_c(option="magma", direction=-1, name="VMS Density") +
+        scale_fill_viridis_c(option="magma", direction=-1, name="VMS Density", end=0.9) +
         ggtitle(yr) +
         theme_void() +
-        theme(plot.margin=margin(l=-1,r=1,unit="cm"),
+        theme(plot.margin=margin(l=-2,r=1,unit="cm"),
               plot.title = element_text(hjust=0.2,vjust=-5))
       myplot
     }
