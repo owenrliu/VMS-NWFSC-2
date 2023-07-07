@@ -18,7 +18,7 @@ Create figures for main text.
   - Compare year-over-year Earth Mover's Distance for vessel groups 
   
   
-**Figure 3:** Map the utilization distributions from each vessel group
+**Figure 3:** Map the utilization distributions from each vessel group **Replaced by gridded activity, see figures_mapgrid**
 
   - Small Local vessel groups
   - Large Local vessel groups
@@ -199,7 +199,7 @@ Read in fish tickets:
 for(y in c(keep_years, (last(keep_years)+1))){
   tmpy <- y-1
   tmptix <-  read_rds(here::here('../data','processed','fish tickets',paste0(tmpy,'fishtix_vlengths.rds')))
-  if(y==(keep_years[1]-1)){
+  if(y==(keep_years[1])){
     tix <- tmptix
   } else{
     tix %<>% bind_rows(tmptix)
@@ -236,10 +236,9 @@ tix %<>% mutate(region=ifelse(port_group_code %in% c("CCA","ERA","BGA"),"norther
   left_join(season_dates_df,by=c("crab_year","region"="pcdistrict"))
 
 subtix <- tix %>% filter(!is.na(region) & crab_year %in% keep_years) %>%
-  filter(time_length(interval(date,season_end_date),'days') >= 0) %>%
+  filter(difftime(season_end_date,date,units='days') >= 0) %>%
   filter(!is.na(season_start_date)) %>%
-  mutate(timediff=season_start_date%--%date) %>% 
-  mutate(wos=time_length(timediff,'weeks')) %>% 
+  mutate(wos=difftime(date,season_start_date,'weeks')) %>% 
   mutate(wos=floor(wos)) %>%
   filter(wos>=0)
 ```
@@ -295,8 +294,8 @@ emd_means$crab_years <- factor(emd_means$crab_years, levels=c("Overall", "2013_2
 ```{r}
 plot.all <- ggplot(emd_means, aes(x=crab_years,y=mean.emd/1000)) +
   geom_point(size=2, aes(col=vessel_size,pch=vessel_size)) +
-  geom_errorbar(aes(ymin=(mean.emd-sd.emd)/1000,ymax=(mean.emd+sd.emd)/1000,col=vessel_size,pch=vessel_size),width=0.25)+
-  geom_text(data=sig.lengths, aes(x=crab_years,y=y,label=significance),size=10) +
+  geom_errorbar(aes(ymin=(mean.emd-(2*sd.emd))/1000,ymax=(mean.emd+(2*sd.emd))/1000,col=vessel_size,pch=vessel_size),width=0.25)+
+  geom_text(data=sig.lengths, aes(x=crab_years,y=y+30,label=significance),size=10) +
   geom_vline(xintercept=1.5, size=2) +
   scale_color_manual(values=pnw_palette("Starfish",7)[c(1,4)]) +
   xlab("Crab Year Comparison") + ylab("Earth Mover's Distance (x1000)") +
@@ -339,7 +338,7 @@ plot.gr <-
 ggplot(plotdat, aes(x=crab_years,y=mean.emd/1000, col=`Vessel Size`)) +
   geom_point(aes(pch=`Vessel Size`),size=2) +
   facet_wrap(~`Vessel Group`) +
-  geom_errorbar(aes(pch=`Vessel Size`, ymin=(mean.emd-sd.emd)/1000,ymax=(mean.emd+sd.emd)/1000),width=0.25)+
+  geom_errorbar(aes(pch=`Vessel Size`, ymin=(mean.emd-(2*sd.emd))/1000,ymax=(mean.emd+(2*sd.emd))/1000),width=0.25)+
   geom_vline(xintercept=1.5, size=2) +
   geom_text(data=sig.groups, aes(x=crab_years,y=y,label=significance),size=7,color="black") +
   scale_color_manual(values=c(pnw_palette("Starfish",7)[c(1,4)],"black")) +
@@ -387,7 +386,7 @@ plot.gr2 <-
 ggplot(plotdat, aes(x=crab_years,y=mean.emd/1000, col=`Vessel Size`)) +
   geom_point(aes(pch=`Vessel Size`),size=2) +
   facet_wrap(~`Vessel Group`,ncol=2) +
-  geom_errorbar(aes(pch=`Vessel Size`, ymin=(mean.emd-sd.emd)/1000,ymax=(mean.emd+sd.emd)/1000),width=0.25)+
+  geom_errorbar(aes(pch=`Vessel Size`, ymin=(mean.emd-(2*sd.emd))/1000,ymax=(mean.emd+(2*sd.emd))/1000),width=0.25)+
   geom_vline(xintercept=1.5, size=2) +
   geom_text(data=sig.groups, aes(x=crab_years,y=y,label=significance),size=7,color="black") +
   scale_color_manual(values=c(pnw_palette("Starfish",7)[c(1,4)],"black")) +
@@ -435,7 +434,7 @@ plot.gr3 <-
 ggplot(plotdat, aes(x=crab_years,y=mean.emd/1000, col=`Vessel Size`)) +
   geom_point(aes(pch=`Vessel Size`),size=2) +
   facet_wrap(~`Vessel Group`,ncol=3) +
-  geom_errorbar(aes(pch=`Vessel Size`, ymin=(mean.emd-sd.emd)/1000,ymax=(mean.emd+sd.emd)/1000),width=0.25)+
+  geom_errorbar(aes(pch=`Vessel Size`, ymin=(mean.emd-(2*sd.emd))/1000,ymax=(mean.emd+(2*sd.emd))/1000),width=0.25)+
   geom_vline(xintercept=1.5, size=2) +
   geom_text(data=sig.groups, aes(x=crab_years,y=y,label=significance),size=7,color="black") +
   scale_color_manual(values=c(pnw_palette("Starfish",7)[c(1,4)],"black")) +
@@ -821,14 +820,18 @@ ba.boot.locals1b <- ba.boot.means %>%
   rename(group1=group2,group1_area=group2_area,group1_size=group2_size,
          group2=group1,group2_area=group1_area,group2_size=group1_size)
 
-ba.boot.locals1 %<>% bind_rows(ba.boot.locals1b)
+ba.boot.locals1 %<>% bind_rows(ba.boot.locals1b) %>%
+  mutate(group1_area=ifelse(group1_area=="northern","Northern",
+                            ifelse(group1_area=="central","Central",NA)),
+         group2_area=ifelse(group2_area=="northern","Northern",
+                            ifelse(group2_area=="central","Central",NA)))
 ```
 
 ```{r echo=FALSE}
 plot.local1boot <- ggplot(ba.boot.locals1,aes(x=as.factor(crab_year),y=BAmean,col=timeframe,pch=timeframe)) +
   geom_point() +
   geom_path(aes(group=timeframe)) +
-  geom_errorbar(aes(ymin=BAmean-BAsderr,ymax=BAmean-BAsderr),width=0.5) +
+  geom_errorbar(aes(ymin=BAmean-(2*BAsderr),ymax=BAmean-(2*BAsderr)),width=0.5) +
   facet_grid(cols=vars(group1_size,group1_area),rows=vars(group2_size,group2_area)) +
   ylim(c(0,1)) +
   xlab("Crab Year") +
@@ -852,14 +855,22 @@ ba.boot.locals2 <- ba.boot.means %>%
   filter((group1 %in% c("1-large","1-small")) & (group2 %in% c("2-large","2-small"))) %>%
   filter(group1_size ==group2_size) %>%
   mutate(timeframe=ifelse(timeframe=="annual","Full Year",
-                          ifelse(timeframe=="central","First 6w, Central","First 6w, North")))
+                          ifelse(timeframe=="central","First 6w, Central","First 6w, North"))) %>%
+  mutate(group1_area=ifelse(group1_area=="northern","Northern",
+                            ifelse(group1_area=="central","Central",NA)),
+         group2_area=ifelse(group2_area=="northern","Northern",
+                            ifelse(group2_area=="central","Central",NA)))
 
 ba.boot.locals2b <- ba.boot.means %>%
   filter((group2 %in% c("1-large","1-small")) & (group1 %in% c("2-large","2-small"))) %>%
   mutate(timeframe=ifelse(timeframe=="annual","Full Year",
                           ifelse(timeframe=="central","First 6w, Central","First 6w, North"))) %>%
   rename(group1=group2,group1_area=group2_area,group1_size=group2_size,
-         group2=group1,group2_area=group1_area,group2_size=group1_size)
+         group2=group1,group2_area=group1_area,group2_size=group1_size) %>%
+  mutate(group1_area=ifelse(group1_area=="northern","Northern",
+                            ifelse(group1_area=="central","Central",NA)),
+         group2_area=ifelse(group2_area=="northern","Northern",
+                            ifelse(group2_area=="central","Central",NA)))
 
 ```
 
@@ -867,7 +878,7 @@ ba.boot.locals2b <- ba.boot.means %>%
 plot.local2boot <- ggplot(ba.boot.locals2,aes(x=as.factor(crab_year),y=BAmean,col=timeframe,pch=timeframe)) +
   geom_point() +
   geom_path(aes(group=timeframe)) +
-  geom_errorbar(aes(ymin=BAmean-BAsderr,ymax=BAmean-BAsderr),width=0.5) +
+  geom_errorbar(aes(ymin=BAmean-(2*BAsderr),ymax=BAmean-(2*BAsderr)),width=0.5) +
   facet_grid(cols=vars(group1_size,group1_area),rows=vars(group2_size,group2_area)) +
   ylim(c(0,1)) +
   xlab("Crab Year") +
@@ -957,10 +968,18 @@ if(dim(ba.boot.contrast2)[1] > 0){
     ba.boot.contrast2 %<>%
   mutate(timeframe=ifelse(timeframe=="annual","Full Year",
                           ifelse(timeframe=="central","First 6w, Central","First 6w, North"))) %>%
-      bind_rows(ba.boot.contrast2b)
+      bind_rows(ba.boot.contrast2b)  %>%
+  mutate(group1_area=ifelse(group1_area=="northern","Northern",
+                            ifelse(group1_area=="central","Central","cross-district pool")),
+         group2_area=ifelse(group2_area=="northern","Northern",
+                            ifelse(group2_area=="central","Central","cross-district pool")))
   }
 } else if(dim(ba.boot.contrast2b)[1] > 0){
-  ba.boot.contrast2 <- ba.boot.contrast2b
+  ba.boot.contrast2 <- ba.boot.contrast2b  %>%
+  mutate(group1_area=ifelse(group1_area=="northern","Northern",
+                            ifelse(group1_area=="central","Central","cross-district pool")),
+         group2_area=ifelse(group2_area=="northern","Northern",
+                            ifelse(group2_area=="central","Central","cross-district pool")))
 }
 ```
 
@@ -968,7 +987,7 @@ if(dim(ba.boot.contrast2)[1] > 0){
 plot.contrast2boot <- ggplot(ba.boot.contrast2,aes(x=as.factor(crab_year),y=BAmean,col=timeframe,pch=timeframe)) +
   geom_point() +
   geom_path(aes(group=timeframe)) +
-  geom_errorbar(aes(ymin=BAmean-BAsderr,ymax=BAmean-BAsderr),width=0.5) +
+  geom_errorbar(aes(ymin=BAmean-(2*BAsderr),ymax=BAmean-(2*BAsderr)),width=0.5) +
   facet_grid(cols=vars(group2_size,group2_area),rows=vars(group1_size,group1_area)) +
   ylim(c(0,1)) +
   xlab("Crab Year") +
