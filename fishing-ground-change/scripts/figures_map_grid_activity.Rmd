@@ -11,6 +11,14 @@ Create Figure 3 for main text. Figure 3 will show fishing activity for (a) small
 
 This script is based on Owen Liu's `match_to_5x5_grid.Rmd` in github.com/owenrliu/VMS-NWFSC-2. 
 
+**TO DO: ** 
+
+- modify plotting function to use set color scale across all maps
+
+- create combined 1-small map (will need to manually set color scale across all grids) 
+
+- created maps of vessel counts
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
@@ -63,6 +71,12 @@ grd <- read_sf(here::here('../data','raw','grid','regions_master_final_lamb.shp'
 names(grd)
 ```
 
+
+10x10 grid shapefile
+```{r read_gridshp10}
+grd10 <- read_sf(here::here('../data','raw','grid','grid_10k','tenkm_grid_polys_shore_lamb_ClipLayer.shp'))
+names(grd10)
+```
 
 port group points
 ```{r}
@@ -120,8 +134,7 @@ states_df_coast <- filter(states_df,long < -116) %>%
 ggplot(data=states_df_coast, aes(x=long,y=lat,group=group)) + geom_path()
 ```
 
-
-## Match Points to Grid
+## Prep VMS Spatial Data
 
 get only VMS records for clustered vessels
 
@@ -143,7 +156,15 @@ vms_all_sf <- vms_sub %>%
 x<-proc.time()-pt
 ```
 
+
 Took `r round(x[3]/60,2)` minutes to do the conversion. Now for the join...
+
+
+
+## Match Points to Grid
+
+
+### 5x5km
 
 ```{r join to grid}
 pt <- proc.time()
@@ -158,14 +179,44 @@ The join took `r round(x[3]/60,2)` minutes.
 glimpse(vms_all_grd_match)
 ```
 
-conver to wsg
+convert to wsg
 ```{r}
 vms_all_grd_match_wgs84 <- st_transform(vms_all_grd_match, crs=st_crs(pg_as_sf))
 ```
 
+how many records didn't match to a grid cell?
+```{r}
+sum(is.na(vms_all_grd_match$GRID5KM_ID))/length(vms_all_grd_match$GRID5KM_ID)
+```
+
+### 10x10km
+
+```{r join to grid}
+pt <- proc.time()
+vms_all_grd10_match <- vms_all_sf %>%
+  st_join(grd10)
+x<-proc.time()-pt
+```
+
+The join took `r round(x[3]/60,2)` minutes.
+
+```{r}
+glimpse(vms_all_grd10_match)
+```
+
+convert to wsg
+```{r}
+vms_all_grd10_match_wgs84 <- st_transform(vms_all_grd10_match, crs=st_crs(pg_as_sf))
+```
+
+how many records didn't match to a grid cell?
+```{r}
+sum(is.na(vms_all_grd10_match$FID_))/length(vms_all_grd10_match$FID_)
+```
 
 ## Clear confidential grids
 
+### 5x5
 Calculate # vessels represented per group, crab year, and grid cell. Save any grids with fewer than three vessels.
 ```{r}
 vms_grd_confidential <- as.data.frame(vms_all_grd_match) %>%
@@ -186,12 +237,42 @@ dim(vms_all_grd_match)
 dim(vms_noncon_grd_match)
 ```
 
+
+### 10x10
+Calculate # vessels represented per group, crab year, and grid cell. Save any grids with fewer than three vessels.
+```{r}
+vms_grd10_confidential <- as.data.frame(vms_all_grd10_match) %>%
+  group_by(crab_year, subgroup, FID_) %>%
+  summarise(nvessels=length(unique(drvid))) %>%
+  filter(nvessels < 3)
+```
+
+Remove confidential grids from sf file
+```{r}
+vms_noncon_grd10_match <- st_drop_geometry(vms_all_grd10_match) %>%
+  as.data.frame() %>%
+  mutate(LATITUDE=st_coordinates(vms_all_grd10_match_wgs84)[,2],
+         LONGITUDE=st_coordinates(vms_all_grd10_match_wgs84)[,1]) %>%
+  anti_join(vms_grd10_confidential)
+
+dim(vms_all_grd10_match)
+dim(vms_noncon_grd10_match)
+```
+
+
+
 ### Save and Write
 
 ```{r}
 # non-spatial version
 vms_noncon_grd_match %>% 
   write_rds(here::here('project-dat','vessel_groups','vms_noncon_interpolated_k4groups_2014clusterYR_5x5grd.rds'))
+```
+
+```{r}
+# non-spatial version
+vms_noncon_grd10_match %>% 
+  write_rds(here::here('project-dat','vessel_groups','vms_noncon_interpolated_k4groups_2014clusterYR_10x10grd.rds'))
 ```
 
 ## Map
@@ -201,8 +282,8 @@ Let's test out a map for one year, one group, and compare the confidential / non
 g  <- "2-large"
 yr <- "2015"
 
-vms_noncon_grd_match_sf <- st_as_sf(vms_noncon_grd_match,coords=c('LONGITUDE','LATITUDE'),crs=4326)
-map1_dat <- vms_noncon_grd_match_sf %>% filter(subgroup==g & crab_year==yr)
+vms_noncon_grd10_match_sf <- st_as_sf(vms_noncon_grd10_match,coords=c('LONGITUDE','LATITUDE'),crs=4326)
+map1_dat <- vms_noncon_grd10_match_sf %>% filter(subgroup==g & crab_year==yr)
 
 ggplot() +
   geom_path(data=states_df_coast, aes(x=long,y=lat)) +
@@ -210,7 +291,9 @@ ggplot() +
   geom_sf(data=map1_dat)
 ```
 
-### grid values
+### 5x5km grid
+
+#### grid values
 
 ```{r}
 vms_by_grd <- vms_noncon_grd_match %>%
@@ -229,7 +312,7 @@ vms_by_grd <- left_join(vms_by_grd, grd_wgs84,by="GRID5KM_ID")
 vms_by_grd_sf <- st_as_sf(vms_by_grd)
 ```
 
-### plot n vms
+#### plot n vms
 
 1 Small
 ```{r}
@@ -310,7 +393,132 @@ plot_grid(plotlist=myplot_list.e,nrow=1,rel_widths=c(1.6,0.8,0.8,0.8,0.8,3.3), l
 dev.off()
 ```
 
+### 10x10km grid
 
+#### grid values
+
+```{r}
+vms_by_grd10 <- vms_noncon_grd10_match %>%
+  group_by(crab_year,subgroup,vessel_size, FID_) %>%
+  summarise(n.vms=n(),
+            n.vessels=length(unique(drvid)))
+```
+
+```{r}
+grd10_wgs84 <- st_transform(grd10,crs=4326)
+grd10_wgs84 <- grd10_wgs84[grd10_wgs84$FID_ %in% vms_by_grd10$FID_,]
+```
+
+```{r}
+vms_by_grd10 <- left_join(vms_by_grd10, grd10_wgs84,by="FID_")
+vms_by_grd10_sf <- st_as_sf(vms_by_grd10)
+```
+
+#### plot n vms
+
+1 Small
+```{r}
+checkvms <- vms_by_grd10_sf[vms_by_grd10_sf$subgroup=="1-small" & !is.na(vms_by_grd10_sf$FID_),]
+keep_years.a <- keep_years[which(keep_years %in% checkvms$crab_year)]
+
+myplot10_list.a <- map_fishing_grid10(vms_sf=vms_by_grd10_sf, keep_group="1-small",
+                                keep_years=keep_years.a,
+                                states_df_coast=states_df_coast,
+                                max_vms=NA)
+```
+```{r}
+png(here::here('project-dat','figures',"change_10x10grid_annual_1Small.png"),res=300, height=1500, width=2000)
+plot_grid(plotlist=myplot10_list.a,nrow=1,rel_widths=c(2,0.9,0.9,3.4), labels=c("a"))
+dev.off()
+```
+
+#### troubleshooting 1-small
+
+Where are the data points that weren't assigned a grid cell??
+```{r}
+g  <- "1-small"
+yr <- "2016"
+
+vms_noncon_grd10_match_sf <- st_as_sf(vms_noncon_grd10_match,coords=c('LONGITUDE','LATITUDE'),crs=4326)
+map1_dat <- vms_noncon_grd10_match_sf %>% filter(subgroup==g & crab_year==yr)
+
+ggplot() +
+  geom_path(data=states_df_coast, aes(x=long,y=lat)) +
+  geom_point(data=pg_df, aes(x=Lon, y=Lat), color="red") +
+  geom_sf(data=map1_dat, aes(color=FID_)) + facet_wrap(~drvid) +
+  coord_sf(ylim=c(37,39))
+```
+
+In 2016, there should be this many vessels in the 2-small group:
+```{r}
+vgroups %>% filter(subgroup=="1-small") %>%
+  group_by(crab_year) %>% summarize(nv=length(unique(drvid)))
+  
+```
+
+
+
+
+2 Small 
+```{r}
+checkvms <- vms_by_grd10_sf[vms_by_grd10_sf$subgroup=="2-small",]
+myplot10_list.b <- map_fishing_grid10(vms_sf=vms_by_grd10_sf, keep_group="2-small",
+                                keep_years=keep_years,
+                                states_df_coast=states_df_coast,
+                                max_vms=2000)
+myplot10_list.b <- myplot10_list.b[which(!is.null(myplot10_list.b))]
+```
+```{r}
+png(here::here('project-dat','figures',"change_10x10grid_annual_2Small.png"),res=300, height=1500, width=2500)
+plot_grid(plotlist=myplot10_list.b,nrow=1,rel_widths=c(2,0.9,0.9,0.9,0.9,3.3), labels=c("b"))
+dev.off()
+```
+
+
+
+1 Large 
+```{r}
+checkvms <- vms_by_grd10_sf[vms_by_grd10_sf$subgroup=="1-large",]
+myplot_list.c <- map_fishing_grid10(vms_sf=vms_by_grd10_sf, keep_group="1-large",
+                                keep_years=keep_years,
+                                states_df_coast=states_df_coast,
+                                max_vms=1000)
+```
+
+```{r}
+png(here::here('project-dat','figures',"change_10x10grid_annual_1Large.png"),res=300, height=1500, width=2500)
+plot_grid(plotlist=myplot_list.c,nrow=1,rel_widths=c(2,0.9,0.9,0.9,0.9,3.3), labels=c("c"))
+dev.off()
+```
+
+2 Large
+```{r}
+myplot_list.d <- map_fishing_grid10(vms_sf=vms_by_grd10_sf, keep_group="2-large",
+                                keep_years=keep_years,
+                                states_df_coast=states_df_coast,
+                                max_vms=1000)
+```
+
+```{r}
+png(here::here('project-dat','figures',"change_10x10grid_annual_2Large.png"),res=300, height=1500, width=2300)
+plot_grid(plotlist=myplot_list.d,nrow=1,rel_widths=c(1.6,0.8,0.8,0.8,0.8,3.3), labels=c("d"))
+dev.off()
+```
+
+
+5 Large
+```{r}
+myplot_list.e <- map_fishing_grid10(vms_sf=vms_by_grd10_sf, keep_group="5-large",
+                                keep_years=keep_years,
+                                states_df_coast=states_df_coast,
+                                max_vms=NA)
+```
+
+```{r}
+png(here::here('project-dat','figures',"change_10x10grid_annual_5Large.png"),res=300, height=1500, width=2300)
+plot_grid(plotlist=myplot_list.e,nrow=1,rel_widths=c(1.6,0.8,0.8,0.8,0.8,3.3), labels=c("e"))
+dev.off()
+```
 
 
 ### plot n vms confidential
@@ -348,4 +556,251 @@ png(here::here('project-dat','figures',"change_5x5grid_annual_1Small_CONFIDENTIA
 plot_grid(plotlist=myplot_list.a2,nrow=1,rel_widths=c(2,0.9,0.9,0.9,0.9,3.4), labels=c("a"))
 dev.off()
 ```
+
+
+
+## 15x15km
+
+Read in grid 
+```{r read_gridshp15}
+grd15 <- read_sf(here::here('../data','raw','grid','grid_15k','fifteenkm_grid_polys_shore_lamb_ClipLayer.shp'))
+names(grd15)
+```
+
+
+### Match Points to Grid
+```{r join to grid}
+pt <- proc.time()
+vms_all_grd15_match <- vms_all_sf %>%
+  st_join(grd15)
+x<-proc.time()-pt
+```
+
+The join took `r round(x[3]/60,2)` minutes.
+
+```{r}
+glimpse(vms_all_grd15_match)
+```
+
+convert to wsg
+```{r}
+vms_all_grd15_match_wgs84 <- st_transform(vms_all_grd15_match, crs=st_crs(pg_as_sf))
+```
+
+how many records didn't match to a grid cell?
+```{r}
+sum(is.na(vms_all_grd15_match$BLOCK15_ID))/length(vms_all_grd15_match$BLOCK15_ID)
+```
+### Clear Confidential grids
+Calculate # vessels represented per group, crab year, and grid cell. Save any grids with fewer than three vessels.
+```{r}
+vms_grd15_confidential <- as.data.frame(vms_all_grd15_match) %>%
+  group_by(crab_year, subgroup, BLOCK15_ID) %>%
+  summarise(nvessels=length(unique(drvid))) %>%
+  filter(nvessels < 3)
+```
+
+Remove confidential grids from sf file
+```{r}
+vms_noncon_grd15_match <- st_drop_geometry(vms_all_grd15_match) %>%
+  as.data.frame() %>%
+  mutate(LATITUDE=st_coordinates(vms_all_grd15_match_wgs84)[,2],
+         LONGITUDE=st_coordinates(vms_all_grd15_match_wgs84)[,1]) %>%
+  anti_join(vms_grd15_confidential)
+
+dim(vms_all_grd15_match)
+dim(vms_noncon_grd15_match)
+```
+### Map 1-small
+
+Calculate grid values
+```{r}
+vms_by_grd15 <- vms_noncon_grd15_match %>%
+  group_by(crab_year,subgroup,vessel_size, BLOCK15_ID) %>%
+  summarise(n.vms=n(),
+            n.vessels=length(unique(drvid)))
+```
+
+```{r}
+grd15_wgs84 <- st_transform(grd15,crs=4326)
+  grd15_wgs84 <- grd15_wgs84[grd15_wgs84$BLOCK15_ID %in% vms_by_grd15$BLOCK15_ID,]
+```
+
+```{r}
+vms_by_grd15 <- left_join(vms_by_grd15, grd15_wgs84,by="BLOCK15_ID")
+vms_by_grd15_sf <- st_as_sf(vms_by_grd15)
+```
+
+
+
+1 Small
+```{r}
+checkvms <- vms_by_grd15_sf[vms_by_grd15_sf$subgroup=="1-small" & !is.na(vms_by_grd15_sf$BLOCK15_ID),]
+keep_years.a <- keep_years[which(keep_years %in% checkvms$crab_year)]
+
+myplot15_list.a <- map_fishing_grid15(vms_sf=vms_by_grd15_sf, keep_group="1-small",
+                                keep_years=keep_years.a,
+                                states_df_coast=states_df_coast,
+                                max_vms=NA)
+```
+```{r}
+png(here::here('project-dat','figures',"change_15x15grid_annual_1Small.png"),res=300, height=1500, width=2200)
+plot_grid(plotlist=myplot15_list.a,nrow=1,rel_widths=c(2,0.9,0.9,0.9,3.4), labels=c("a"))
+dev.off()
+```
+
+
+
+## 100x100km
+
+Read in grid 
+```{r read_gridshp15}
+grd100 <- read_sf(here::here('../data','raw','grid','grid_100k','hunkm_grid_polys_shore_lamb_ClipLayer.shp'))
+names(grd100)
+```
+
+
+### Match Points to Grid
+```{r join to grid}
+pt <- proc.time()
+vms_all_grd100_match <- vms_all_sf %>%
+  st_join(grd100)
+x<-proc.time()-pt
+```
+
+The join took `r round(x[3]/60,2)` minutes.
+
+```{r}
+glimpse(vms_all_grd100_match)
+```
+
+convert to wsg
+```{r}
+vms_all_grd100_match_wgs84 <- st_transform(vms_all_grd100_match, crs=st_crs(pg_as_sf))
+```
+
+how many records didn't match to a grid cell?
+```{r}
+sum(is.na(vms_all_grd100_match$FID_))/length(vms_all_grd100_match$FID_)
+```
+### Clear Confidential grids
+Calculate # vessels represented per group, crab year, and grid cell. Save any grids with fewer than three vessels.
+```{r}
+vms_grd100_confidential <- as.data.frame(vms_all_grd100_match) %>%
+  group_by(crab_year, subgroup, FID_) %>%
+  summarise(nvessels=length(unique(drvid))) %>%
+  filter(nvessels < 3)
+```
+
+Remove confidential grids from sf file
+```{r}
+vms_noncon_grd100_match <- st_drop_geometry(vms_all_grd100_match) %>%
+  as.data.frame() %>%
+  mutate(LATITUDE=st_coordinates(vms_all_grd100_match_wgs84)[,2],
+         LONGITUDE=st_coordinates(vms_all_grd100_match_wgs84)[,1]) %>%
+  anti_join(vms_grd100_confidential)
+
+dim(vms_all_grd100_match)
+dim(vms_noncon_grd100_match)
+```
+### Map 1-small
+
+Calculate grid values
+```{r}
+vms_by_grd100 <- vms_noncon_grd100_match %>%
+  group_by(crab_year,subgroup,vessel_size, FID_) %>%
+  summarise(n.vms=n(),
+            n.vessels=length(unique(drvid)))
+```
+
+```{r}
+grd100_wgs84 <- st_transform(grd100,crs=4326)
+  grd100_wgs84 <- grd100_wgs84[grd100_wgs84$FID_ %in% vms_by_grd100$FID_,]
+```
+
+```{r}
+vms_by_grd100 <- left_join(vms_by_grd100, grd100_wgs84,by="FID_")
+vms_by_grd100_sf <- st_as_sf(vms_by_grd100)
+```
+
+
+
+1 Small
+```{r}
+checkvms <- vms_by_grd100_sf[vms_by_grd100_sf$subgroup=="1-small" & !is.na(vms_by_grd100_sf$FID_),]
+keep_years.a <- keep_years[which(keep_years %in% checkvms$crab_year)]
+
+myplot100_list.a <- map_fishing_grid10(vms_sf=vms_by_grd100_sf, keep_group="1-small",
+                                keep_years=keep_years.a,
+                                states_df_coast=states_df_coast,
+                                max_vms=NA)
+```
+```{r}
+png(here::here('project-dat','figures',"change_100x100grid_annual_1Small.png"),res=300, height=1500, width=2700)
+plot_grid(plotlist=myplot100_list.a,nrow=1,rel_widths=c(2,0.9,0.9,0.9,0.9,3.5), labels=c("a"))
+dev.off()
+```
+
+
+)
+```
+### Clear Confidential grids
+Calculate # vessels represented per group, crab year, and grid cell. Save any grids with fewer than three vessels.
+```{r}
+vms_grd15_confidential <- as.data.frame(vms_all_grd15_match) %>%
+  group_by(crab_year, subgroup, BLOCK15_ID) %>%
+  summarise(nvessels=length(unique(drvid))) %>%
+  filter(nvessels < 3)
+```
+
+Remove confidential grids from sf file
+```{r}
+vms_noncon_grd15_match <- st_drop_geometry(vms_all_grd15_match) %>%
+  as.data.frame() %>%
+  mutate(LATITUDE=st_coordinates(vms_all_grd15_match_wgs84)[,2],
+         LONGITUDE=st_coordinates(vms_all_grd15_match_wgs84)[,1]) %>%
+  anti_join(vms_grd15_confidential)
+
+dim(vms_all_grd15_match)
+dim(vms_noncon_grd15_match)
+```
+### Map 1-small
+
+Calculate grid values
+```{r}
+vms_by_grd15 <- vms_noncon_grd15_match %>%
+  group_by(crab_year,subgroup,vessel_size, BLOCK15_ID) %>%
+  summarise(n.vms=n(),
+            n.vessels=length(unique(drvid)))
+```
+
+```{r}
+grd15_wgs84 <- st_transform(grd15,crs=4326)
+  grd15_wgs84 <- grd15_wgs84[grd15_wgs84$BLOCK15_ID %in% vms_by_grd15$BLOCK15_ID,]
+```
+
+```{r}
+vms_by_grd15 <- left_join(vms_by_grd15, grd15_wgs84,by="BLOCK15_ID")
+vms_by_grd15_sf <- st_as_sf(vms_by_grd15)
+```
+
+
+
+1 Small
+```{r}
+checkvms <- vms_by_grd15_sf[vms_by_grd15_sf$subgroup=="1-small" & !is.na(vms_by_grd15_sf$BLOCK15_ID),]
+keep_years.a <- keep_years[which(keep_years %in% checkvms$crab_year)]
+
+myplot15_list.a <- map_fishing_grid15(vms_sf=vms_by_grd15_sf, keep_group="1-small",
+                                keep_years=keep_years.a,
+                                states_df_coast=states_df_coast,
+                                max_vms=NA)
+```
+```{r}
+png(here::here('project-dat','figures',"change_15x15grid_annual_1Small.png"),res=300, height=1500, width=2200)
+plot_grid(plotlist=myplot15_list.a,nrow=1,rel_widths=c(2,0.9,0.9,0.9,3.4), labels=c("a"))
+dev.off()
+```
+
+
 
