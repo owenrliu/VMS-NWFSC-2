@@ -28,6 +28,7 @@ library(sf)
 library(here)
 library(knitr)
 library(cowplot)
+library(ggrepel)
 
 source(here('R','map_fishing_grid.R'))
 source(here('R','map_fishing_grid10.R'))
@@ -603,6 +604,134 @@ dev.off()
 
 2016 & 2018 use 100km cells, or 15km if they work. All others use 10km grid
 
+```{r}
+vms_by_grd10 <- read_rds(here::here('project-dat','vessel_groups','vms_noncon_interpolated_k4groups_2014clusterYR_10x10grd_summary.rds'))
+
+vms_by_grd100 <- read_rds(here::here('project-dat','vessel_groups','vms_noncon_interpolated_k4groups_2014clusterYR_100x100grd_summary.rds'))
+```
+
+
+```{r}
+grd10_wgs84 <- st_transform(grd10,crs=4326)
+grd10_wgs84 <- grd10_wgs84[grd10_wgs84$FID_ %in% vms_by_grd10$FID_,]
+```
+
+```{r}
+vms_by_grd10 <- left_join(vms_by_grd10, grd10_wgs84,by="FID_")
+vms_by_grd10_sf <- st_as_sf(vms_by_grd10)
+```
+
+
+Subset each data set and get max/min overall
+```{r}
+subvms10 <- vms_by_grd10_sf[vms_by_grd10_sf$crab_year %in% c(2013,2014,2015,2017),]
+subvms10 <- subvms10[subvms10$subgroup=="1-small",]
+subvms10 <- subvms10[!is.na(subvms10$FID_),]
+
+subvms100 <- vms_by_grd100_sf[vms_by_grd100_sf$crab_year %in% c(2016,2018),]
+subvms100 <- subvms100[subvms100$subgroup=="1-small",]
+subvms100 <- subvms100[!is.na(subvms100$FID_),]
+
+tmpmax <- max(subvms100$n.vms,subvms10$n.vms); tmpmin <- min(subvms100$n.vms,subvms10$n.vms)
+```
+
+
+
+Map 10x10km
+```{r}
+myplot10_list.a <- map_fishing_grid10(vms_sf=subvms10, keep_group="1-small",
+                                keep_years=c(2013,2014,2015,2017),
+                                states_df_coast=states_df_coast,
+                                vms_scale_max=tmpmax,vms_scale_min=tmpmin,
+                                max_vms=20000,print.legend=FALSE)
+
+names(myplot10_list.a) <- c(2013,2014,2015,2017)
+```
+
+
+Map 100x100km
+```{r}
+myplot100_list.a <- map_fishing_grid10(vms_sf=subvms100, keep_group="1-small",
+                                keep_years=c(2016,2018),
+                                states_df_coast=states_df_coast,
+                                vms_scale_max=tmpmax,vms_scale_min=tmpmin,
+                                max_vms=20000,subset=TRUE)
+
+names(myplot100_list.a) <- c(2016,2018)
+```
+
+
+combine and print
+```{r}
+myplotOUT_list.a <- list(myplot10_list.a[["2013"]],myplot10_list.a[["2014"]],myplot10_list.a[["2015"]],
+                         myplot100_list.a[["2016"]],myplot10_list.a[["2017"]],myplot100_list.a[["2018"]])
+```
+
+```{r}
+png(here::here('project-dat','figures',"change_CUSTOMgrid_annual_1Small.png"),res=300, height=1500, width=2550)
+plot_grid(plotlist=myplotOUT_list.a,nrow=1,rel_widths=c(1.4,0.8,0.8,0.8,0.8,3), labels=c("a"))
+dev.off()
+```
+## 5-large
+
+### Final Map
+2014,2015,2018 10x10km
+
+2013,2016,2017 15x15km for now, but worth testing 25x25km to better capture northern district fishing in 2013,2017 and central district fishing in 2016. 
+
+Subset each data set and get max/min overall
+```{r}
+subvms10 <- vms_by_grd10_sf[vms_by_grd10_sf$crab_year %in% c(2014,2015,2018),]
+subvms10 <- subvms10[subvms10$subgroup=="5-large",]
+subvms10 <- subvms10[!is.na(subvms10$FID_),]
+
+subvms15 <- vms_by_grd15_sf[vms_by_grd15_sf$crab_year %in% c(2013,2016,2017),]
+subvms15 <- subvms15[subvms15$subgroup=="5-large",]
+subvms15 <- subvms15[!is.na(subvms15$BLOCK15_ID),]
+
+tmpmax <- max(subvms10$n.vms,subvms15$n.vms); tmpmin <- min(subvms15$n.vms,subvms10$n.vms)
+```
+
+
+
+Map 10x10km
+```{r}
+myplot10_list.e <- map_fishing_grid10(vms_sf=subvms10, keep_group="5-large",
+                                keep_years=c(2014,2015,2018),
+                                states_df_coast=states_df_coast,
+                                vms_scale_max=tmpmax,vms_scale_min=tmpmin,
+                                max_vms=20000,subset=TRUE)
+
+names(myplot10_list.e) <- c(2014,2015,2018)
+```
+
+
+Map 15x15km
+```{r}
+myplot15_list.e <- map_fishing_grid15(vms_sf=subvms15, keep_group="5-large",
+                                keep_years=c(2013,2016,2017),
+                                states_df_coast=states_df_coast,
+                                vms_scale_max=tmpmax,vms_scale_min=tmpmin,
+                                max_vms=20000,print.legend=FALSE)
+
+names(myplot15_list.e) <- c(2013,2016,2017)
+```
+
+
+combine and print
+```{r}
+myplotOUT_list.e <- list(myplot15_list.e[["2013"]],myplot10_list.e[["2014"]],myplot10_list.e[["2015"]],
+                         myplot15_list.e[["2016"]],myplot15_list.e[["2017"]],myplot10_list.e[["2018"]])
+```
+
+```{r}
+png(here::here('project-dat','figures',"change_CUSTOMgrid_annual_5Large.png"),res=300, height=1500, width=2550)
+plot_grid(plotlist=myplotOUT_list.e,nrow=1,rel_widths=c(1.6,0.8,0.8,0.8,0.8,3), labels=c("e"))
+dev.off()
+```
+
+
+
 
 
 ### Test: 15x15km
@@ -659,6 +788,13 @@ dim(vms_all_grd15_match)
 dim(vms_noncon_grd15_match)
 ```
 
+```{r}
+# non-spatial version
+vms_noncon_grd15_match %>% 
+  write_rds(here::here('project-dat','vessel_groups','vms_noncon_interpolated_k4groups_2014clusterYR_15x15grd.rds'))
+```
+
+
 #### Map
 
 Calculate grid values
@@ -679,6 +815,7 @@ vms_by_grd15 <- left_join(vms_by_grd15, grd15_wgs84,by="BLOCK15_ID")
 vms_by_grd15_sf <- st_as_sf(vms_by_grd15)
 ```
 
+1 - small
 
 ```{r}
 checkvms <- vms_by_grd15_sf[vms_by_grd15_sf$subgroup=="1-small" & !is.na(vms_by_grd15_sf$BLOCK15_ID),]
@@ -692,6 +829,23 @@ myplot15_list.a <- map_fishing_grid15(vms_sf=vms_by_grd15_sf, keep_group="1-smal
 ```{r}
 png(here::here('project-dat','figures',"change_15x15grid_annual_1Small.png"),res=300, height=1500, width=2200)
 plot_grid(plotlist=myplot15_list.a,nrow=1,rel_widths=c(2,0.9,0.9,0.9,3.4), labels=c("a"))
+dev.off()
+```
+
+
+5 - large
+```{r}
+checkvms <- vms_by_grd15_sf[vms_by_grd15_sf$subgroup=="5-large" & !is.na(vms_by_grd15_sf$BLOCK15_ID),]
+keep_years.a <- keep_years[which(keep_years %in% checkvms$crab_year)]
+
+myplot15_list.e <- map_fishing_grid15(vms_sf=vms_by_grd15_sf, keep_group="5-large",
+                                keep_years=keep_years.a,
+                                states_df_coast=states_df_coast,
+                                max_vms=NA)
+```
+```{r}
+png(here::here('project-dat','figures',"change_15x15grid_annual_5Large.png"),res=300, height=1500, width=2600)
+plot_grid(plotlist=myplot15_list.e,nrow=1,rel_widths=c(2,0.9,0.9,0.9,0.9,3.4), labels=c("e"))
 dev.off()
 ```
 
@@ -751,6 +905,13 @@ dim(vms_all_grd100_match)
 dim(vms_noncon_grd100_match)
 ```
 
+```{r}
+# non-spatial version
+vms_noncon_grd100_match %>% 
+  write_rds(here::here('project-dat','vessel_groups','vms_noncon_interpolated_k4groups_2014clusterYR_100x100grd.rds'))
+```
+
+
 #### Map
 
 Calculate grid values
@@ -788,10 +949,21 @@ plot_grid(plotlist=myplot100_list.a,nrow=1,rel_widths=c(2,0.9,0.9,0.9,0.9,3.5), 
 dev.off()
 ```
 
+5 Large
+```{r}
+checkvms <- vms_by_grd100_sf[vms_by_grd100_sf$subgroup=="5-large" & !is.na(vms_by_grd100_sf$FID_),]
+keep_years.a <- keep_years[which(keep_years %in% checkvms$crab_year)]
+
+myplot100_list.e <- map_fishing_grid10(vms_sf=vms_by_grd100_sf, keep_group="5-large",
+                                keep_years=keep_years.a,
+                                states_df_coast=states_df_coast,
+                                max_vms=NA)
+```
+```{r}
+png(here::here('project-dat','figures',"change_100x100grid_annual_5Large.png"),res=300, height=1500, width=2700)
+plot_grid(plotlist=myplot100_list.e,nrow=1,rel_widths=c(2,0.9,0.9,0.9,0.9,3.5), labels=c("a"))
+dev.off()
+```
 
 
-## 5-large
 
-### Final Map
-
-2013 and 2016 use larger grid sizes?
