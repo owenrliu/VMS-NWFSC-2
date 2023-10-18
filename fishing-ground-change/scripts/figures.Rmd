@@ -69,14 +69,15 @@ metadir    <- here('project-dat')
 nboots   <- 1000  # re-sampling parameter
 k        <- 5   # number of clusters
 
-
+## save figures / intermediate data files?
+writing  <- TRUE
 
 ## change the resolution of the map figure
-png_res = 200 # suggested:200
+png_res  <-  200 # suggested:200
 ## offset of each coastline from the others; this should change with res
-offset = 2.5  # suggested:2.5
+offset   <- 2.5  # suggested:2.5
 ## size of port group labels on maps; this should change with res
-pg_label_size = 4  # suggested:4
+pg_label_size <- 4  # suggested:4
 ```
 
 
@@ -656,9 +657,8 @@ dev.off()
 ```
 
 
-## Figure 4. BA index
+## Figures 4-5. BA index
 
-### Bootstrapped error
 ```{r}
 ba.boot.means <- ba.boot.df %>% filter(group1 != group2) %>% 
   rename("crab_year"=.id) %>% 
@@ -679,17 +679,17 @@ write_csv(ba.boot.means,file=here(statdir,paste0('meanBAoverlap_bootstrapped_',k
 ```
 
 
-#### within areas
+### Locals (Fig 4)
 ```{r}
 ba.boot.locals1 <- ba.boot.means %>%
   filter((group1 %in% c("1-large","2-large")) & (group2 %in% c("1-small","2-small"))) %>%
-  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
-                          ifelse(timeframe=="central","First 6w, Central","First 6w, North")))
+  mutate(timeframe=ifelse(timeframe=="annual","Full Season",
+                          ifelse(timeframe=="central","Central Primary","North Primary")))
 
 ba.boot.locals1b <- ba.boot.means %>%
   filter((group2 %in% c("1-large","2-large")) & (group1 %in% c("1-small","2-small"))) %>%
-  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
-                          ifelse(timeframe=="central","First 6w, Central","First 6w, North"))) %>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Season",
+                          ifelse(timeframe=="central","Central Primary","North Primary"))) %>%
   rename(group1=group2,group1_area=group2_area,group1_size=group2_size,
          group2=group1,group2_area=group1_area,group2_size=group1_size)
 
@@ -701,16 +701,16 @@ ba.boot.locals1 %<>% bind_rows(ba.boot.locals1b) %>%
 ```
 
 ```{r echo=FALSE}
-plot.local1boot <- ggplot(ba.boot.locals1,aes(x=as.factor(crab_year),y=BAmean,col=timeframe,pch=timeframe)) +
+plot.local1boot <- ggplot(ba.boot.locals1,aes(x=as.factor(crab_year),y=BAmean,col=fct_relevel(timeframe,c("Central Primary","North Primary","Full Season")),pch=fct_relevel(timeframe,c("Central Primary","North Primary","Full Season")))) +
   geom_point() +
-  geom_path(aes(group=timeframe)) +
+  geom_path(aes(group=fct_relevel(timeframe,c("Central Primary","North Primary","Full Season")))) +
   geom_errorbar(aes(ymin=BAmean-(2*BAsderr),ymax=BAmean-(2*BAsderr)),width=0.5) +
   facet_grid(cols=vars(group1_size,group1_area),rows=vars(group2_size,group2_area)) +
   ylim(c(0,1)) +
-  xlab("Crab Year") +
+  xlab("Crab Season") +
   ylab("Overlap (Bhattacharyya's affinity)") +
-  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Year") +
-  scale_shape_manual(values=c(19,19,4),name="Portion of Year") +
+  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Season") +
+  scale_shape_manual(values=c(19,19,4),name="Portion of Season") +
   theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
                      strip.text=element_text(size=13),
                      axis.title=element_text(size=13),
@@ -719,6 +719,10 @@ plot.local1boot <- ggplot(ba.boot.locals1,aes(x=as.factor(crab_year),y=BAmean,co
                      legend.text=element_text(size=12))
 
 plot.local1boot
+```
+
+
+```{r eval=writing}
 png(here::here('project-dat','figures',"Large_v_Small_Locals_BAoverlap-bootstrapped_2013-18.png"),res=200,width=1200,height=900)
 plot.local1boot
 dev.off()
@@ -727,8 +731,8 @@ dev.off()
 ba.boot.locals2 <- ba.boot.means %>%
   filter((group1 %in% c("1-large","1-small")) & (group2 %in% c("2-large","2-small"))) %>%
   filter(group1_size ==group2_size) %>%
-  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
-                          ifelse(timeframe=="central","First 6w, Central","First 6w, North"))) %>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Season",
+                          ifelse(timeframe=="central","Central Primary","North Primary"))) %>%
   mutate(group1_area=ifelse(group1_area=="northern","Northern",
                             ifelse(group1_area=="central","Central",NA)),
          group2_area=ifelse(group2_area=="northern","Northern",
@@ -736,8 +740,8 @@ ba.boot.locals2 <- ba.boot.means %>%
 
 ba.boot.locals2b <- ba.boot.means %>%
   filter((group2 %in% c("1-large","1-small")) & (group1 %in% c("2-large","2-small"))) %>%
-  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
-                          ifelse(timeframe=="central","First 6w, Central","First 6w, North"))) %>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Season",
+                          ifelse(timeframe=="central","Central Primary","North Primary"))) %>%
   rename(group1=group2,group1_area=group2_area,group1_size=group2_size,
          group2=group1,group2_area=group1_area,group2_size=group1_size) %>%
   mutate(group1_area=ifelse(group1_area=="northern","Northern",
@@ -748,16 +752,17 @@ ba.boot.locals2b <- ba.boot.means %>%
 ```
 
 ```{r echo=FALSE}
-plot.local2boot <- ggplot(ba.boot.locals2,aes(x=as.factor(crab_year),y=BAmean,col=timeframe,pch=timeframe)) +
+plot.local2boot <- ba.boot.locals2 %>% 
+  ggplot(aes(x=as.factor(crab_year),y=BAmean,col=fct_relevel(timeframe,c("Central Primary","North Primary","Full Season")),pch=fct_relevel(timeframe,c("Central Primary","North Primary","Full Season")))) +
   geom_point() +
-  geom_path(aes(group=timeframe)) +
+  geom_path(aes(group=fct_relevel(timeframe,c("Central Primary","North Primary","Full Season")))) +
   geom_errorbar(aes(ymin=BAmean-(2*BAsderr),ymax=BAmean-(2*BAsderr)),width=0.5) +
-  facet_grid(cols=vars(group1_size,group1_area),rows=vars(group2_size,group2_area)) +
+  facet_grid(cols=vars(group1_area,group1_size),rows=vars(group2_area,group2_size), scales="free") +
   ylim(c(0,1)) +
-  xlab("Crab Year") +
+  xlab("Crab Season") +
   ylab("Overlap (Bhattacharyya's affinity)") +
-  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Year") +
-  scale_shape_manual(values=c(19,19,4),name="Portion of Year") +
+  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Season") +
+  scale_shape_manual(values=c(19,19,4),name="Portion of Season") +
   theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
                      strip.text=element_text(size=13),
                      axis.title=element_text(size=13),
@@ -766,28 +771,42 @@ plot.local2boot <- ggplot(ba.boot.locals2,aes(x=as.factor(crab_year),y=BAmean,co
                      legend.text=element_text(size=12))
 
 plot.local2boot
+```
+```{r eval=writing}
 png(here::here('project-dat','figures',"LvL_SvS_Locals_BAoverlap-bootstrapped_2013-18.png"),res=200,width=1200,height=900)
 plot.local2boot
 dev.off()
 ```
 
+```{r eval=writing}
+p.out <- plot_grid(plot.local1boot+theme(legend.position="none",axis.title.x=element_blank(),
+                                         plot.margin=margin(c(5,5,20,5))), 
+          plot.local2boot+theme(axis.title=element_blank(),
+                                plot.margin=margin(c(5,5,20,5))), 
+          rel_widths=c(0.75,1),
+          labels=c("(a)","(b)"))
+png(here::here('project-dat','figures',"Fig4_Locals_BAoverlap-bootstrapped_2013-18.png"),res=300,width=2800,height=1400)
+ggdraw(add_sub(p.out, "Crab Season", vpadding=grid::unit(0,"lines"),y=6, x=0.45, vjust=4.5))
+dev.off()
+```
 
-#### mobile v local
+
+#### mobile v local: Fig 5
 
 first, separate out the mobile northern and coastwide groups
 ```{r}
 ba.boot.contrast1 <- ba.boot.means %>%
   filter((group1 %in% c("4-large","3-large")) & (group2 %in% c("1-large","2-large","1-small","2-small"))) %>%
-  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
-                          ifelse(timeframe=="central","First 6w, Central","First 6w, North")))
+  mutate(timeframe=ifelse(timeframe=="annual","Full Season",
+                          ifelse(timeframe=="central","Central Primary","North Primary")))
 
 ba.boot.contrast1b <- ba.boot.means %>%
   filter((group1 %in% c("1-large","2-large","1-small","2-small")) & (group2 %in% c("4-large","3-large"))) %>%
-  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
-                          ifelse(timeframe=="central","First 6w, Central","First 6w, North"))) %>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Season",
+                          ifelse(timeframe=="central","Central Primary","North Primary"))) %>%
   rename(group1=group2,group1_area=group2_area,group1_size=group2_size,
          group2=group1,group2_area=group1_area,group2_size=group1_size) %>%
-  mutate(timeframe=as.character)
+  mutate(timeframe=as.character(timeframe))
 
 if(dim(ba.boot.contrast1)[1] > 0){
   if(dim(ba.boot.contrast1b)[1] > 0){
@@ -801,16 +820,16 @@ ba.boot.contrast1 %<>% mutate(group1_area=ifelse(group1=="3-large","coastwide","
 ```
 
 ```{r echo=FALSE}
-plot.contrast1boot <- ggplot(ba.boot.contrast1,aes(x=as.factor(crab_year),y=BAmean,col=timeframe,pch=timeframe)) +
+plot.contrast1boot <- ggplot(ba.boot.contrast1,aes(x=as.factor(crab_year),y=BAmean,col=fct_relevel(timeframe,c("Central Primary","North Primary","Full Season")),pch=fct_relevel(timeframe,c("Central Primary","North Primary","Full Season")))) +
   geom_point() +
-  geom_path(aes(group=timeframe)) +
+  geom_path(aes(group=fct_relevel(timeframe,c("Central Primary","North Primary","Full Season")))) +
   geom_errorbar(aes(ymin=BAmean-BAsderr,ymax=BAmean-BAsderr),width=0.5) +
   facet_grid(cols=vars(group2_size,group2_area),rows=vars(group1_size,group1_area)) +
   # ylim(c(0,1)) +
-  xlab("Crab Year") +
+  xlab("Crab Season") +
   ylab("Overlap (Bhattacharyya's affinity)") +
-  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Year") +
-  scale_shape_manual(values=c(19,19,4),name="Portion of Year") +
+  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Season") +
+  scale_shape_manual(values=c(19,19,4),name="Portion of Season") +
   theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
                      strip.text=element_text(size=13),
                      axis.title=element_text(size=13),
@@ -819,28 +838,30 @@ plot.contrast1boot <- ggplot(ba.boot.contrast1,aes(x=as.factor(crab_year),y=BAme
                      legend.text=element_text(size=12))
 
 plot.contrast1boot
+```
+```{r eval=writing}
 png(here::here('project-dat','figures',"Coastwide3Mobile4_v_Locals_BAoverlap-bootstrapped_2013-18.png"),res=200,width=1600,height=1000)
 plot.contrast1boot
 dev.off()
 ```
 
-now, combine the mobile groups
+now, combine the mobile groups: **Figure 5**
 ```{r}
 ba.boot.contrast2 <- ba.boot.means %>%
   filter((group1 %in% c("5-large")) & (group2 %in% c("1-large","2-large","1-small","2-small")))
 
 ba.boot.contrast2b <- ba.boot.means %>%
   filter((group1 %in% c("1-large","2-large","1-small","2-small")) & (group2 %in% c("5-large"))) %>%
-  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
-                          ifelse(timeframe=="central","First 6w, Central","First 6w, North"))) %>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Season",
+                          ifelse(timeframe=="central","Central Primary","North Primary"))) %>%
   rename(group1=group2,group1_area=group2_area,group1_size=group2_size,
          group2=group1,group2_area=group1_area,group2_size=group1_size)
 
 if(dim(ba.boot.contrast2)[1] > 0){
   if(dim(ba.boot.contrast2b)[1] > 0){
     ba.boot.contrast2 %<>%
-  mutate(timeframe=ifelse(timeframe=="annual","Full Year",
-                          ifelse(timeframe=="central","First 6w, Central","First 6w, North"))) %>%
+  mutate(timeframe=ifelse(timeframe=="annual","Full Season",
+                          ifelse(timeframe=="central","Central Primary","North Primary"))) %>%
       bind_rows(ba.boot.contrast2b)  %>%
   mutate(group1_area=ifelse(group1_area=="northern","Northern",
                             ifelse(group1_area=="central","Central","cross-district pool")),
@@ -857,16 +878,16 @@ if(dim(ba.boot.contrast2)[1] > 0){
 ```
 
 ```{r echo=FALSE}
-plot.contrast2boot <- ggplot(ba.boot.contrast2,aes(x=as.factor(crab_year),y=BAmean,col=timeframe,pch=timeframe)) +
+plot.contrast2boot <- ggplot(ba.boot.contrast2,aes(x=as.factor(crab_year),y=BAmean,col=fct_relevel(timeframe,c("Central Primary","North Primary","Full Season")),pch=fct_relevel(timeframe,c("Central Primary","North Primary","Full Season")))) +
   geom_point() +
-  geom_path(aes(group=timeframe)) +
+  geom_path(aes(group=fct_relevel(timeframe,c("Central Primary","North Primary","Full Season")))) +
   geom_errorbar(aes(ymin=BAmean-(2*BAsderr),ymax=BAmean-(2*BAsderr)),width=0.5) +
   facet_grid(cols=vars(group2_size,group2_area),rows=vars(group1_size,group1_area)) +
   ylim(c(0,1)) +
-  xlab("Crab Year") +
+  xlab("Crab Season") +
   ylab("Overlap (Bhattacharyya's affinity)") +
-  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Year") +
-  scale_shape_manual(values=c(19,19,4),name="Portion of Year") +
+  scale_color_manual(values=c("#a6611a","#018571","grey60"),name="Portion of Season") +
+  scale_shape_manual(values=c(19,19,4),name="Portion of Season") +
   theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
                      strip.text=element_text(size=13),
                      axis.title=element_text(size=13),
@@ -875,12 +896,14 @@ plot.contrast2boot <- ggplot(ba.boot.contrast2,aes(x=as.factor(crab_year),y=BAme
                      legend.text=element_text(size=12))
 
 plot.contrast2boot
-png(here::here('project-dat','figures',"Mobile5_v_Locals_BAoverlap-bootstrapped_2013-18.png"),res=200,width=1600,height=800)
+```
+```{r eval=writing}
+png(here::here('project-dat','figures',"Fig5_Mobile5_v_Locals_BAoverlap-bootstrapped_2013-18.png"),res=300,width=2100,height=1200)
 plot.contrast2boot
 dev.off()
 ```
 
-#### check against full pairwise BA index
+### check against full pairwise BA index
 
 For a subset of vessel groups, I looked at BA index between each vessel pair, instead of using an overall home range. 
 
@@ -926,9 +949,11 @@ testplot <- ggplot(ba.pair.test,aes(x=as.factor(crab_year),y=BA,col=calculation)
                      legend.title=element_text(size=13),
                      legend.text=element_text(size=12))
 testplot
-# png(here::here('project-dat','figures',"TEST_groupedUD_pairwiseUD_BAoverlap_2013-18.png"),res=200,width=1500,height=1000)
-# testplot
-# dev.off()
+```
+```{eval=writing}
+png(here::here('project-dat','figures',"TEST_groupedUD_pairwiseUD_BAoverlap_2013-18.png"),res=200,width=1500,height=1000)
+testplot
+dev.off()
 ```
 
 
