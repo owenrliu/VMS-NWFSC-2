@@ -286,20 +286,25 @@ ggsave(here::here('project-dat','figures',paste0('Fig1_cumulativeDCRBlbs_',keep_
 ### (a) size only
 
 ```{r}
-sig.lengths %<>% mutate(significance=ifelse(correct.pval<0.01,"**",significance))
+sig.lengths %<>% mutate(significance=ifelse(correct.pval<0.01,"**",significance)) %>%
+  mutate(crab_years=str_replace(crab_years,"_","-")) %>%
+  mutate(crab_years=fct_relevel(crab_years,c("Overall", "2013-2014", "2014-2015", "2015-2016","2016-2017","2017-2018")))
 sig.lengths[6,"significance"] <- "**"
-sig.lengths$crab_years <- factor(sig.lengths$crab_years, levels=c("Overall", "2013_2014", "2014_2015", "2015_2016","2016_2017","2017_2018"))
-emd_means$crab_years <- factor(emd_means$crab_years, levels=c("Overall", "2013_2014", "2014_2015", "2015_2016","2016_2017","2017_2018"))
+emd_means %<>%
+  mutate(crab_years=str_replace(crab_years,"_","-")) %>%
+  mutate(crab_years=fct_relevel(crab_years,c("Overall", "2013-2014", "2014-2015", "2015-2016","2016-2017","2017-2018")))
 ```
 
 ```{r}
-plot.all <- ggplot(emd_means, aes(x=crab_years,y=mean.emd/1000)) +
-  geom_point(size=2, aes(col=vessel_size,pch=vessel_size)) +
+plot.all <- emd_means %>%
+  ggplot(aes(x=crab_years,y=mean.emd/1000)) +
+  geom_point(size=3, aes(col=vessel_size,pch=vessel_size)) +
   geom_errorbar(aes(ymin=(mean.emd-(2*sd.emd))/1000,ymax=(mean.emd+(2*sd.emd))/1000,col=vessel_size,pch=vessel_size),width=0.25)+
   geom_text(data=sig.lengths, aes(x=crab_years,y=y+30,label=significance),size=10) +
   geom_vline(xintercept=1.5, size=2) +
   scale_color_manual(values=pnw_palette("Starfish",7)[c(1,4)]) +
-  xlab("Crab Year Comparison") + ylab("Earth Mover's Distance (x1000)") +
+  scale_shape_manual(values=c(16,2)) +
+  xlab("Crab Seasons Compared") + ylab("Earth Mover's Distance (x1000)") +
   theme_bw() + theme(panel.grid.major.x=element_blank(),
                      panel.grid.minor.x=element_blank(),
                      axis.text.y=element_text(size=13),
@@ -322,17 +327,21 @@ sig.locals %<>% mutate(significance=ifelse(!is.na(correct.pval) & correct.pval<0
 sig.groups <- sig.locals %>%
    mutate(`Vessel Group`=ifelse(area=="northern","Northern",ifelse(area=="central","Central",area)),
           `Vessel Size`=NA) %>%
-  mutate(y=sig.locals$y[1]-70)
-sig.groups$`Vessel Group` <- factor(sig.groups$`Vessel Group`,levels=c("Northern","Central","Mobile Northern","Coastwide"))
-sig.groups$crab_years <- factor(sig.groups$crab_years, levels=c("Overall", "2013_2014", "2014_2015", "2015_2016","2016_2017","2017_2018"))
+  mutate(y=sig.locals$y[1]-70) %>%
+  mutate(crab_years=str_replace(crab_years,"_","-")) %>%
+  mutate(crab_years=fct_relevel(crab_years,c("Overall", "2013-2014", "2014-2015", "2015-2016","2016-2017","2017-2018"))) %>%
+  mutate(`Vessel Group`=fct_relevel(`Vessel Group`, c("Northern","Central")))
 
 #plotdat
 plotdat <- filter(emd_group_means_noncon, group != 5) %>%
   mutate(`Vessel Group`=ifelse(`Vessel Group`=="Diversified Northern","Mobile Northern",
-                           ifelse(`Vessel Group`=="Central/Northern","Coastwide",`Vessel Group`)))
-plotdat$crab_years <- factor(plotdat$crab_years, levels=c("Overall",
-                                                          "2013_2014","2014_2015","2015_2016","2016_2017","2017_2018"))
-plotdat$`Vessel Group` <- factor(plotdat$`Vessel Group`, levels=c("Northern","Central","Mobile Northern","Coastwide"))
+                           ifelse(`Vessel Group`=="Central/Northern","Coastwide",`Vessel Group`))) %>%
+  mutate(crab_years=str_replace(crab_years,"_","-")) %>%
+  mutate(crab_years=fct_relevel(crab_years,c("Overall", "2013-2014", "2014-2015", "2015-2016","2016-2017","2017-2018")))
+
+plotdat %<>%
+  mutate(`Vessel Group`=fct_relevel(`Vessel Group`, c("Northern","Central","Mobile Northern","Coastwide")))
+
 ```
 ```{r} 
 plot.gr <- 
@@ -343,7 +352,8 @@ ggplot(plotdat, aes(x=crab_years,y=mean.emd/1000, col=`Vessel Size`)) +
   geom_vline(xintercept=1.5, size=2) +
   geom_text(data=sig.groups, aes(x=crab_years,y=y,label=significance),size=7,color="black") +
   scale_color_manual(values=c(pnw_palette("Starfish",7)[c(1,4)],"black")) +
-  xlab("Crab Year Comparison") + ylab("") +
+  scale_shape_manual(values=c(16,2)) +
+  xlab("Crab Seasons Compared") + ylab("") +
   theme_bw() + theme(panel.grid.major.x=element_blank(),
                      panel.grid.minor.x=element_blank(),
                      axis.text.x=element_text(angle=90,hjust=1,vjust=0.5,size=13),
@@ -371,16 +381,18 @@ some prep for plotting is needed.
 sig.groups <- sig.locals %>%
    mutate(`Vessel Group`=ifelse(area=="northern","Northern",ifelse(area=="central","Central",area)),
           `Vessel Size`=NA) %>%
-  mutate(y=sig.locals$y[1]-110)
-sig.groups$`Vessel Group` <- factor(sig.groups$`Vessel Group`,levels=c("Northern","Central","Coastwide"))
-sig.groups$crab_years <- factor(sig.groups$crab_years, levels=c("Overall", "2013_2014", "2014_2015", "2015_2016","2016_2017","2017_2018"))
+  mutate(y=sig.locals$y[1]-110) %>%
+  mutate(`Vessel Group` = fct_relevel(`Vessel Group`,c("Northern","Central","Coastwide"))) %>%
+  mutate(crab_years=str_replace(crab_years,"_","-")) %>%
+  mutate(crab_years=fct_relevel(crab_years,c("Overall", "2013-2014", "2014-2015", "2015-2016","2016-2017","2017-2018")))
 
 #plotdat
 plotdat <- filter(emd_group_means_noncon, !(group %in% c(3,4))) %>%
-  mutate(`Vessel Group`=ifelse(`Vessel Group`=="Diversified Northern","Coastwide",`Vessel Group`))
-plotdat$crab_years <- factor(plotdat$crab_years, levels=c("Overall",
-                                                          "2013_2014","2014_2015","2015_2016","2016_2017","2017_2018"))
-plotdat$`Vessel Group` <- factor(plotdat$`Vessel Group`, levels=c("Northern","Central","Coastwide"))
+  mutate(`Vessel Group`=ifelse(`Vessel Group`=="Diversified Northern","Coastwide",`Vessel Group`)) %>%
+  mutate(crab_years=str_replace(crab_years,"_","-")) %>%
+  mutate(crab_years=fct_relevel(crab_years,c("Overall", "2013-2014", "2014-2015", "2015-2016","2016-2017","2017-2018"))) %>%
+  mutate(`Vessel Group` = fct_relevel(`Vessel Group`, c("Northern","Central","Coastwide")))
+
 ```
 ```{r} 
 plot.gr2 <- 
@@ -391,7 +403,8 @@ ggplot(plotdat, aes(x=crab_years,y=mean.emd/1000, col=`Vessel Size`)) +
   geom_vline(xintercept=1.5, size=2) +
   geom_text(data=sig.groups, aes(x=crab_years,y=y,label=significance),size=7,color="black") +
   scale_color_manual(values=c(pnw_palette("Starfish",7)[c(1,4)],"black")) +
-  xlab("Crab Year Comparison") + ylab("") +
+  scale_shape_manual(values=c(16,2)) +
+  xlab("Crab Seasons Compared") + ylab("") +
   theme_bw() + theme(panel.grid.major.x=element_blank(),
                      panel.grid.minor.x=element_blank(),
                      axis.text.x=element_text(angle=90,hjust=1,vjust=0.5,size=13),
@@ -417,18 +430,19 @@ some prep for plotting is needed.
 sig.groups <- sig.locals %>%
    mutate(`Vessel Group`=ifelse(area=="northern","Northern",ifelse(area=="central","Central",area)),
           `Vessel Size`=NA) %>%
-  mutate(y=sig.locals$y[1]-75)
-sig.groups$`Vessel Group` <- factor(sig.groups$`Vessel Group`,levels=c("Northern","Central","Coastwide"))
-sig.groups$crab_years <- factor(sig.groups$crab_years, levels=c("Overall", "2013_2014", "2014_2015", "2015_2016","2016_2017","2017_2018"))
+  mutate(y=sig.locals$y[1]-75) %>%  # just sets label position
+  mutate(`Vessel Group` = fct_relevel(`Vessel Group`,c("Coastwide","Northern","Central"))) %>%
+  mutate(crab_years=str_replace(crab_years,"_","-")) %>%
+  mutate(crab_years=fct_relevel(crab_years,c("Overall", "2013-2014", "2014-2015", "2015-2016","2016-2017","2017-2018")))
 
 #plotdat
 plotdat <- emd_group_means_noncon %>%
   mutate(`Vessel Group`=ifelse(subgroup=="3-large","Coastwide",
                                ifelse(subgroup=="4-large","Mobile Northern",
-                                      ifelse(subgroup=="5-large","cross-district pool",`Vessel Group`))))
-plotdat$crab_years <- factor(plotdat$crab_years, levels=c("Overall",
-                                                          "2013_2014","2014_2015","2015_2016","2016_2017","2017_2018"))
-plotdat$`Vessel Group` <- factor(plotdat$`Vessel Group`, levels=c("Mobile Northern","Coastwide","cross-district pool","Northern","Central"))
+                                      ifelse(subgroup=="5-large","cross-district pool",`Vessel Group`)))) %>%
+  mutate(crab_years=str_replace(crab_years,"_","-")) %>%
+  mutate(crab_years=fct_relevel(crab_years,c("Overall", "2013-2014", "2014-2015", "2015-2016","2016-2017","2017-2018"))) %>%
+  mutate(`Vessel Group` = fct_relevel(`Vessel Group`, c("Mobile Northern","Coastwide","cross-district pool","Northern","Central")))
 ```
 ```{r} 
 plot.gr3 <- 
@@ -439,7 +453,8 @@ ggplot(plotdat, aes(x=crab_years,y=mean.emd/1000, col=`Vessel Size`)) +
   geom_vline(xintercept=1.5, size=2) +
   geom_text(data=sig.groups, aes(x=crab_years,y=y,label=significance),size=7,color="black") +
   scale_color_manual(values=c(pnw_palette("Starfish",7)[c(1,4)],"black")) +
-  xlab("Crab Year Comparison") + ylab("") +
+  scale_shape_manual(values=c(16,2)) +
+  xlab("Crab Seasons Compared") + ylab("") +
   theme_bw() + theme(panel.grid.major.x=element_blank(),
                      panel.grid.minor.x=element_blank(),
                      axis.text.x=element_text(angle=90,hjust=1,vjust=0.5,size=13),
@@ -932,13 +947,13 @@ figs_baVn <- ba.boot.means.n %>% ungroup() %>%
   mutate(sample=factor(sample, levels=c("Group 1 N","Group 2 N","Sum","Difference"))) %>%
   ggplot(aes(x=sample_size,y=BAmean,col=`Crab Season`)) +
   geom_point() +
-  facet_wrap(~sample) + 
-  labs(y="Overlap (BA index)", x="Count") + theme_bw()
+  facet_grid(cols=vars(sample), rows=vars(as.factor(`Crab Season`))) + 
+  labs(y="Overlap (BA index)", x="Count") + theme_bw() + theme(legend.position="none")
 
 figs_baVn
 ```
 ```{r echo=FALSE, eval=writing}
-png(here::here('project-dat','figures',"FigS_BAoverlap-bootstrapped_v_SubgroupSampleSize_2013-18.png"),res=200,width=1600,height=1000)
+png(here::here('project-dat','figures',"FigS_BAoverlap-bootstrapped_v_SubgroupSampleSize_2013-18.png"),res=200,width=1200,height=1000)
 figs_baVn
 dev.off()
 ```
