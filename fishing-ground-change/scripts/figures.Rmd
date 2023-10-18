@@ -24,7 +24,7 @@ Create figures for main text.
   - Large Local vessel groups
   - Cross-district pool (Coastwide + Mobile Northern)
 
-**Figure 4:** How does overlap between vessel groups change?
+**Figures 4 - 5:** How does overlap between vessel groups change?
 
   - Compare year-over-year BA overlap between vessel groups (at varying timescales)
   - Compare resampled year-over-year BA overlap between vessel groups
@@ -276,7 +276,7 @@ fig1
 ```
 
 Save
-```{r}
+```{r eval=writing}
 ggsave(here::here('project-dat','figures',paste0('Fig1_cumulativeDCRBlbs_',keep_years[1],'-',substr(last(keep_years),3,4),'_byregion.png')), fig1)
 ```
 
@@ -355,7 +355,7 @@ ggplot(plotdat, aes(x=crab_years,y=mean.emd/1000, col=`Vessel Size`)) +
 plot.gr
 ```
 
-```{r}
+```{r echo=FALSE, eval=writing}
 png(here::here('project-dat','figures',"2013-18_EMDmeans_noncon.png"),width=750,height=400)
 plot_grid(plot.all,plot.gr,rel_widths=c(0.55,1),labels="auto")
 dev.off()
@@ -403,7 +403,7 @@ ggplot(plotdat, aes(x=crab_years,y=mean.emd/1000, col=`Vessel Size`)) +
 plot.gr2
 ```
 
-```{r}
+```{r echo=FALSE, eval=writing}
 png(here::here('project-dat','figures',"2013-18_EMDmeans_combocoastwide_noncon.png"),width=750,height=400)
 plot_grid(plot.all,plot.gr2,rel_widths=c(0.55,1),labels="auto")
 dev.off()
@@ -451,7 +451,7 @@ ggplot(plotdat, aes(x=crab_years,y=mean.emd/1000, col=`Vessel Size`)) +
 plot.gr3
 ```
 
-```{r}
+```{r echo=FALSE, eval=writing}
 png(here::here('project-dat','figures',"2013-18_EMDmeans_comboPLUScoastwide_noncon.png"),res=200,width=2500,height=1000)
 plot_grid(plot.all,plot.gr3,rel_widths=c(0.55,1),labels="auto")
 dev.off()
@@ -470,6 +470,8 @@ sfig <- ggplot(emd.dat %>% filter(crab_years %in% emd_means$crab_years),aes(x=em
                      axis.title=element_text(size=14),
                      strip.text=element_text(size=14))
 sfig
+```
+```{r echo=FALSE, eval=writing}
 png(here::here('project-dat','figures',"supplement_2013-18_EMDdistributions.png"),width=600,height=400)
 sfig
 dev.off()
@@ -504,6 +506,8 @@ suppfig <- ggplot(plotdat,aes(x=n.vessels,y=sd.emd, col=`Vessel Size`,pch=`Vesse
                      legend.title=element_text(size=13),
                      legend.text=element_text(size=11))
 suppfig
+```
+```{r echo=FALSE, eval=writing}
 png(here::here('project-dat','figures',"Supplement_2013-18_EMDstderrs_v_SampleSize.png"),res=200, width=1100,height=800)
 suppfig
 dev.off()
@@ -577,7 +581,7 @@ myplot_sm <- myplot_sm  + annotate("rect",xmin=-125,xmax=-124.5,ymin=36,ymax=35.
   annotate("text",x=-123.38,y=35.2,label="Local Central")
 ```
 
-```{r}
+```{r echo=FALSE, eval=writing}
 png(here::here('project-dat','figures',"change_90ud_annual_SmLocal_byRegion_2stack.png"),res=300, height=1500, width=1800)
 myplot_sm
 dev.off()
@@ -601,7 +605,7 @@ myplot_lg <- myplot_lg + annotate("rect",xmin=-125,xmax=-124.5,ymin=36,ymax=35.5
   annotate("text",x=-123.38,y=35.2,label="Local Central")
 ```
 
-```{r}
+```{r echo=FALSE, eval=writing}
 png(here::here('project-dat','figures',"change_90ud_annual_LgLocal_byRegion_2stack.png"),res=300, height=1500, width=1800)
 myplot_lg
 dev.off()
@@ -618,14 +622,14 @@ cross_uds <- udlist[["5-large"]]
 myplot_cd <- map_fishing_stacked(ud_list=cross_uds,key=key_filter,keep_years=keep_years,states_df_coast=states_df_coast, udcol=pnw_palette("Shuksan",n=8)[4])
 ```
 
-```{r}
+```{r echo=FALSE, eval=writing}
 png(here::here('project-dat','figures',"change_90ud_annual_LgCrossDistrict_2stack.png"),res=300, height=1500, width=1800)
 myplot_cd
 dev.off()
 ```
 
 Stack them all!
-```{r}
+```{r eval=writing}
 png(here::here('project-dat','figures',"change_90ud_annual_All_byRegion_stacked.png"),res=300,height=4000, width=1800)
 plot_grid(myplot_sm,myplot_lg,myplot_cd,nrow=3, labels=c("a","b","c"))
 dev.off()
@@ -650,7 +654,7 @@ myplot_sm2 <- myplot_sm2  + annotate("rect",xmin=-125,xmax=-124.5,ymin=36,ymax=3
   annotate("text",x=-123.38,y=35.2,label="Local Central")
 ```
 
-```{r}
+```{r echo=FALSE, eval=writing}
 png(here::here('project-dat','figures',"change_90ud_annual_SmLocal_byRegion_2stack_QCsub.png"),res=300, height=1500, width=1800)
 myplot_sm2
 dev.off()
@@ -674,12 +678,12 @@ ba.boot.means %<>% left_join(vgroup_summary %>% dplyr::select(-group),by=c("grou
          group2_area=ifelse(group2=="5-large","cross-district",group2_area))
 ```
 
-```{r}
+```{r echo=FALSE, eval=writing}
 write_csv(ba.boot.means,file=here(statdir,paste0('meanBAoverlap_bootstrapped_',keep_years[1],"-",substr(last(keep_years),3,4),'_annual.csv')))
 ```
 
 
-### Locals (Fig 4)
+### Fig 4: Locals
 ```{r}
 ba.boot.locals1 <- ba.boot.means %>%
   filter((group1 %in% c("1-large","2-large")) & (group2 %in% c("1-small","2-small"))) %>%
@@ -722,7 +726,7 @@ plot.local1boot
 ```
 
 
-```{r eval=writing}
+```{r echo=FALSE, eval=writing}
 png(here::here('project-dat','figures',"Large_v_Small_Locals_BAoverlap-bootstrapped_2013-18.png"),res=200,width=1200,height=900)
 plot.local1boot
 dev.off()
@@ -772,13 +776,13 @@ plot.local2boot <- ba.boot.locals2 %>%
 
 plot.local2boot
 ```
-```{r eval=writing}
+```{r echo=FALSE, eval=writing}
 png(here::here('project-dat','figures',"LvL_SvS_Locals_BAoverlap-bootstrapped_2013-18.png"),res=200,width=1200,height=900)
 plot.local2boot
 dev.off()
 ```
 
-```{r eval=writing}
+```{r echo=FALSE, eval=writing}
 p.out <- plot_grid(plot.local1boot+theme(legend.position="none",axis.title.x=element_blank(),
                                          plot.margin=margin(c(5,5,20,5))), 
           plot.local2boot+theme(axis.title=element_blank(),
@@ -791,7 +795,7 @@ dev.off()
 ```
 
 
-#### mobile v local: Fig 5
+### Fig 5: mobile v local
 
 first, separate out the mobile northern and coastwide groups
 ```{r}
@@ -839,7 +843,7 @@ plot.contrast1boot <- ggplot(ba.boot.contrast1,aes(x=as.factor(crab_year),y=BAme
 
 plot.contrast1boot
 ```
-```{r eval=writing}
+```{r echo=FALSE, eval=writing}
 png(here::here('project-dat','figures',"Coastwide3Mobile4_v_Locals_BAoverlap-bootstrapped_2013-18.png"),res=200,width=1600,height=1000)
 plot.contrast1boot
 dev.off()
@@ -897,11 +901,50 @@ plot.contrast2boot <- ggplot(ba.boot.contrast2,aes(x=as.factor(crab_year),y=BAme
 
 plot.contrast2boot
 ```
-```{r eval=writing}
+```{r echo=FALSE, eval=writing}
 png(here::here('project-dat','figures',"Fig5_Mobile5_v_Locals_BAoverlap-bootstrapped_2013-18.png"),res=300,width=2100,height=1200)
 plot.contrast2boot
 dev.off()
 ```
+
+## Supplement to Fig 4-5: BA v. sample size
+
+Create a three panel figure showing the BA overlap between any two groups, with the x axis as (1) group 1 sample size, (2) group 2 sample size, (3) combined sample size, (4) difference in sample size
+
+First, grab sample sizes from vessel groups data frame and append to the BA means data frame
+```{r}
+ba.boot.means.n <- ba.boot.means %>%
+  left_join(vgroups %>% 
+              group_by(subgroup,crab_year) %>% 
+              summarise(n.group1=length(unique(drvid))) %>%
+              rename(group1=subgroup), by=c("group1","crab_year")) %>%
+  left_join(vgroups %>% 
+              group_by(subgroup,crab_year) %>% 
+              summarise(n.group2=length(unique(drvid))) %>%
+              rename(group2=subgroup), by=c("group2","crab_year"))
+```
+```{r}
+figs_baVn <- ba.boot.means.n %>% ungroup() %>%
+  dplyr::select(crab_year,BAmean,n.group1,n.group2) %>%
+  mutate(Difference=abs(n.group1-n.group2),Sum=n.group1+n.group2) %>%
+  rename(`Group 1 N`=n.group1,`Group 2 N`=n.group2,`Crab Season`=crab_year) %>%
+  pivot_longer(cols=c(`Group 1 N`,`Group 2 N`,Difference,Sum),names_to="sample",values_to="sample_size") %>%
+  mutate(sample=factor(sample, levels=c("Group 1 N","Group 2 N","Sum","Difference"))) %>%
+  ggplot(aes(x=sample_size,y=BAmean,col=`Crab Season`)) +
+  geom_point() +
+  facet_wrap(~sample) + 
+  labs(y="Overlap (BA index)", x="Count") + theme_bw()
+
+figs_baVn
+```
+```{r echo=FALSE, eval=writing}
+png(here::here('project-dat','figures',"FigS_BAoverlap-bootstrapped_v_SubgroupSampleSize_2013-18.png"),res=200,width=1600,height=1000)
+figs_baVn
+dev.off()
+```
+
+
+
 
 ### check against full pairwise BA index
 
@@ -950,7 +993,7 @@ testplot <- ggplot(ba.pair.test,aes(x=as.factor(crab_year),y=BA,col=calculation)
                      legend.text=element_text(size=12))
 testplot
 ```
-```{eval=writing}
+```{r echo=FALSE, echo=FALSE, eval=writing}
 png(here::here('project-dat','figures',"TEST_groupedUD_pairwiseUD_BAoverlap_2013-18.png"),res=200,width=1500,height=1000)
 testplot
 dev.off()
