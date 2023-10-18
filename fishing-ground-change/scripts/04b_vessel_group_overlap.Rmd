@@ -478,7 +478,7 @@ for(t in tfs){
 <br>
 
 
-## Basic correlation
+## Basic correlation ( in progress )
 
 What is the distribution of BA indices?
 ```{r fig.height=4, fig.width=4}
@@ -504,6 +504,7 @@ predictor variables:
 - Y=year
 
 ```{r include=FALSE}
+## example GLM code ##
 him1e <- glm(ed ~ D*R+N, data = edata, family = quasibinomial('logit'))
 robust.se.him1e <- sqrt(diag(vcovHC(him1e , type="HC0")))
 coeftest(him1e, vcovHC(him1e , type="HC0"))
