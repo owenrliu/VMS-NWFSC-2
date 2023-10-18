@@ -467,8 +467,14 @@ plot.gr3
 ```
 
 ```{r echo=FALSE, eval=writing}
-png(here::here('project-dat','figures',"2013-18_EMDmeans_comboPLUScoastwide_noncon.png"),res=200,width=2500,height=1000)
-plot_grid(plot.all,plot.gr3,rel_widths=c(0.55,1),labels="auto")
+p.out <- plot_grid(plot.all+theme(legend.position="none",axis.title.x=element_blank(),
+                                         plot.margin=margin(c(15,5,30,5))),
+                   plot.gr3+theme(axis.title=element_blank(),
+                                plot.margin=margin(c(15,5,30,15))),
+                   rel_widths=c(0.55,1),labels=c("(a)","(b)"), label_size=16)
+
+png(here::here('project-dat','figures',"2013-18_EMDmeans_comboPLUScoastwide_noncon.png"),res=300,width=3600,height=1600)
+ggdraw(add_sub(p.out, "Crab Seasons Compared", vpadding=grid::unit(0,"lines"),y=6, x=0.45, vjust=4.5,size=16))
 dev.off()
 ```
 
