@@ -42,11 +42,13 @@ library(tidyverse)
 library(magrittr)
 library(rsample)
 library(adehabitatHR)
+library(sp)
+library(beepr)
 
 
 ## if having trouble with the bootstrapping section, re-start the R session, clear the environment, and hash these out before re-loading packages
-library(raster)
-library(maps)
+# library(raster)
+# library(maps)
 
 
 source(here('R','subset_vms.R'))
@@ -281,8 +283,7 @@ To bootstrap confidence intervals around the group overlaps, (1) use the `rsampl
 
 Last time, instead of using the bootstrapping function, I tried creating my own for loop to sample 75% of data points and then doing (2) and (3) above. This took forever to run. Let's hope I have more luck with R's built-in packages.
 ```{r}
-grouped.vms <- vgroups %>% dplyr::select(crab_year,drvid,subgroup,group,vessel_size,area) %>%
-  rename(group_area=area) %>%
+grouped.vms <- vgroups %>% dplyr::select(crab_year,drvid,subgroup,group,vessel_size,group_area) %>%
   left_join(vms, by=c("drvid","crab_year"), multiple="all") %>%
   filter(crab_year %in% crab_years) %>% 
   dplyr::select(crab_year,drvid,subgroup,group,vessel_size,group_area,Rec_ID,date,removal_type_code,westcoastdate,X_COORD,Y_COORD,LATITUDE,LONGITUDE,season_start_date) %>%
@@ -299,59 +300,59 @@ From the **Tidymodels** documentation:
 
 
 ```{r}
-# all.start <- Sys.time()
+all.start <- Sys.time()
 # for(t in tfs){
   t <- "central"
   # filter VMS data
-# filter VMS data
-if(t != "annual"){
-  tmp.seasons <- season_dates_df %>% filter(crab_year %in% crab_years) %>% filter(pcdistrict==t)
-} else{tmp.seasons <- season_dates_df}
-
-# tvms <- subsetVMS(dat=grouped.vms, crab_years=crab_years, cut=t, seasons=tmp.seasons)
-tvms <- subsetVMS(dat=grouped.vms, crab_years=crab_years, cut=t, seasons=tmp.seasons)
-k <- length(unique(tvms$group)) + 1
+  # filter VMS data
+  if(t != "annual"){
+    tmp.seasons <- season_dates_df %>% filter(crab_year %in% crab_years) %>% filter(pcdistrict==t)
+  } else{tmp.seasons <- season_dates_df}
   
-timeframe.start <- Sys.time()
-for(y in c(2018)){
-  sstart <- Sys.time()
-  ## filter for year
-  yvms <- filter(tvms, crab_year==y)
+  tvms <- subsetVMS(dat=grouped.vms, crab_years=crab_years, cut=t, seasons=tmp.seasons)
+  k <- length(unique(tvms$group)) + 1
   
-  ## check for confidential VMS
-  sample_size <- yvms %>%
-    group_by(subgroup) %>%
-    summarise(n.vessels = length(unique(drvid)), n.trips = length(unique(Rec_ID))) %>%
-    arrange(n.vessels,n.trips)
-  confidential <- filter(sample_size,n.vessels < 3)
+  timeframe.start <- Sys.time()
+  for(y in crab_years){
+    sstart <- Sys.time()
+    ## filter for year
+    yvms <- filter(tvms, crab_year==y)
+    
+    ## check for confidential VMS
+    sample_size <- yvms %>%
+      group_by(subgroup) %>%
+      summarise(n.vessels = length(unique(drvid)), n.trips = length(unique(Rec_ID))) %>%
+      arrange(n.vessels,n.trips)
+    confidential <- filter(sample_size,n.vessels < 3)
+    
+    yvms.noncon <- yvms %>%
+      filter(!(subgroup %in% confidential$subgroup)) %>%
+      dplyr::select(crab_year,drvid,subgroup,Rec_ID,LATITUDE,LONGITUDE,X_COORD,Y_COORD)
   
-  yvms.noncon <- yvms %>%
-    filter(!(subgroup %in% confidential$subgroup)) %>%
-    dplyr::select(crab_year,drvid,subgroup,Rec_ID,LATITUDE,LONGITUDE,X_COORD,Y_COORD)
+    message("starting bootstrapping...\n")
+    ## run bootstrapping
+    # yboots <- bootstraps(as.data.frame(yvms.noncon), times=nboot,apparent=TRUE) %>%
+    #   mutate(booted = purrr::map(splits,bootstrapped_kerneloverlap))
+    yboots <- bootstraps(as.data.frame(yvms.noncon), times=nboot, strata=subgroup, apparent=TRUE) %>%
+      mutate(booted = purrr::map(splits,bootstrapped_kerneloverlap_proj6))
+    
+    out <- yboots[[3]]
+    
+    saveRDS(out,here(outdir_boot,paste0(overlap.method,"overlap_",y,"crabyr_",k,"clusters_",nboot,"bootstrappedPROJ6.rds")))
+    
+    print(Sys.time()-sstart)
+    message("done with crab year ",y," bootstrapping.\n\n")
+    
+  }
   
-  message("starting bootstrapping...\n")
-  ## run bootstrapping
-  # yboots <- bootstraps(as.data.frame(yvms.noncon), times=nboot,apparent=TRUE) %>%
-  #   mutate(booted = purrr::map(splits,bootstrapped_kerneloverlap))
-  yboots <- bootstraps(as.data.frame(yvms.noncon), times=nboot, strata=subgroup, apparent=TRUE) %>%
-    mutate(booted = purrr::map(splits,bootstrapped_kerneloverlap))
+  message("\ndone with time frame ",t," bootstrapping. It took: ")
+  Sys.time()-timeframe.start
+  message(" to run.\n\n")
+  beep()
+# } 
   
-  out <- yboots[[3]]
-  
-  saveRDS(out,here(outdir_boot,paste0(overlap.method,"overlap_",y,"crabyr_",k,"clusters_",nboot,"bootstrapped.rds")))
-  
-  print(Sys.time()-sstart)
-  message("done with crab year ",y," bootstrapping.\n\n")
-  
-}
-
-message("\ndone with time frame ",t," bootstrapping. It took: ")
-Sys.time()-timeframe.start
-message(" to run.\n\n")
-beep()
-  
-# message("final benchmark: ")
-# Sys.time()-all.start
+message("final benchmark: ")
+Sys.time()-all.start
 ```
 Time difference of 3.350189 hours
 
@@ -384,6 +385,253 @@ for(t in tfs1){
   
 }
 ```
+
+
+#### re-sampling: PROJ 6
+
+With the updates to rgdal / geos, the `kerneloverlap` function was returning the warning: 
+
+```
+i In argument: `booted = purrr::map(splits,
+  bootstrapped_kerneloverlap)`.
+Caused by warning in `proj4string()`:
+! CRS object has comment, which is lost in output
+```
+
+I believe this means that the projection of the SpatialPointsDataFrame wasn't being carried through the `kerneloverlap` function, which may affect the calculation of overlap between the utilization distributions. I'm not sure how much of an effect it will have. But to be safe, I'm going to re-run the bootstrapping and re-create the figures. 
+
+I have fixed this error in a new version of the `bootstrapped_kerneloverlap` wrapper function, called  
+`bootstrapped_kerneloverlap_proj6`
+
+```{r}
+all.start <- Sys.time()
+# for(t in tfs){
+  t <- "annual"
+  # filter VMS data
+  # filter VMS data
+  if(t != "annual"){
+    tmp.seasons <- season_dates_df %>% filter(crab_year %in% crab_years) %>% filter(pcdistrict==t)
+  } else{tmp.seasons <- season_dates_df}
+  
+  tvms <- subsetVMS(dat=grouped.vms, crab_years=crab_years, cut=t, seasons=tmp.seasons)
+  k <- length(unique(tvms$group)) + 1
+  
+  timeframe.start <- Sys.time()
+  for(y in crab_years){
+    sstart <- Sys.time()
+    ## filter for year
+    yvms <- filter(tvms, crab_year==y)
+    
+    ## check for confidential VMS
+    sample_size <- yvms %>%
+      group_by(subgroup) %>%
+      summarise(n.vessels = length(unique(drvid)), n.trips = length(unique(Rec_ID))) %>%
+      arrange(n.vessels,n.trips)
+    confidential <- filter(sample_size,n.vessels < 3)
+    
+    yvms.noncon <- yvms %>%
+      filter(!(subgroup %in% confidential$subgroup)) %>%
+      dplyr::select(crab_year,drvid,subgroup,Rec_ID,LATITUDE,LONGITUDE,X_COORD,Y_COORD)
+  
+    message("starting bootstrapping...\n")
+    ## run bootstrapping
+    # yboots <- bootstraps(as.data.frame(yvms.noncon), times=nboot,apparent=TRUE) %>%
+    #   mutate(booted = purrr::map(splits,bootstrapped_kerneloverlap))
+    yboots <- bootstraps(as.data.frame(yvms.noncon), times=nboot, strata=subgroup, apparent=TRUE) %>%
+      mutate(booted = purrr::map(splits,bootstrapped_kerneloverlap_proj6))
+    
+    out <- yboots[[3]]
+    
+    saveRDS(out,here(outdir_boot,t,paste0(overlap.method,"overlap_",y,"crabyr_",k,"clusters_",nboot,"bootstrappedPROJ6.rds")))
+    
+    print(Sys.time()-sstart)
+    message("done with crab year ",y," bootstrapping.\n\n")
+    
+  }
+  
+  message("\ndone with time frame ",t," bootstrapping. It took: ")
+  Sys.time()-timeframe.start
+  message(" to run.\n\n")
+  beep()
+# } 
+  
+message("final benchmark: ")
+Sys.time()-all.start
+```
+
+For "central" timeframe:
+```
+starting bootstrapping...
+
+Time difference of 6.736201 mins
+done with crab year 2013 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 18.31192 mins
+done with crab year 2014 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 17.21262 mins
+done with crab year 2015 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 10.21717 mins
+done with crab year 2016 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 15.77507 mins
+done with crab year 2017 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 9.092427 mins
+done with crab year 2018 bootstrapping.
+
+
+done with time frame central bootstrapping. It took: 
+>   Sys.time()-timeframe.start
+Time difference of 1.289186 hours
+```
+
+For "northern" timeframe:
+```
+starting bootstrapping...
+
+Time difference of 18.34802 mins
+done with crab year 2013 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 20.0322 mins
+done with crab year 2014 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 18.43136 mins
+done with crab year 2015 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 14.59164 mins
+done with crab year 2016 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 15.90944 mins
+done with crab year 2017 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 10.84621 mins
+done with crab year 2018 bootstrapping.
+
+
+>   
+>   message("\ndone with time frame ",t," bootstrapping. It took: ")
+
+done with time frame northern bootstrapping. It took: 
+>   Sys.time()-timeframe.start
+Time difference of 1.63607 hours
+>   message(" to run.\n\n")
+ to run.
+
+
+>   beep()
+> # } 
+>   
+> message("final benchmark: ")
+final benchmark: 
+> Sys.time()-all.start
+Time difference of 1.636356 hours
+```
+
+For "annual" fishing grounds:
+```
+starting bootstrapping...
+
+Time difference of 27.05105 mins
+done with crab year 2013 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 28.30265 mins
+done with crab year 2014 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 24.36587 mins
+done with crab year 2015 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 14.73457 mins
+done with crab year 2016 bootstrapping.
+
+starting bootstrapping...
+
+Time difference of 27.93036 mins
+done with crab year 2017 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 21.10082 mins
+done with crab year 2018 bootstrapping.
+
+
+
+done with time frame annual bootstrapping. It took: 
+Time difference of 2.391617 hours
+ to run.
+```
+
+
+Turn list of lists into dataframe, using the custom function `kernelUD_to_dataframe`
+
+```{r}
+tfs1 <- c("central","northern","annual")
+for(t in tfs1){
+  # Read back in the lists of lists
+  
+  ba.boot <- list()
+  for(y in crab_years){
+    ba.boot <- append(ba.boot, readRDS(here('project-dat/vms/interpolation_60min/NaN_speed_filter/group90ud/bootstrapping',t,paste0('BAoverlap_',y,'crabyr_6clusters_',nboot,'bootstrappedPROJ6.rds')))[2:(nboot+1)]) #only grab the bootstrapped data, not the starting data set
+  }
+  length(ba.boot)
+  message('read in bootstrapping data for ',t,'...')
+  
+  ba.boot2 <- purrr::map(ba.boot, .f=kernelUD_to_dataframe)
+  names(ba.boot2) <- rep(crab_years,each=nboot) 
+  ba.boot.df <- data.table::rbindlist(ba.boot2, fill = TRUE, idcol = T)
+  rm(ba.boot2,ba.boot)
+  
+  ## save
+  write_csv(ba.boot.df, here(statdir,paste0('BAoverlap_bootstrappedPROJ6_',crab_years[1],"-",substr(last(crab_years),3,4),'_',t,'.csv')))
+  
+  message('saved bootstrapping data for ',t,'\n.')
+  
+  
+}
+```
+
+
 
 
 ## Generate graphs for each vessel cluster, for each time frame (faceted by year)

@@ -11,13 +11,6 @@ Create Figure 3 for main text. Figure 3 will show fishing activity for (a) small
 
 This script is based on Owen Liu's `match_to_5x5_grid.Rmd` in github.com/owenrliu/VMS-NWFSC-2. 
 
-**TO DO: ** 
-
-- modify plotting function to use set color scale across all maps
-
-- create combined 1-small map (will need to manually set color scale across all grids) 
-
-- created maps of vessel counts
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)

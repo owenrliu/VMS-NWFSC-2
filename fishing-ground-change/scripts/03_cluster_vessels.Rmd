@@ -19,7 +19,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # r packages
 library(tidyverse)
 library(magrittr)
-library(sf)
+# library(sf)
 # library(sp)
 library(lubridate)
 library(ggplot2)
@@ -778,16 +778,89 @@ dev.off()
 ```
 
 
+### summary table
+
+read in the group key file with lengths
+```{r}
+lengthdat <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_nonconTix-group-key.csv')) %>%
+  filter(crab_year==2014)
 
 
+tabledat <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv')) %>% filter(crab_year==2014)
+
+tabledat %>% filter(group != 5) %>% group_by(drvid) %>% mutate(occur=n()) %>% filter(occur > 1) %>%
+  left_join(lengthdat %>% dplyr::select(drvid,FINAL_LENGTH))
+```
+
+remove both vessels from the "small" category and get rid of their 39ft length.
+```{r}
+edit_vessels <- data.frame(drvid=unique(tabledat %>% filter(group != 5) %>% group_by(drvid) %>% mutate(occur=n()) %>% filter(occur > 1) %>% pull(drvid)),
+                           vessel_size=c("small","small"),
+                           FINAL_LENGTH=c(39,39))
+
+tabledat %<>% anti_join(edit_vessels)
+lengthdat %<>% anti_join(edit_vessels)
+```
 
 
+And filter the VMS data for only 2014 fishing trips.
+```{r}
+vmsdat_2014 <- filter(vms, crab_year==2014 & drvid %in% tabledat$drvid)
+```
+
+```{r}
+vmsdat_2014_table <- vmsdat_2014 %>%
+  group_by(drvid) %>%
+  summarise(ntrips=length(unique(Rec_ID))) %>%
+  right_join(tabledat %>% filter(crab_year==2014), by="drvid")
+```
+which vessels are listed twice 
+```{r}
+filter(vmsdat_2014_table %>% filter(group != 5) %>% group_by(drvid) %>% summarise(occur=n()), occur > 1)
+```
+
+take the median of lengths for vessels that occur in the length data more than once. Because of the fix above, none of these cause vessels to be placed in more than one length category.
+```{r}
+lengthdat %<>% group_by(drvid) %>% 
+  summarise(summary_length=mean(FINAL_LENGTH))
+```
 
 
+```{r}
+vmsdat_2014_table %<>% 
+  left_join(lengthdat %>% dplyr::select(drvid,summary_length))
+```
+
+save out the summary table with sample size, average / standard deviation of length, total number of vms-covered fishing trips
+```{r}
+vmsdat_2014_table %>%
+  group_by(subgroup,group_area,vessel_size) %>%
+  summarise(subgroup_vessels=length(unique(drvid)),
+            subgroup_trips=sum(ntrips),
+            subgroup_length=mean(summary_length),
+            subgroup_lengthSD=sd(summary_length))
+```
+1-large	central	large	26	285	
+1-small	central	small	19	374	
+2-large	northern	large	31	225	
+2-small	northern	small	17	364	
+3-large	central/northern	large	4	25	
+4-large	central/northern	large	3	38	
+5-large	central/northern	large	7	63	
 
 
+26	285	48.26923	7.479613
+19	374	35.13158	3.850837
+31	225	51.64516	9.326659
+17	364	33.17647	5.581614
+4	25	55.87500	6.142407
+3	38	54.16667	8.251263
+7	63	55.14286	6.510980
 
-
+total vessels?
+```{r}
+length(vmsdat_2014_table %>% pull(drvid) %>% unique())
+```
 
 ### park
 ```{r eval=FALSE}
