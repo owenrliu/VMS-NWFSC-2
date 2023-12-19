@@ -35,6 +35,7 @@ library(grid);library(gridExtra)
 # library(maps)
 
 source(here('R','intersect_vms_block.R'))
+source(here('R','getmode.R'))
 
 
 # ggplot theme
@@ -551,45 +552,44 @@ dev.off()
 
 Vessel lengths can vary by year. Here, clusters are subdivided by the vessel lengths reported in the year *beginning* each crab season (in other words, crab_year - 1). 
 ```{r include=FALSE}
+# if running full script, remove old objects
 rm(vms,tmpvms,tmpout,vms_out,vms_per_area,vms_per_block)
+```
+```{r include=FALSE}
+# if running only this section, read in group key
+k=4
+drvid_groups <- read_csv(here::here(outdir,paste0(cluster_year,"_k",k,"clusters_area.csv")))
 ```
 <br>
 
 ### data
 
-```{r fishtix}
-for(y in crab_years){
-  tmpy <- y-1
-  tmptix <-  read_rds(here::here('../data','processed','fish tickets',paste0(y,'fishtix_vlengths.rds'))) %>%
-    dplyr::select(Rec_ID,drvid,year,jdate,DCRB_lbs,DCRB_revenue,FINAL_LENGTH) %>%
-    filter(drvid %in% drvid_groups$vessels) %>%
-    mutate(for_crab_year=y)
-  if(y==crab_years[1]){
-    tix <- tmptix
-  } else{
-    tix %<>% bind_rows(tmptix)
-  }
-}
-
-str(tix)
-```
-
-make just a vessel length key.
+read in the vessel length key created in script `02_vessel_EMD_bysize`.
 ```{r}
-lkey <- tix %>% dplyr::select(drvid,FINAL_LENGTH,for_crab_year) %>% distinct()
+lkey <- read_csv(here('project-dat','vessel_groups','length_key_dcrb_vms_vessels.csv'))
 ```
 
 
-### by area
+### split by area
 
-For each year, copy over the groups data frame, then assign a year-specific vessel size category (small, large)
+in which crab years did each vessel have vms data?
+```{r}
+grouped.vms <- drvid_groups %>% 
+  rename(group_area=area,
+         cluster_year=crab_year,
+         drvid=vessels) %>%
+  left_join(vms %>% dplyr::select(drvid,Rec_ID,crab_year) %>% distinct(), by=c("drvid"), multiple="all") %>%
+  filter(crab_year %in% crab_years) %>% 
+  group_by(drvid,group,group_area,cluster_year,crab_year) %>%
+  summarise(n.trips=length(unique(Rec_ID)))
+```
+
+For each crab year in which a given vessel was present in the vms data, assign a year-specific vessel size category (small, large)
 ```{r}
 for(i in seq(1,length(crab_years))){
   y <- crab_years[i]
-  tmpdat <- drvid_groups %>% 
-    rename("group_year"=crab_year) %>%
-    mutate(crab_year=y) %>%
-    left_join(lkey, by=c("vessels"="drvid","crab_year"="for_crab_year"))
+  tmpdat <- filter(grouped.vms, crab_year==y) %>% 
+    left_join(lkey, by=c("drvid","crab_year"))
   if(i==1){
     drvid_groups_annual <- tmpdat
   } else{
@@ -600,34 +600,104 @@ for(i in seq(1,length(crab_years))){
 drvid_groups_annual %<>% mutate(vessel_size=ifelse(FINAL_LENGTH < 40, "small","large"))
 ```
 
-Split groups
+check to make sure vessels have a single vessel size, per year 
+```{r}
+## only one group?
+drvid_groups_annual %>% 
+  filter(!is.na(FINAL_LENGTH)) %>%
+  group_by(drvid, crab_year) %>%
+  summarise(n=length(unique(FINAL_LENGTH))) %>% filter(n > 1)
+```
+
+
+Interpolate vessel sizes when they are missing, same as in script 02.
+if a fishing vessel is missing vessel sizes, use the most common size over all the other years. leave the final length as NA so that we can tell which sizes were interpolated.
+```{r}
+# split data set 
+drvid_groups_annual.noVS <- filter(drvid_groups_annual, is.na(vessel_size))
+drvid_groups_annual.VS <- filter(drvid_groups_annual, !is.na(vessel_size))
+
+# get most common vessel sizes
+VS_mode <- drvid_groups_annual.VS %>%
+  group_by(drvid) %>%
+  summarise(vessel_size=getmode(vessel_size),
+            n_sizes=length(unique(vessel_size)))
+
+# any vessels span size classes across years? if this data frame is empty, that is good!
+VS_mode %>% filter(n_sizes>1)
+
+# add in vessel sizes
+drvid_groups_annual.noVS %<>% dplyr::select(-vessel_size) %>%
+  left_join(VS_mode,by="drvid") %>% dplyr::select(-n_sizes)
+```
+
+
+rejoin data sets
+```{r}
+drvid_groups_annual <- bind_rows(drvid_groups_annual.VS,drvid_groups_annual.noVS) %>% arrange(drvid,crab_year)
+
+# how many vessel-years are missing vessel sizes?
+length((drvid_groups_annual %>% filter(is.na(vessel_size)))$vessel_size)
+```
+
+I'm allowing vessels to move between "Local" subgroups as their reported length changes. Does this actually happen for any vessels?
+```{r}
+drvid_groups_annual %>% dplyr::select(-crab_year,-n.trips,-FINAL_LENGTH) %>% distinct() %>%
+  group_by(drvid) %>% mutate(occur=n()) %>% filter(occur > 1) %>%
+  dplyr::select(drvid) %>% distinct() %>% left_join(drvid_groups_annual)
+```
+
+**ANSWER: Only one vessel switches between subgroups (Local Central small to Local Central large) due to reported length changes**
+
+Split groups and **save**
 ```{r}
 drvid_subgroups <- drvid_groups_annual %>% 
-  filter(!is.na(FINAL_LENGTH)) %>%
-  group_by(crab_year,group,vessel_size) %>%
-  summarise(n=n()) %>%
+  filter(!is.na(vessel_size)) %>%
   unite(col="subgroup",c(group,vessel_size), sep="-",remove=FALSE)
 
-ggplot(drvid_subgroups, aes(x=crab_year,y=n, col=subgroup)) +
+write_csv(drvid_subgroups,here('project-dat','vessel_groups',paste0('k',k,'_NaNspeedfilter_',cluster_year,'clusterYR_byArea_confidential-group-key.csv')))
+```
+
+Check for confidential subgroup-years
+```{r}
+drvid_subgroups_n <- drvid_subgroups %>%
+  group_by(group,group_area,subgroup,vessel_size,cluster_year,crab_year)%>%
+  summarise(n.vessels=length(unique(drvid)))
+
+
+ggplot(drvid_subgroups_n, aes(x=crab_year,y=n.vessels, col=subgroup)) +
   geom_point() + geom_path() + 
   labs(subtitle=paste0("cluster sizes (k=",k,")"), x="crab year",y="n. vessels")
 
 if(write){
-write.csv(drvid_subgroups, here('project-dat','vessel_groups',paste0('k',k,'_NaNspeedfilter_',cluster_year,'clusterYR_byArea_sample-sizes-tix.csv')))
+write.csv(drvid_subgroups_n, here('project-dat','vessel_groups',paste0('k',k,'_NaNspeedfilter_',cluster_year,'clusterYR_byArea_sample-sizes-vms.csv')))
 }
 ```
 <br>
 
-which group-years are confidential? write out a non-confidential groups key.
+which group-years are confidential? 
+```{r}
+to_remove <- drvid_subgroups_n %>% filter(n.vessels < 3)
+
+to_remove %>% dplyr::select(subgroup,group_area,crab_year,n.vessels)
+```
+
+and (2) doing an anti-join with the grouped VMS dataset. 
+```{r}
+subgroup_out <- drvid_subgroups %>% anti_join(to_remove,by=c("crab_year","subgroup"))
+```
+
+
+check that it worked!
+```{r} 
+subgroup_out  %>% group_by(subgroup,crab_year) %>% summarise(n.vessels=length(unique(drvid))) %>% filter(n.vessels < 3)
+```
+
+
+
 ```{r}
 if(write){
-subgroup_out <- drvid_subgroups %>% 
-  filter(n>2) %>%
-  dplyr::select(crab_year,subgroup,group,vessel_size) %>%
-  left_join(drvid_groups_annual, by=c("group","crab_year","vessel_size")) %>%
-  rename("drvid"=vessels)
-
-write.csv(subgroup_out, here('project-dat','vessel_groups',paste0('k',k,'_NaNspeedfilter_',cluster_year,'clusterYR_byArea_nonconTix-group-key.csv')))
+write_csv(subgroup_out,file=here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
 }
 ```
 
@@ -637,7 +707,7 @@ write.csv(subgroup_out, here('project-dat','vessel_groups',paste0('k',k,'_NaNspe
 ```{r}
 k <- 4
 cluster_year <- 2014
-subgroup_out <- read_csv(here('project-dat','vessel_groups',paste0('k',k,'_NaNspeedfilter_',cluster_year,'clusterYR_byArea_nonconTix-group-key.csv')))
+subgroup_out <- read_csv(here('project-dat','vessel_groups',paste0('k',k,'_NaNspeedfilter_',cluster_year,'clusterYR_byArea_confidential-group-key.csv')))
 ```
 
 In certain years, vessel groups 4-large and 3-large (the coastwide / mobile northern groups) have fewer than 3 vessels in the *VMS data.* I didn't catch this because there are more than 3 vessels in the fish ticket data. So those vessels that dropped out of the VMS data either didn't have VMS, or their trips got filtered out. 
@@ -648,9 +718,9 @@ I still want to be able to look at 4-large and 3-large behavior, but for figures
 First extend the vessel group key to include "5-large" / group 5, and copy in drvids. 
 ```{r}
 group5_vessels <- filter(subgroup_out,subgroup %in% c("3-large","4-large"))
-group5_vessels %<>% dplyr::select(-subgroup,-group,-area) %>%
+group5_vessels %<>% dplyr::select(-subgroup,-group,-group_area) %>%
   mutate(subgroup="5-large", group=5,
-         area="central/northern")
+         group_area="central/northern")
 
 vgroups_ext <- bind_rows(subgroup_out,group5_vessels)
 unique(vgroups_ext$subgroup)
@@ -659,92 +729,53 @@ unique(vgroups_ext$subgroup)
 k <- k + 1
 ```
 
-Then, create a truly non-confidential vessel group key by (1) marking subgroup/year combinations to remove from the VMS data...
+
+### save non-confidential key
+
+Check for confidential subgroup-years
 ```{r}
-grouped.vms <- vgroups_ext %>% dplyr::select(crab_year,drvid,subgroup,group,vessel_size,area) %>%
-  rename(group_area=area) %>%
-  left_join(vms, by=c("drvid","crab_year"), multiple="all") %>%
-  filter(crab_year %in% crab_years) %>% 
-  dplyr::select(crab_year,drvid,subgroup,group,vessel_size,group_area,Rec_ID,date,removal_type_code,westcoastdate,X_COORD,Y_COORD,LATITUDE,LONGITUDE,season_start_date) %>%
-  filter(!is.na(Rec_ID))
+drvid_subgroups_n <- vgroups_ext %>%
+  group_by(group,group_area,subgroup,vessel_size,cluster_year,crab_year)%>%
+  summarise(n.vessels=length(unique(drvid)))
 
-to_remove <- grouped.vms %>% group_by(subgroup,crab_year) %>% summarise(n.vessels=length(unique(drvid))) %>% filter(n.vessels < 3)
 
-to_remove
+ggplot(drvid_subgroups_n, aes(x=crab_year,y=n.vessels, col=subgroup)) +
+  geom_point() + geom_path() + 
+  labs(subtitle=paste0("cluster sizes (k=",k,")"), x="crab year",y="n. vessels")
+
+if(write){
+write.csv(drvid_subgroups_n, here('project-dat','vessel_groups',paste0('k',k,'_NaNspeedfilter_',cluster_year,'clusterYR_byArea_sample-sizes-vms.csv')))
+}
+```
+<br>
+
+```{r}
+to_remove <- drvid_subgroups_n %>% filter(n.vessels < 3)
+
+to_remove %>% dplyr::select(subgroup,group_area,crab_year,n.vessels)
 ```
 
-and (2) doing an anti-join with the grouped VMS dataset. 
+and (2) do an anti-join with the grouped VMS dataset. 
 ```{r}
-grouped.vms %<>% anti_join(to_remove,by=c("crab_year","subgroup"))
+vgroups_ext_out <- vgroups_ext %>% anti_join(to_remove,by=c("crab_year","subgroup"))
 ```
 
 
 check that it worked!
 ```{r} 
-grouped.vms %>% group_by(subgroup,crab_year) %>% summarise(n.vessels=length(unique(drvid))) %>% filter(n.vessels < 3)
+vgroups_ext_out %>% group_by(subgroup,crab_year) %>% summarise(n.vessels=length(unique(drvid))) %>% filter(n.vessels < 3)
 ```
 
 
 
-In the tickets-based key
-
-   subgroup crab_year ndrvid
-   <chr>        <dbl>  <int>
- 1 3-large       2013      4
- 2 3-large       2014      4
- 3 3-large       2015      5
- 4 3-large       2016      4
- 5 3-large       2017      4
- 6 3-large       2018      3
- 7 4-large       2013      3
- 8 4-large       2014      3
- 9 4-large       2015      3
-10 4-large       2016      3
-11 4-large       2017      3
-12 4-large       2018      3
-
-In the vms data
-  subgroup crab_year ndrvid
-   <chr>        <dbl>  <int>
- 1 3-large       2013      3
- 2 3-large       2014      4
- 3 3-large       2015      5
-
- 5 3-large       2017      4
-
- 8 4-large       2014      3
- 9 4-large       2015      3
-
-11 4-large       2017      3
-12 4-large       2018      3
-
-New "group 5" in the vms data
-  subgroup crab_year n.vessels
-  <chr>        <dbl>     <int>
-1 5-large       2013         5
-2 5-large       2014         7
-3 5-large       2015         8
-4 5-large       2016         4
-5 5-large       2017         7
-6 5-large       2018         5
-
 ```{r}
-## only for the first time through -- re-write groups key to be truly non-confidential
-vgroups_key_out <- grouped.vms %>%
-  dplyr::select(group,subgroup,crab_year,drvid,group_area,vessel_size) %>% 
-  distinct()
-sample_sizes_out <- vgroups_key_out %>%
-  group_by(group,subgroup,crab_year,group_area,vessel_size) %>%
-  summarise(n.vessels=length(unique(drvid)))
-
 if(write){
-write_csv(vgroups_key_out,file=here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
-
-write_csv(sample_sizes_out,file=here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_sample-sizes.csv'))
+write_csv(vgroups_ext_out,file=here('project-dat','vessel_groups',paste0('k',k,'_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv')))
 }
 ```
 
 
+### Heat map
 Create a condensed heat map for specific groups
 ```{r}
 plotdat.summary <- mydat_counts %>%
@@ -778,68 +809,38 @@ dev.off()
 ```
 
 
-### summary table
+### Summary table
 
-read in the group key file with lengths
+read in the group key file with lengths.
 ```{r}
-lengthdat <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_nonconTix-group-key.csv')) %>%
-  filter(crab_year==2014)
+tabledat <- read_csv(here('project-dat','vessel_groups','k5_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
 
-
-tabledat <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv')) %>% filter(crab_year==2014)
-
-tabledat %>% filter(group != 5) %>% group_by(drvid) %>% mutate(occur=n()) %>% filter(occur > 1) %>%
-  left_join(lengthdat %>% dplyr::select(drvid,FINAL_LENGTH))
-```
-
-remove both vessels from the "small" category and get rid of their 39ft length.
-```{r}
-edit_vessels <- data.frame(drvid=unique(tabledat %>% filter(group != 5) %>% group_by(drvid) %>% mutate(occur=n()) %>% filter(occur > 1) %>% pull(drvid)),
-                           vessel_size=c("small","small"),
-                           FINAL_LENGTH=c(39,39))
-
-tabledat %<>% anti_join(edit_vessels)
-lengthdat %<>% anti_join(edit_vessels)
-```
-
-
-And filter the VMS data for only 2014 fishing trips.
-```{r}
-vmsdat_2014 <- filter(vms, crab_year==2014 & drvid %in% tabledat$drvid)
-```
-
-```{r}
-vmsdat_2014_table <- vmsdat_2014 %>%
-  group_by(drvid) %>%
-  summarise(ntrips=length(unique(Rec_ID))) %>%
-  right_join(tabledat %>% filter(crab_year==2014), by="drvid")
-```
-which vessels are listed twice 
-```{r}
-filter(vmsdat_2014_table %>% filter(group != 5) %>% group_by(drvid) %>% summarise(occur=n()), occur > 1)
-```
-
-take the median of lengths for vessels that occur in the length data more than once. Because of the fix above, none of these cause vessels to be placed in more than one length category.
-```{r}
-lengthdat %<>% group_by(drvid) %>% 
-  summarise(summary_length=mean(FINAL_LENGTH))
-```
-
-
-```{r}
-vmsdat_2014_table %<>% 
-  left_join(lengthdat %>% dplyr::select(drvid,summary_length))
+tabledat.2014 <- tabledat  %>% filter(crab_year==2014)
 ```
 
 save out the summary table with sample size, average / standard deviation of length, total number of vms-covered fishing trips
 ```{r}
-vmsdat_2014_table %>%
-  group_by(subgroup,group_area,vessel_size) %>%
+tabledat %>% filter(crab_year==2014) %>%
+  group_by(subgroup,group_area,vessel_size,crab_year) %>%
   summarise(subgroup_vessels=length(unique(drvid)),
-            subgroup_trips=sum(ntrips),
-            subgroup_length=mean(summary_length),
-            subgroup_lengthSD=sd(summary_length))
+            subgroup_trips=sum(n.trips),
+            subgroup_length=mean(FINAL_LENGTH, na.rm=TRUE),
+            subgroup_lengthSD=sd(FINAL_LENGTH, na.rm=TRUE))
 ```
+
+*UPDATED TABLE 2023-12-19*
+subgroup group_area vessel_size crab_year subgroup_vessels subgroup_trips subgroup_length subgroup_lengthSD
+1-large	central	large	2014	24	279	49.15217	7.919244
+1-small	central	small	2014	20	379	35.34211	4.000183
+2-large	northern	large	2014	30	214	51.81250	9.567623
+2-small	northern	small	2014	18	375	33.26471	5.662700
+3-large	central/northern	large	2014	4	25	56.00000	5.944185
+4-large	central/northern	large	2014	3	38	54.33333	8.504901
+5-large	central/northern	large	2014	7	63	55.28571	6.524678
+
+
+
+*OUTDATED TABLE*
 1-large	central	large	26	285	
 1-small	central	small	19	374	
 2-large	northern	large	31	225	
@@ -847,7 +848,6 @@ vmsdat_2014_table %>%
 3-large	central/northern	large	4	25	
 4-large	central/northern	large	3	38	
 5-large	central/northern	large	7	63	
-
 
 26	285	48.26923	7.479613
 19	374	35.13158	3.850837
@@ -859,8 +859,22 @@ vmsdat_2014_table %>%
 
 total vessels?
 ```{r}
-length(vmsdat_2014_table %>% pull(drvid) %>% unique())
+length(tabledat %>% pull(drvid) %>% unique())
 ```
+
+save summary for every year
+```{r}
+tabledat %>%
+  group_by(subgroup,group_area,vessel_size,crab_year) %>%
+  summarise(subgroup_vessels=length(unique(drvid)),
+            subgroup_trips=sum(n.trips),
+            subgroup_length=mean(FINAL_LENGTH, na.rm=TRUE),
+            subgroup_lengthSD=sd(FINAL_LENGTH, na.rm=TRUE)) %>%
+  write_csv(here('project-dat','vessel_groups',paste0('k',k,'_NaNspeedfilter_',cluster_year,'clusterYR_byArea_noncon_group-vms-summary.csv')))
+```
+
+
+
 
 ### park
 ```{r eval=FALSE}

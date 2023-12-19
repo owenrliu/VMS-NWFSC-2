@@ -271,6 +271,7 @@ vms_noncon_grd10_match %>%
   write_rds(here::here('project-dat','vessel_groups','vms_noncon_interpolated_k4groups_2014clusterYR_10x10grd.rds'))
 ```
 
+
 ## Map
 
 ### 5x5km grid
@@ -665,6 +666,8 @@ png(here::here('project-dat','figures',"change_CUSTOMgrid_annual_1Small.png"),re
 plot_grid(plotlist=myplotOUT_list.a,nrow=1,rel_widths=c(1.4,0.8,0.8,0.8,0.8,3), labels=c("a"))
 dev.off()
 ```
+
+
 ## 5-large
 
 ### Final Map
@@ -790,14 +793,28 @@ vms_noncon_grd15_match %>%
 
 #### Map
 
+```{r}
+# non-spatial version
+vms_noncon_grd15_match <- read_rds(here::here('project-dat','vessel_groups','vms_noncon_interpolated_k4groups_2014clusterYR_15x15grd.rds'))
+```
+
 Calculate grid values
 ```{r}
 vms_by_grd15 <- vms_noncon_grd15_match %>%
   group_by(crab_year,subgroup,vessel_size, BLOCK15_ID) %>%
   summarise(n.vms=n(),
             n.vessels=length(unique(drvid)))
+## check - no grids with fewer than 3 vessels, right?
+filter(vms_by_grd15, n.vessels < 3)
 ```
 
+Save non-confidential, summarized data for mapping
+```{r eval=FALSE}
+vms_by_grd15 %>%
+  write_rds(here::here('project-dat','vessel_groups','vms_noncon_interpolated_k4groups_2014clusterYR_15x15grd_summary.rds'))
+```
+
+Add shape info
 ```{r}
 grd15_wgs84 <- st_transform(grd15,crs=4326)
   grd15_wgs84 <- grd15_wgs84[grd15_wgs84$BLOCK15_ID %in% vms_by_grd15$BLOCK15_ID,]
@@ -841,6 +858,8 @@ png(here::here('project-dat','figures',"change_15x15grid_annual_5Large.png"),res
 plot_grid(plotlist=myplot15_list.e,nrow=1,rel_widths=c(2,0.9,0.9,0.9,0.9,3.4), labels=c("e"))
 dev.off()
 ```
+
+
 
 
 
@@ -907,14 +926,29 @@ vms_noncon_grd100_match %>%
 
 #### Map
 
+```{r}
+vms_noncon_grd100_match <-read_rds(here::here('project-dat','vessel_groups','vms_noncon_interpolated_k4groups_2014clusterYR_100x100grd.rds'))
+```
+
 Calculate grid values
 ```{r}
 vms_by_grd100 <- vms_noncon_grd100_match %>%
   group_by(crab_year,subgroup,vessel_size, FID_) %>%
   summarise(n.vms=n(),
             n.vessels=length(unique(drvid)))
+
+## check - no grids with fewer than 3 vessels, right?
+filter(vms_by_grd100, n.vessels < 3)
 ```
 
+Save non-confidential, summarized data for mapping
+```{r eval=FALSE}
+vms_by_grd100 %>%
+  write_rds(here::here('project-dat','vessel_groups','vms_noncon_interpolated_k4groups_2014clusterYR_100x100grd_summary.rds'))
+```
+
+
+add shape info
 ```{r}
 grd100_wgs84 <- st_transform(grd100,crs=4326)
   grd100_wgs84 <- grd100_wgs84[grd100_wgs84$FID_ %in% vms_by_grd100$FID_,]
@@ -957,6 +991,4 @@ png(here::here('project-dat','figures',"change_100x100grid_annual_5Large.png"),r
 plot_grid(plotlist=myplot100_list.e,nrow=1,rel_widths=c(2,0.9,0.9,0.9,0.9,3.5), labels=c("a"))
 dev.off()
 ```
-
-
 

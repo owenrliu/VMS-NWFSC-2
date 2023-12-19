@@ -26,9 +26,9 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(magrittr)
 library(here)
-library(raster)
+# library(raster)
 library(adehabitatHR)
-library(move)
+# library(move)
 library(pryr)
 
 source(here('R','getmode.R'))
@@ -108,7 +108,11 @@ write_csv(lkey.filtered,here('project-dat','vessel_groups','length_key_dcrb_vms_
 
 ### trips per vessel
 
+[no additional filtering]
+
 ### exvessel revenue
+
+[no additional filtering]
 
 ## Earth Mover's Distance per vessel
 
@@ -212,6 +216,7 @@ write.csv(emd_dat,here::here('project-dat','statistics',paste0('EMD_annual_per_v
 
 
 ## Significance testing
+
 ```{r}
 keep_years <- seq(2013,2018)
 ```
@@ -231,13 +236,25 @@ vgroups <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014cl
 emd.dat <- read_csv(here(statdir,paste0('EMD_annual_per_vessel_',udsize*100,'ud_',kernel_g,'grid_', crab_years[1],'-',substr(tail(crab_years,1),3,4), 'crabYrs_ALL.csv')))
 ```
 
+### add vessel sizes
 
-
-### fix missing vessel sizes
 
 ```{r}
 emd.dat %<>% left_join(vlengths,by=c("drvid","crab_year_1"="crab_year"))
 ```
+
+Check to make sure no vessels may have two lengths listed for a single crab season. 
+```{r}
+emd.dat %>%
+  dplyr::select(drvid,crab_year_1,FINAL_LENGTH,vessel_size) %>%
+  distinct() %>%
+  group_by(drvid,crab_year_1) %>%
+  summarise(n=length(unique(vessel_size))) %>%
+  filter(n > 1)
+```
+
+
+### fix missing vessel sizes
 
 if a fishing vessel is missing vessel sizes, use the most common size over all the other years. leave the final length as NA so that we can tell which sizes were interpolated.
 ```{r}
@@ -260,8 +277,42 @@ emd.dat.noVS %<>% dplyr::select(-vessel_size) %>%
 
 # rejoin data sets
 emd.dat <- bind_rows(emd.dat.VS, emd.dat.noVS) %>% arrange(drvid,crab_year_1)
+
+# how many vessels are missing vessel sizes still?
 (length((emd.dat %>% filter(is.na(vessel_size)))$vessel_size)/dim(emd.dat[1]))
 ```
+
+Check to make sure no vessels may have two lengths listed for a single crab season. 
+```{r}
+emd.dat %>%
+  dplyr::select(drvid,crab_year_1,FINAL_LENGTH,vessel_size) %>%
+  distinct() %>%
+  group_by(drvid,crab_year_1) %>%
+  summarise(n=length(unique(vessel_size))) %>%
+  filter(n > 1)
+```
+
+
+Compare the original and new length keys
+```{r}
+new_lkey <- emd.dat %>%
+  dplyr::select(drvid,crab_year_1,FINAL_LENGTH,vessel_size) %>%
+  distinct() %>%
+  rename("crab_year"=crab_year_1)
+
+compare_lengths1 <- anti_join(new_lkey, vlengths)
+compare_lengths2 <- anti_join(vlengths, new_lkey)
+
+any(!is.na(compare_lengths1$FINAL_LENGTH)) ## want false
+
+compare_lengths2 %>%
+  group_by(drvid,crab_year) %>%
+  mutate(n=length(unique(FINAL_LENGTH))) %>% filter(n>1)  ## want 0
+```
+
+
+
+### final EMD data frame
 
 combine crab years
 ```{r}
