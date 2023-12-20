@@ -118,7 +118,7 @@ vlengths <- read_csv(here('project-dat','vessel_groups','length_key_dcrb_vms_ves
 
 Clustering groups
 ```{r}
-vgroups <- read_csv(here('project-dat','vessel_groups','k5_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
+vgroups <- read_csv(here('project-dat','vessel_groups','k5b_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
 
 vgroup_summary <- vgroups %>% dplyr::select(group,subgroup,group_area, vessel_size) %>% distinct()
 vgroup_annual_summary <- vgroups %>% dplyr::select(subgroup,group_area,vessel_size,crab_year) %>% 
@@ -486,6 +486,10 @@ p.out <- plot_grid(plot.all+theme(legend.position="none",axis.title.x=element_bl
 png(here::here('project-dat','figures',"2013-18_EMDmeans_2014groupk5_comboPLUScoastwide_noncon.png"),res=300,width=3600,height=1600)
 ggdraw(add_sub(p.out, "Crab Seasons Compared", vpadding=grid::unit(0,"lines"),y=6, x=0.45, vjust=4.5,size=16))
 dev.off()
+```
+save non-confidential plot data
+```{r}
+write_csv(plotdat, here::here('project-dat','statistics','2013-18_EMDmeans_2014groupk5_comboPLUScoastwide_noncon.csv'))
 ```
 
 

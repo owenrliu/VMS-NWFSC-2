@@ -102,7 +102,7 @@ str(vms)
 
 Group key
 ```{r}
-vgroups <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv')) %>%
+vgroups <- read_csv(here('project-dat','vessel_groups',paste0('k',k,'_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))) %>%
   filter(crab_year %in% crab_years)
 str(vgroups)
 ```
@@ -125,7 +125,7 @@ str(season_dates_df)
 
 ### for each group
 
-these will be used for mapping
+these will be used for mapping for internal QC
 ```{r}
 sample_sizes <- data.frame(timeframe=as.character(),
                            subgroup=as.character(),
@@ -192,46 +192,6 @@ for(g in unique(vgroups$subgroup)){
 ```
 
 
-### for each group - post QC
-Re-generate the mapping UDs from above, but without certain vessels / crab years identified in QC.
-
-First, read in the dataframe from manual QC and edit the groups dataframe. Then remove VMS data points according to the QC data.
-```{r}
-qc.dat <- read_csv(here('project-dat','map_qc_to_remove.csv'))
-vgroups_QCsub <- vgroups
-
-tmp.vms <- filter(vms, removal_type_code %in% c("C","D","U") & crab_year %in% crab_years)
-tmp.vms <- mutate(tmp.vms, position=ifelse(LATITUDE < 38.79, "below", "above"))
-tmp.vms <- anti_join(tmp.vms, dplyr::select(qc.dat,-subgroup), by=c("drvid","crab_year","position"))
-```
-
-Now re-generate the SPDFs and utilization distributions. These are all annual UDs, tagged as "QCsub" in the file names.
-```{r}
-sample_sizes_mapping <- data.frame(timeframe=as.character(),
-                           subgroup=as.character(),
-                           crab_year=as.character(),
-                           n.vessels=as.numeric(),
-                           n.trips=as.numeric())
-
-for(g in unique(vgroups_QCsub$subgroup)[c(2,4)]){
-  # create spatial points data frame, with crab year as ID variable
-  g.vms <- create_groups_vms_spdf(dat=tmp.vms, crab_years=crab_years, group_id=g, list_by="year", clusters=vgroups_QCsub)
-  g.vms.sp <- g.vms[[1]]
-  ## save SPDF
-  write_rds(g.vms.sp, here::here(outdir,paste0(g,"_SPDF_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs_annual_QCsub.rds")))
-  ## save sample sizes
-  sample_sizes_mapping %<>% bind_rows(g.vms[[2]] %>% mutate(crab_year=as.character(crab_year)))
-  rm(g.vms)
-  
-  vms_ud <- kernelUD(g.vms.sp, grid=250, h=.06, same4all=TRUE)
-  vms_udp <- getverticeshr(vms_ud, percent=p)
-  write_rds(vms_udp, file=here::here(outdir,paste0(g,"_",p,"ud_SpatialPolygonsGetVerticesHR_250grid_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs_annual_QCsub.rds")))
-  rm(tmpout, g.vms.sp, vms_udp,vms_ud)
-}
-```
-
-
-
 ### for each year
 these will be used for calculating overlap
 ```{r eval=FALSE}
@@ -270,7 +230,7 @@ for(t in tfs){
 
 
 ```{r eval=FALSE}
-write_csv(ba.dat, here(statdir,paste0("BAoverlap_byVessel_rawPairwise_",crab_years[1],"-",substr(tail(crab_years,1),3,4), 'crabYrs_noncon.csv')))
+write_csv(ba.dat, here(statdir,paste0("BAoverlap_byVessel_2014groupsk",k,"_rawPairwise_",crab_years[1],"-",substr(tail(crab_years,1),3,4), 'crabYrs_noncon.csv')))
 ```
 
 
@@ -406,7 +366,7 @@ I have fixed this error in a new version of the `bootstrapped_kerneloverlap` wra
 ```{r}
 all.start <- Sys.time()
 # for(t in tfs){
-  t <- "annual"
+  t <- "northern"
   # filter VMS data
   # filter VMS data
   if(t != "annual"){
@@ -442,7 +402,7 @@ all.start <- Sys.time()
     
     out <- yboots[[3]]
     
-    saveRDS(out,here(outdir_boot,t,paste0(overlap.method,"overlap_",y,"crabyr_",k,"clusters_",nboot,"bootstrappedPROJ6.rds")))
+    saveRDS(out,here(outdir_boot,t,paste0(overlap.method,"overlap_",y,"crabyr_",k,"clusters_",nboot,"bootstrappedPROJ6_2023-12.rds")))
     
     print(Sys.time()-sstart)
     message("done with crab year ",y," bootstrapping.\n\n")
@@ -623,7 +583,7 @@ for(t in tfs1){
   rm(ba.boot2,ba.boot)
   
   ## save
-  write_csv(ba.boot.df, here(statdir,paste0('BAoverlap_bootstrappedPROJ6_',crab_years[1],"-",substr(last(crab_years),3,4),'_',t,'.csv')))
+  write_csv(ba.boot.df, here(statdir,paste0('BAoverlap_2014groupsk5_bootstrappedPROJ6_',crab_years[1],"-",substr(last(crab_years),3,4),'_',t,'.csv')))
   
   message('saved bootstrapping data for ',t,'\n.')
   
@@ -631,7 +591,32 @@ for(t in tfs1){
 }
 ```
 
-
+calculate means, standard errors, and standard deviations
+```{r}
+tfs1 <- c("central","northern","annual")
+for(t in seq(1,length(tfs1))){
+  # Read back in the lists of lists
+  tmp.ba.means <- read_csv(here(statdir,paste0('BAoverlap_2014groupsk5_bootstrappedPROJ6_',crab_years[1],"-",substr(last(crab_years),3,4),'_',tfs1[t],'.csv'))) 
+  if(t==1){
+    ba.means.out <- tmp.ba.means %>%
+      group_by(`.id`, group1,group2) %>%
+      summarise(meanBA=mean(BAindex),
+                sdBA=sd(BAindex),
+                seBA=std.error(BAindex)) %>%
+      mutate(timeframe=tfs1[t])
+  } else{
+    ba.means.out %<>% bind_rows(tmp.ba.means %>%
+    group_by(`.id`, group1,group2) %>%
+    summarise(meanBA=mean(BAindex),
+              sdBA=sd(BAindex),
+              seBA=std.error(BAindex)) %>%
+    mutate(timeframe=tfs1[t]))
+  }
+  
+}
+ write_csv(ba.means.out, here(statdir,paste0('meanBAoverlap_2014groupsk5_bootstrappedPROJ6_',crab_years[1],"-",substr(last(crab_years),3,4),'.csv')))
+  
+```
 
 
 ## Generate graphs for each vessel cluster, for each time frame (faceted by year)
