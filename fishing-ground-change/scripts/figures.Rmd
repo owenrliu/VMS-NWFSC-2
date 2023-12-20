@@ -8,6 +8,14 @@ output: html_document
 
 Create figures for main text.
 
+Notes on data decisions for these figures: 
+
+- for vessel groups, if a given Local vessel changed size classes over the course of the study period, it was allowed to switch size-based groups (e.g., large v. small Local) but was kept in the same district-based group (e.g., Local Central v. Local Northern). this only included one vessel.
+
+- for vessel group # 3, one vessel was included as a 'large' vessel even though it was 39ft in length to maximize data retention for this district-based group
+
+<br>
+
 **Figure 1:** cumulative landings by central / northern district for all study years
 
   - Supplement: same graph for each vessel group
@@ -110,7 +118,7 @@ vlengths <- read_csv(here('project-dat','vessel_groups','length_key_dcrb_vms_ves
 
 Clustering groups
 ```{r}
-vgroups <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
+vgroups <- read_csv(here('project-dat','vessel_groups','k5_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
 
 vgroup_summary <- vgroups %>% dplyr::select(group,subgroup,group_area, vessel_size) %>% distinct()
 vgroup_annual_summary <- vgroups %>% dplyr::select(subgroup,group_area,vessel_size,crab_year) %>% 
@@ -126,20 +134,20 @@ emd.dat <- read_csv(here(statdir,'EMD_annual_per_vessel_90ud_75grid_2011-18crabY
 Earth mover's distance (means)
 ```{r}
 emd_means <- read_csv(here(statdir,'meanEMD_annual_bysize_90ud_75grid.csv'))
-emd_group_means_noncon <- read_csv(here(statdir,'meanEMD_annual_bygroup_90ud_75grid_k4_2014clusterYR_noncon.csv'))
+emd_group_means_noncon <- read_csv(here(statdir,'meanEMD_annual_bygroup_90ud_75grid_k5_2014clusterYR_noncon.csv'))
 ```
 
 
 Earth mover's distance (significance testing)
 ```{r}
-load(here('project-dat','statistics','wilcox_tests_bylength.rds'))
+load(here('project-dat','statistics','wilcox_tests_bylength.rdata'))
 wilcox.lengths <- wilcox_tests_bylength[[2]]
 sig.lengths <- wilcox_tests_bylength[[3]]
 ```
 ```{r}
-load(here('project-dat','statistics','wilcox_tests_groups_localBYlength_noncon.rds'))
-wilcox.locals <- wilcox_tests_bylength[[2]]
-sig.locals <- wilcox_tests_bylength[[3]]
+wilcox_tests_localbylength <- readRDS(here('project-dat','statistics','wilcox_tests_2014groupsk5_LocalBYlength_noncon.rds'))
+wilcox.locals <- wilcox_tests_localbylength[[2]]
+sig.locals <- wilcox_tests_localbylength[[3]]
 ```
 
 
@@ -475,7 +483,7 @@ p.out <- plot_grid(plot.all+theme(legend.position="none",axis.title.x=element_bl
                                 plot.margin=margin(c(15,5,30,15))),
                    rel_widths=c(0.55,1),labels=c("(a)","(b)"), label_size=16)
 
-png(here::here('project-dat','figures',"2013-18_EMDmeans_comboPLUScoastwide_noncon.png"),res=300,width=3600,height=1600)
+png(here::here('project-dat','figures',"2013-18_EMDmeans_2014groupk5_comboPLUScoastwide_noncon.png"),res=300,width=3600,height=1600)
 ggdraw(add_sub(p.out, "Crab Seasons Compared", vpadding=grid::unit(0,"lines"),y=6, x=0.45, vjust=4.5,size=16))
 dev.off()
 ```
@@ -531,7 +539,7 @@ suppfig <- ggplot(plotdat,aes(x=n.vessels,y=sd.emd, col=`Vessel Size`,pch=`Vesse
 suppfig
 ```
 ```{r echo=FALSE, eval=writing}
-png(here::here('project-dat','figures',"Supplement_2013-18_EMDstderrs_v_SampleSize.png"),res=200, width=1100,height=800)
+png(here::here('project-dat','figures',"Supplement_2013-18_EMDstderrs_v_SampleSize_2014groupk5.png"),res=200, width=1100,height=800)
 suppfig
 dev.off()
 ```

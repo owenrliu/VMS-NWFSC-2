@@ -19,7 +19,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # r packages
 library(tidyverse)
 library(magrittr)
-# library(sf)
+library(sf)
 # library(sp)
 library(lubridate)
 library(ggplot2)
@@ -776,33 +776,64 @@ write_csv(vgroups_ext_out,file=here('project-dat','vessel_groups',paste0('k',k,'
 
 
 ### Heat map
-Create a condensed heat map for specific groups
+
+```{r}
+mydat_counts <- read_csv(here(outdir,'2014_k4clusters_area.csv'))
+vms.totals <- filter(vms, drvid %in% mydat_counts$vessels) %>%
+  filter(crab_year==2014) %>%
+  group_by(drvid,crab_year) %>%
+  summarise(total.vms=n())
+
+mydat_counts %<>% left_join(vms.totals, by=c("vessels"="drvid","crab_year")) %>%
+  pivot_longer(cols=c(northern,central), names_to="crab_area",values_to="p.vms") %>%
+  mutate(n.vms=p.vms*total.vms)
+```
+
+
+Create a condensed heat map for specific groups (note that group sizes may not exactly match the subgroup sizes, because groups that were split by vessel size and then had < 3 vessels were left out of the analysis)
 ```{r}
 plotdat.summary <- mydat_counts %>%
-  left_join(plotdat %>% dplyr::select(vessels,group,area) %>% rename("group_area"=area) ,by=c("drvid"="vessels"))%>%
-  group_by(group,group_area, area) %>%
-  summarise(groupVMS=sum(nvms)) %>%
-  pivot_wider(names_from=area,values_from=groupVMS, values_fill=0)
+  rename(group_area=area) %>%
+  group_by(group,group_area, crab_area) %>%
+  summarise(groupVMS=sum(n.vms)) %>%
+  pivot_wider(names_from=crab_area,values_from=groupVMS, values_fill=0)
+
+# add a group 5
+plotdat.summary %<>% bind_rows(
+  mydat_counts %>% rename(group_area=area) %>%
+    filter(group==4 | group==3) %>%
+    mutate(group=5) %>%
+    group_by(group,group_area, crab_area) %>%
+    summarise(groupVMS=sum(n.vms)) %>%
+    pivot_wider(names_from=crab_area,values_from=groupVMS, values_fill=0)
+)
+k=5
+  
+group.sizes <- mydat_counts %>% group_by(group) %>% summarise(n.vessels=length(unique(vessels)))
+group.sizes %<>% bind_rows(data.frame(group=5,
+                                      n.vessels=sum((group.sizes %>% filter(group %in% c(3,4)))$n.vessels)))
+  
+
 plotdat_prop <- prop.table(as.matrix(plotdat.summary[,3:4]),margin=1) %>%
   bind_cols(dplyr::select(plotdat.summary,group,group_area)) %>%
-  pivot_longer(cols=1:2,names_to="area")
+  pivot_longer(cols=1:2,names_to="district")
 
-labeldat <- data.frame(x=0.75,y=seq(1,k),nv=(plotdat %>% group_by(group) %>% summarise(n.vessels=length(unique(vessels))))[,"n.vessels"]) %>%
+labeldat <- data.frame(x=0.75,y=seq(1,k),nv=group.sizes[,"n.vessels"]) %>%
   mutate(x=ifelse(n.vessels==45,2.25,x))
 
-ggplot(data = plotdat_prop, aes(x = area, y = as.factor(group))) +
+ggplot(data = plotdat_prop, aes(x = district, y = as.factor(group))) +
   geom_tile(aes(fill = value)) +
   geom_text(data=labeldat,aes(x,y,label=n.vessels), size=4, color="grey30") +
   scale_fill_gradient2() +
   theme(axis.text.y = element_text(size = 9)) + theme_bw()
 
 if(write){
-png(here(outdir,paste0(cluster_year,'group_heatmap_area-clustered.png')))
-ggplot(data = plotdat_prop, aes(x = area, y = as.factor(group))) +
+png(here(outdir,paste0(cluster_year,'groupk5_heatmap_area-clustered_2023-12-19.png')), res=300,height=1500,width=1700)
+ggplot(data = plotdat_prop, aes(x = district, y = as.factor(group))) +
   geom_tile(aes(fill = value)) +
   geom_text(data=labeldat,aes(x,y,label=n.vessels), size=4, color="grey30") +
   scale_fill_gradient2(name="Proportion\n Geolocations") +
-  xlab("Management Area") + ylab("Group ID") +
+  xlab("District") + ylab("Group ID") +
   theme(axis.text.y = element_text(size = 9)) + theme_bw()
 dev.off()
 }
@@ -857,7 +888,7 @@ subgroup group_area vessel_size crab_year subgroup_vessels subgroup_trips subgro
 3	38	54.16667	8.251263
 7	63	55.14286	6.510980
 
-total vessels?
+total vessels? # 99
 ```{r}
 length(tabledat %>% pull(drvid) %>% unique())
 ```
@@ -872,6 +903,140 @@ tabledat %>%
             subgroup_lengthSD=sd(FINAL_LENGTH, na.rm=TRUE)) %>%
   write_csv(here('project-dat','vessel_groups',paste0('k',k,'_NaNspeedfilter_',cluster_year,'clusterYR_byArea_noncon_group-vms-summary.csv')))
 ```
+
+
+
+## Merge 3-large and 3-small
+
+This affects groups 3 and 5.
+
+```{r}
+k <- 4
+cluster_year <- 2014
+subgroup_out <- read_csv(here('project-dat','vessel_groups',paste0('k',k,'_NaNspeedfilter_',cluster_year,'clusterYR_byArea_confidential-group-key.csv')))
+```
+
+First, re-assign the single vessel in the "3-small" group to the "3-large" group.
+
+Then extend the vessel group key to include "5-large" / group 5, and copy in drvids. 
+```{r}
+group3_newvessel <- filter(subgroup_out, subgroup=="3-small") %>%
+  mutate(vessel_size='large',
+         subgroup='3-large')
+
+vgroups_ext2 <- filter(subgroup_out, subgroup!="3-small") %>%
+  bind_rows(group3_newvessel)
+
+'3-small' %in% vgroups_ext2$subgroup # want FALSE
+length(unique(filter(vgroups_ext2,subgroup=='3-large') %>% pull(drvid)))  # want 5
+
+group5_vessels <- filter(vgroups_ext2,subgroup %in% c("3-large","4-large"))
+group5_vessels %<>% dplyr::select(-subgroup,-group,-group_area) %>%
+  mutate(subgroup="5-large", group=5,
+         group_area="central/northern")
+vgroups_ext2 <- vgroups_ext2 %>%
+  bind_rows(group5_vessels)
+unique(vgroups_ext2$subgroup)
+```
+```{r}
+k <- k + 1
+```
+
+
+### save non-confidential key
+
+Check for confidential subgroup-years
+```{r}
+drvid_subgroups_n <- vgroups_ext2 %>%
+  group_by(group,group_area,subgroup,vessel_size,cluster_year,crab_year)%>%
+  summarise(n.vessels=length(unique(drvid)))
+
+
+ggplot(drvid_subgroups_n, aes(x=crab_year,y=n.vessels, col=subgroup)) +
+  geom_point() + geom_path() + 
+  labs(subtitle=paste0("cluster sizes (k=",k,")"), x="crab year",y="n. vessels")
+
+if(write){
+write.csv(drvid_subgroups_n, here('project-dat','vessel_groups',paste0('k',k,'b_NaNspeedfilter_',cluster_year,'clusterYR_byArea_sample-sizes-vms.csv')))
+}
+```
+<br>
+
+```{r}
+to_remove <- drvid_subgroups_n %>% filter(n.vessels < 3)
+
+to_remove %>% dplyr::select(subgroup,group_area,crab_year,n.vessels)
+```
+
+and (2) do an anti-join with the grouped VMS dataset. 
+```{r}
+vgroups_ext2_out <- vgroups_ext2 %>% anti_join(to_remove,by=c("crab_year","subgroup"))
+```
+
+
+check that it worked!
+```{r} 
+vgroups_ext2_out %>% group_by(subgroup,crab_year) %>% summarise(n.vessels=length(unique(drvid))) %>% filter(n.vessels < 3)
+```
+
+
+
+```{r}
+if(write){
+write_csv(vgroups_ext2_out,file=here('project-dat','vessel_groups',paste0('k',k,'b_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv')))
+}
+```
+
+
+Don't need to make a new heatmap because it doesn't break down vessels by size class (so group 3 is the same)
+
+
+### Summary table
+
+read in the group key file with lengths.
+```{r}
+tabledat <- read_csv(here('project-dat','vessel_groups','k5b_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
+
+tabledat.2014 <- tabledat  %>% filter(crab_year==2014)
+```
+
+save out the summary table with sample size, average / standard deviation of length, total number of vms-covered fishing trips
+```{r}
+tabledat %>% filter(crab_year==2014) %>%
+  group_by(subgroup,group_area,vessel_size,crab_year) %>%
+  summarise(subgroup_vessels=length(unique(drvid)),
+            subgroup_trips=sum(n.trips),
+            subgroup_length=mean(FINAL_LENGTH, na.rm=TRUE),
+            subgroup_lengthSD=sd(FINAL_LENGTH, na.rm=TRUE))
+```
+
+
+subgroup group_area vessel_size crab_year subgroup_vessels  subgroup_trips  subgroup_length  subgroup_lengthSD
+1-large	central	large	2014	24	279	49.15217	7.919244
+1-small	central	small	2014	20	379	35.34211	4.000183
+2-large	northern	large	2014	30	214	51.81250	9.567623
+2-small	northern	small	2014	18	375	33.26471	5.662700
+3-large	central/northern	large	2014	5	33	52.60000	9.181503
+4-large	central/northern	large	2014	3	38	54.33333	8.504901
+5-large	central/northern	large	2014	8	71	53.25000	8.345230
+7 rows
+
+total vessels? # 100
+```{r}
+length(tabledat %>% pull(drvid) %>% unique())
+```
+
+save summary for every year
+```{r}
+tabledat %>%
+  group_by(subgroup,group_area,vessel_size,crab_year) %>%
+  summarise(subgroup_vessels=length(unique(drvid)),
+            subgroup_trips=sum(n.trips),
+            subgroup_length=mean(FINAL_LENGTH, na.rm=TRUE),
+            subgroup_lengthSD=sd(FINAL_LENGTH, na.rm=TRUE)) %>%
+  write_csv(here('project-dat','vessel_groups',paste0('k',k,'b_NaNspeedfilter_',cluster_year,'clusterYR_byArea_noncon_group-vms-summary.csv')))
+```
+
 
 
 

@@ -226,11 +226,6 @@ Vessel length keys
 vlengths <- read_csv(here('project-dat','vessel_groups','length_key_dcrb_vms_vessels.csv'))
 ```
 
-Clustering groups
-```{r}
-vgroups <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
-```
-
 
 ```{r eval=TRUE, include=FALSE}
 emd.dat <- read_csv(here(statdir,paste0('EMD_annual_per_vessel_',udsize*100,'ud_',kernel_g,'grid_', crab_years[1],'-',substr(tail(crab_years,1),3,4), 'crabYrs_ALL.csv')))
@@ -422,7 +417,7 @@ sig.lengths.out %<>% bind_rows(data.frame(crab_years="Overall",
 Save output from t-tests
 ```{r}
 wilcox_tests_bylength <- list(wilcox.lengths.out,wilcox.lengths,sig.lengths.out)
-save(wilcox_tests_bylength, file=here('project-dat','statistics','wilcox_tests_bylength.rds'))
+save(wilcox_tests_bylength, file=here('project-dat','statistics','wilcox_tests_bylength.rdata'))
 ```
 
 
