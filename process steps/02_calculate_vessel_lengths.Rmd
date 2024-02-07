@@ -2,6 +2,9 @@
 title: "Calculate Vessel Lengths for DCRB Vessels"
 output:  html_document
 ---
+Date written: 
+Updated: 1/21/2023
+By: M. Fisher, O.R. Liu
 
 ## Purpose
 
@@ -44,17 +47,12 @@ Resources:
 [PMSC Fleet Report](https://www.psmfc.org/efin/docs/fleetreport.pdf), esp Table 8
 [PacFIN Column names key](https://pacfin.psmfc.org//wp-content/uploads/2016/06/PacFIN_Comprehensive_Fish_Tickets.pdf)
 
-***
 
-## Setup and Options
-
-Load packages
-```{r}
+```{r set up}
 library(tidyverse)
 library(here)
 library(magrittr)
 library(knitr)
-
 # ggplot theme
 plot_theme <-   theme_minimal()+
   theme(text=element_text(family="sans",size=12,color="black"),
@@ -64,9 +62,66 @@ plot_theme <-   theme_minimal()+
         panel.grid.major = element_line(color="gray50",linetype=3))
 theme_set(plot_theme)
 
+process_year <- seq(2016,2019)
+plot_output <- TRUE
+```
 
+
+***
+## Existing Vessel Length Key
+
+If this script was run previously, just match landings to vessel lengths.
+
+```{r eval=FALSE}
+for(y in process_year){
+  # read in landings rds file
+  landings_subset <- read_rds(here::here('data','processed','fish tickets',paste0(y,'fishtix.rds')))
+  
+  # read in vessel lengths rds file
+  vessel_length_key_df_subset <- read_rds(here::here('data','processed','vessel length keys',paste0("vessel_length_key_", y, ".rds")))
+  
+  # join
+  dcrb_landings_length <- left_join(landings_subset,vessel_length_key_df_subset, by=c("drvid", "agency_code","year"))
+  
+  # write
+  write_rds(dcrb_landings_length,here::here('data','processed','fish tickets',paste0(y, "fishtix_vlengths.rds")))
+  
+  # save length key for plotting?
+  if(plot_output){
+    if(y==process_year[1]){
+      vessel_length_key <- vessel_length_key_df_subset %>% mutate(year=y)} else{vessel_length_key %<>% bind_rows(vessel_length_key_df_subset %>% mutate(year=y))}
+  }
+   
+   # print out summary of missing data for year
+    missing <- with(vessel_length_key_df_subset, table(agency_code,is.na(FINAL_LENGTH)))
+    cat("Vessels Missing Lengths for ", y,"\n")
+    print(missing)
+}
+```
+
+<br>
+```{r eval=FALSE}
+if(plot_output){
+  vessel_length_key %>% 
+    filter(!is.na(FINAL_LENGTH)) %>% 
+    ggplot(aes(as.numeric(FINAL_LENGTH))) +
+    geom_histogram(bins=10) +
+    facet_wrap(~year) +
+    labs(x="Vessel Length",y="Number of Vessels",title="Vessel Length Frequency Distribution")
+  vessel_length_key %>% 
+    ggplot(aes(TYPE_CALC)) +
+    geom_bar() +
+    facet_wrap(~year) +
+    labs(x="Calculation Type",y="Number of Vessels")+
+    theme(axis.text.x = element_text(angle=90, hjust=1, vjust=0.5))
+}
+```
+<br>
+
+## Setup and Options
+
+```{r}
 rm(list=setdiff(ls(),c('process_year','alltime')))
-
 ```
 
 Source functions for vessel length calculations.

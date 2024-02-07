@@ -12,7 +12,6 @@ Later, the data are filtered and cleaned for depth, unrealistic speeds between p
 ## Setup and Data Import
 
 ```{r, echo=FALSE}
-
 # library(foreign)
 library(rgdal)
 library(rgeos)
@@ -20,6 +19,20 @@ library(tidyverse)
 library(lubridate)
 library(magrittr)
 library(here)
+library(beepr)
+
+# alerts
+options(error = function(){    # Beep on error
+  beepr::beep()
+  Sys.sleep(1)
+  }
+ )
+
+.Last <- function() {          # Beep on exiting session
+  beepr::beep()
+  Sys.sleep(1)
+}
+
 
 # ggplot theme
 plot_theme <-   theme_minimal()+
@@ -37,7 +50,7 @@ rm(list=setdiff(ls(),c('process_year','alltime')))
 Choose year to process
 
 ```{r}
-# process_year <- 2012
+process_year <- 2017
 ```
 
 Load fish ticket data (processed), including the last month of the previous year (for handling trips spanning January 1st of the current year)

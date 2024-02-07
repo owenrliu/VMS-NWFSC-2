@@ -15,7 +15,7 @@ This final step cleans up the matched fish ticket/VMS records spatially through 
 
 * Flags VMS points that have a bathymetry value > 0
 
-* Flags VMS points that are within a 3-kilometer buffer of a port, so we can remove points that are not directly associated with a fishing trip (e.g., because the boat is sitting in port between trips)
+* Flags VMS points that are within **both a 3-kilometer and a 1.5-kilometer** buffer of a port, so we can remove points that are not directly associated with a fishing trip (e.g., because the boat is sitting in port between trips). The final filter uses the 3-kilometer buffer for all ports (note that if working with OR data, would want to assign a 1.5km buffer to COS). 
 
 ## Setup and Data Import
 
@@ -43,7 +43,7 @@ theme_set(plot_theme)
 rm(list=setdiff(ls(),c('process_year','alltime')))
 
 # process year (if running this script only, not as part of the pipeline)
-# process_year=2010
+process_year=2010
 ```
 
 ### Read in the data
@@ -301,8 +301,8 @@ bathy_filter=FALSE
 Using port coordinates from above, indicated whether they are in the "smaller buffer" category
 
 ```{r}
-portlist_coords %<>%
-  mutate(small_buffer=ifelse(port_code %in% ports_lowbuffer,1,0) %>% as.logical())
+# portlist_coords %<>%
+#   mutate(small_buffer=ifelse(port_code %in% ports_lowbuffer,1,0) %>% as.logical())
 ```
 
 ### Buffer Ports
@@ -315,21 +315,24 @@ ports_sf <- portlist_coords %>%
   st_transform(crs = "+proj=utm +north +zone=10 +ellps=WGS84")
 
 # buffer large ports
-large_ports_buffer <- ports_sf %>%
-  filter(!small_buffer) %>% 
-  st_buffer(r)
+# large_ports_buffer <- ports_sf %>%
+#   filter(!small_buffer) %>% 
+#   st_buffer(r)
 
 # buffer small ports
-small_ports_buffer <- ports_sf %>% 
-  filter(small_buffer) %>% 
-  st_buffer(r2)
+# small_ports_buffer <- ports_sf %>% 
+#   filter(small_buffer) %>% 
+#   st_buffer(r2)
+# 
+# ports_buffer <- rbind(large_ports_buffer,small_ports_buffer)
 
-ports_buffer <- rbind(large_ports_buffer,small_ports_buffer)
+large_ports_buffer <- ports_sf %>% st_buffer(r)
+small_ports_buffer <- ports_sf %>% st_buffer(r2)
 ```
 
 ### Plot Port Buffers
 
-```{r, message=F,warning=FALSE}
+```{r, message=F,warning=FALSE,eval=FALSE}
 # import a background/land layer from rnaturalearth package
 coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
   filter(name %in% c('California','Oregon','Washington')) %>% 
@@ -354,13 +357,13 @@ cutcoast <- list(c(-124, -125, 47.5, 48.5), #upper WA
 buffer_plots <- purrr::map(1:length(cutcoast), function(i){
   seg=cutcoast[[i]]
   bx=c(xmin=seg[2],xmax=seg[1],ymin=seg[3],ymax=seg[4])%>% st_bbox(crs=st_crs(4326))
-  bbox <- bx %>% st_as_sfc() %>% st_transform(st_crs(ports_buffer)) %>% st_bbox()
+  bbox <- bx %>% st_as_sfc() %>% st_transform(st_crs(large_ports_buffer)) %>% st_bbox()
   plotout <- ggplot()+
     geom_sf(data=coaststates,fill='gray50')+
-    geom_sf(data=ports_buffer,aes(fill=small_buffer),alpha=0.5)+
-    geom_sf_text(data=ports_buffer,aes(label=port_code),size=3,hjust=1)+
+    # geom_sf(data=large_ports_buffer,aes(fill=small_buffer),alpha=0.5)+
+    geom_sf_text(data=large_ports_buffer,aes(label=port_code),size=3,hjust=1)+
     xlim(bbox[1],bbox[3])+ylim(bbox[2],bbox[4])+
-    labs(x='',y='',title="Port Buffers",fill="Small Buffer")+
+    labs(x='',y='',title="Port Buffers (3km)",fill="Small Buffer")+
     theme(axis.text.x = element_text(angle=90))
   print(plotout)
 })
@@ -375,7 +378,8 @@ Calculate whether points overlap buffers
 vms_sf <- vms_wfilters %>% 
   select(VMS_RECNO,X_COORD,Y_COORD) %>%
   st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
-
+```
+```{r eval=FALSE}
 # do the overlay, which results in a list of buffer indices into which a VMS point falls
 #https://github.com/r-spatial/sf/wiki/migrating
 port_names <- ports_buffer$port_code
@@ -386,44 +390,82 @@ vms_ports_over <- sapply(st_intersects(vms_sf,ports_buffer), function(z) if (len
 vms_ports_over_names <- port_names[vms_ports_over]
 ```
 
+*small buffer*
+```{r}
+# do the overlay, which results in a list of buffer indices into which a VMS point falls
+#https://github.com/r-spatial/sf/wiki/migrating
+port_names <- small_ports_buffer$port_code
+# vms_ports_over_list <- st_intersects(vms_sf,ports_buffer)
+vms_ports_over <- sapply(st_intersects(vms_sf,small_ports_buffer), function(z) if (length(z)==0) NA_integer_ else z[1])
+
+# Overlay returned integers. Pull out the appropriate port names from the list of ports
+vms_small_ports_over_names <- port_names[vms_ports_over]
+```
+
+*large buffer*
+```{r}
+# do the overlay, which results in a list of buffer indices into which a VMS point falls
+#https://github.com/r-spatial/sf/wiki/migrating
+port_names <- large_ports_buffer$port_code
+# vms_ports_over_list <- st_intersects(vms_sf,ports_buffer)
+vms_ports_over <- sapply(st_intersects(vms_sf,large_ports_buffer), function(z) if (length(z)==0) NA_integer_ else z[1])
+
+# Overlay returned integers. Pull out the appropriate port names from the list of ports
+vms_large_ports_over_names <- port_names[vms_ports_over]
+```
+
 Add the port names back to the master dataset for each VMS point.
 
 ```{r}
 vms_wfilters %<>%
-  mutate(in_port=vms_ports_over_names)
+  mutate(in_port_1p5km=vms_small_ports_over_names,
+         in_port_3km=vms_large_ports_over_names)
 ```
 
 ### Check Output
 
-```{r}
+```{r eval=FALSE}
 ## Plot a sample of VMS points
 vms_sf %<>%
-  mutate(in_port=vms_ports_over_names)
+  mutate(in_port_1p5km=vms_small_ports_over_names,
+         in_port_3km=vms_large_ports_over_names)
 
 test_port<-vms_sf %>% 
-  filter(in_port=='BDG') %>% 
+  filter(in_port_3km=='BDG') %>% 
   #subsample for quicker plotting
   sample_n(.,min(nrow(.),1000))
-testbbox <- st_bbox(ports_buffer %>% filter(port_code=='BDG'))
+testbbox <- st_bbox(large_ports_buffer %>% filter(port_code=='BDG'))
 # testbbox <- st_bbox(test_port)
 ggplot()+
   geom_sf(data=coaststates,fill='gray50')+
-  geom_sf(data=ports_buffer,fill='seagreen',alpha=0.5)+
+  geom_sf(data=large_ports_buffer,fill='seagreen',alpha=0.5)+
   geom_sf(data=test_port,size=1)+
   xlim(testbbox[1],testbbox[3])+ylim(testbbox[2],testbbox[4])+
   labs(x='',y='',title="Points within Bodega Buffer")+
   theme(axis.text.x = element_text(angle=90))
 ```
 
-What is the avg speed when vessels are marked as in port?
+What is the avg speed when vessels are marked as in port (3km buffer)?
 
-```{r}
-inport_dat <- vms_wfilters %>% mutate(in_port_binary = ifelse(is.na(in_port), 0,1))
+```{r eval=FALSE}
+inport_dat <- vms_wfilters %>% mutate(in_port_binary = ifelse(is.na(in_port_3km), 0,1))
 
 ggplot(data=filter(inport_dat, avg_speed_recalc < 50), aes(x=avg_speed_recalc,fill=factor(in_port_binary))) +
   geom_histogram() +
   facet_wrap(~in_port_binary)+
-  xlab("Average Speed (Calculated)") +
+  xlab("Average Speed (Calculated)-3km") +
+  ylab("Number of Records")
+```
+
+What is the avg speed when vessels are marked as in port (1.5km buffer)?
+
+```{r eval=FALSE}
+inport_dat <- vms_wfilters %>% mutate(in_port_binary = ifelse(is.na(in_port_1p5km), 0,1))
+
+ggplot(data=filter(inport_dat, avg_speed_recalc < 50), aes(x=avg_speed_recalc,fill=factor(in_port_binary))) +
+  geom_histogram() +
+  facet_wrap(~in_port_binary)+
+  xlab("Average Speed (Calculated)-1.5km") +
   ylab("Number of Records")
 ```
 
@@ -434,12 +476,17 @@ Mark "remove" if the record is in port *and* the avg speed is < 1 m/s. For this 
 
 ```{r remove_flag}
 vms_wfilters %<>% 
-  mutate(keep_remove_inport = ifelse(!is.na(in_port) & avg_speed_recalc < speed_cutoff, "remove", "keep"))
+  mutate(keep_remove_inport3km = ifelse(!is.na(in_port_3km) & avg_speed_recalc < speed_cutoff, "remove", "keep"),
+         keep_remove_inport1p5km = ifelse(!is.na(in_port_1p5km) & avg_speed_recalc < speed_cutoff, "remove", "keep"))
 
-round(sum(vms_wfilters$keep_remove_inport=='remove',na.rm=T)/nrow(vms_wfilters)*100,2)
+round(sum(vms_wfilters$keep_remove_inport3km=='remove',na.rm=T)/nrow(vms_wfilters)*100,2)
+
+round(sum(vms_wfilters$keep_remove_inport1p5km=='remove',na.rm=T)/nrow(vms_wfilters)*100,2)
 ```
 
-If we filter using the in-port criterion, we would remove `r round(sum(vms_wfilters$keep_remove_inport=='remove',na.rm=T)/nrow(vms_wfilters)*100,2)` percent of all observations for `r process_year`.
+If we filter using the 3km buffer in-port criterion, we would remove `r round(sum(vms_wfilters$keep_remove_inport3km=='remove',na.rm=T)/nrow(vms_wfilters)*100,2)` percent of all observations for `r process_year`.
+
+If we filter using the 1.5km buffer in-port criterion, we would remove `r round(sum(vms_wfilters$keep_remove_inport1p5km=='remove',na.rm=T)/nrow(vms_wfilters)*100,2)` percent of all observations for `r process_year`.
 
 We want to remove all 'remove' points *except* the last in-port record before the fishing trip and the first in-port record after the fishing trip. For now, we will retain all mid-trip "remove" points.
 
@@ -455,18 +502,24 @@ vms_wfilters %<>%
   arrange(westcoastdate) %>% 
   
   # indicate the dates of the first and last non-in-port records
-  mutate(first_keep=first(westcoastdate[keep_remove_inport=='keep']),
-         last_keep=last(westcoastdate[keep_remove_inport=='keep'])) %>% 
+  mutate(first_keep_3km=first(westcoastdate[keep_remove_inport3km=='keep']),
+         last_keep_3km=last(westcoastdate[keep_remove_inport3km=='keep']),
+         first_keep_1p5km=first(westcoastdate[keep_remove_inport1p5km=='keep']),
+         last_keep_1p5km=last(westcoastdate[keep_remove_inport1p5km=='keep'])) %>% 
   
   # indicate the dates of the last pre-trip in-port record and the first post-trip in-port record
-  mutate(last_pretrip=last(westcoastdate[westcoastdate<first_keep]),
-         first_posttrip=first(westcoastdate[westcoastdate>last_keep])) %>% 
+  mutate(last_pretrip_3km=last(westcoastdate[westcoastdate<first_keep_3km]),
+         first_posttrip_3km=first(westcoastdate[westcoastdate>last_keep_3km]),
+         last_pretrip_1p5km=last(westcoastdate[westcoastdate<first_keep_1p5km]),
+         first_posttrip_1p5km=first(westcoastdate[westcoastdate>last_keep_1p5km])) %>% 
   
   # add a filtering column indicating whether a ping is part of the trip
   ungroup() %>% 
-  mutate(keep_remove_not_intrip=ifelse(westcoastdate >= last_pretrip & westcoastdate <= first_posttrip,'keep','remove')) %>%
+  mutate(keep_remove_not_intrip_3km=ifelse(westcoastdate >= last_pretrip_3km & westcoastdate <= first_posttrip_3km,'keep','remove'),
+         keep_remove_not_intrip_1p5km=ifelse(westcoastdate >= last_pretrip_1p5km & westcoastdate <= first_posttrip_1p5km,'keep','remove')) %>%
   # change NAs to default behavior of keep
-  mutate(keep_remove_not_intrip=replace_na(keep_remove_not_intrip,'keep'))
+  mutate(keep_remove_not_intrip_3km=replace_na(keep_remove_not_intrip_3km,'keep'),
+         keep_remove_not_intrip_1p5km=replace_na(keep_remove_not_intrip_1p5km,'keep'))
 
 # Test ticket
 # test <- vms_wfilters %>%
@@ -486,12 +539,12 @@ vms_wfilters %<>%
 
 For a random set of 5 Dungeness trips, view the results of these filters.
 
-```{r}
+```{r eval=FALSE}
 random_trips <- vms_wfilters %>% filter(TARGET_rev=='DCRB') %>% distinct(Rec_ID) %>% sample_n(5) %>% pull(Rec_ID)
 testtrips <- vms_wfilters %>% 
   filter(Rec_ID %in% random_trips) %>% 
   select(Rec_ID,VMS_RECNO,X_COORD,Y_COORD,contains('keep_remove')) %>% 
-  select(-keep_remove_inport) %>% 
+  select(-keep_remove_inport3km,-keep_remove_inport1p5km) %>% 
   #pivot to indicate, if a point was removed, which step it was removed in
   pivot_longer(contains('keep_remove'),names_to = 'category',values_to = 'keep_remove') %>% 
   group_by(VMS_RECNO) %>% 
@@ -534,7 +587,7 @@ We can organize these reasons and look at the overall effects of filtering.
 # on the individual ping level, measure reasons for removal
 vms_dataloss <- vms_wfilters %>%
   select(Rec_ID,VMS_RECNO,X_COORD,Y_COORD,contains('keep_remove')) %>% 
-  select(-keep_remove_inport) %>% 
+  select(-keep_remove_inport3km, -keep_remove_inport1p5km) %>% 
   distinct() %>% 
   #pivot to indicate, if a point was removed, which step it was removed in
   pivot_longer(contains('keep_remove'),names_to = 'category',values_to = 'keep_remove') %>% 
@@ -557,7 +610,8 @@ vms_dataloss_table <- vms_dataloss %>%
     reason_removed=="portdist" ~ 1,
     reason_removed=="speed" ~2,
     reason_removed=="bathy"~3,
-    reason_removed=="not_intrip"~4
+    reason_removed=="not_intrip_3km"~4,
+    reason_removed=="not_intrip_1p5km"~5
     )) %>% 
   arrange(stepnum) %>% 
   mutate(tot_removed=cumsum(n_removed)) %>% 
@@ -597,7 +651,7 @@ check_removes <- vms_dataloss %>%
 
 Finally, we do the actual filtering. We save a filtered version of the data for the next steps, but retain the full VMS-matched dataset with the filtering tags we've produced here, for later QA/QC.
 
-```{r}
+```{r eval=FALSE}
 vms_filtered <- vms_dataloss %>% 
   select(VMS_RECNO,num_removals) %>% 
   right_join(vms_wfilters) %>% 
@@ -614,6 +668,6 @@ vms_filtered <- vms_dataloss %>%
 Save the output and the full, non-filtered data set
 
 ```{r}
-write_rds(vms_filtered,here::here('data','processed','matched','filtering',paste0(process_year,'matched_filtered.rds')))
+# write_rds(vms_filtered,here::here('data','processed','matched','filtering',paste0(process_year,'matched_filtered.rds')))
 write_rds(vms_wfilters,here::here('data','processed','matched','filtering',paste0(process_year,'matched_unfiltered.rds')))
 ```

@@ -1,0 +1,500 @@
+---
+title: "EMD by group"
+author: "M. Fisher"
+date: "2/20/2023"
+output: html_document
+---
+
+Calculate the year-over-year Earth Mover's Distance for Dungeness crab fishing grounds **using only VMS data from shared dates between seasons** (difference from script 04a). This means that EMD for the season will only be calculated using data collected on the dates of the shortest season (2016 -- spring / summer crabbing locations). 
+
+Then, summarize EMD for vessel groups.
+
+
+
+This script includes options to remove Dungeness crab vessels based on (1) the number of fishing trips they took in a given year, and/or (2) an exvessel revenue cut-off. This is in addition to the filters that were already imposed in creating the fishing ground data: 
+
+- landings in a given state (e.g., California)
+- trips targeting Dungeness crab
+- vessels that have five or more relocations per crab season
+
+
+However, for the analysis as it stands, I am not going to apply any additional filters beyond those already used in script 01.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library(tidyverse)
+library(magrittr)
+library(here)
+library(raster)
+library(adehabitatHR)
+library(move)
+library(pryr)
+library(plotrix)
+```
+
+
+User inputs
+```{r}
+crab_years <- seq(2011,2018)
+keep_years <- seq(2013,2018)
+kernel_g <- 75
+udsize       <- 0.90
+cut_length <- 40  # all vessels below this length are "small"
+
+save_SPDF <- TRUE # save an SPDF for each vessel, in addition to the 90% UD? Want this if calculating BA overlap later.
+write_data <- FALSE
+
+indir   <- 'project-dat/vms/interpolation_60min/NaN_speed_filter'
+outdir  <- 'project-dat/vms/interpolation_60min/NaN_speed_filter/vessel90ud/spring-summer'
+statdir <- 'project-dat/statistics'
+
+filter=FALSE
+filter_trips=5
+filter_revenue=5000
+```
+
+## Data
+
+VMS
+```{r read_vms}
+for(y in crab_years){
+  tmpvms <-  read_rds(here::here(indir,paste0(y,'season_crabfishing.rds')))
+  if(y==crab_years[1]){
+    vms <- tmpvms
+  } else{
+    vms %<>% bind_rows(tmpvms)
+  }
+}
+
+str(vms)
+```
+
+
+Fish tickets
+```{r read_fishtix}
+for(y in crab_years){
+  tmpy <- y-1
+  tmptix <-  read_rds(here::here('../data','processed','fish tickets',paste0(tmpy,'fishtix_vlengths.rds'))) %>%
+  dplyr::select(Rec_ID,drvid,year,FINAL_LENGTH) %>% distinct()
+  if(y==crab_years[1]){
+    tix <- tmptix
+  } else{
+    tix %<>% bind_rows(tmptix)
+  }
+}
+
+str(tix)
+```
+
+Clustering groups
+```{r}
+vgroups <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
+vgroups_summary <- vgroups %>% 
+              dplyr::select(group,subgroup,vessel_size,group_area,crab_year) %>% 
+              distinct()
+unique(vgroups$subgroup)
+```
+
+Vessel length keys
+```{r}
+vlengths <- read_csv(here('project-dat','vessel_groups','length_key_dcrb_vms_vessels.csv'))
+```
+
+
+Season dates
+```{r}
+season_dates_df <- read_csv(here::here('project-dat','dcrb_season_starts.csv'))
+
+season_dates_df %<>%
+  mutate(port_area_start_date = mdy(season_start_date)) %>%
+  dplyr::select(-season_start_date)
+str(season_dates_df)
+```
+<br>
+
+For now, just grab the first (central) start date from the season with the longest delay
+```{r}
+start_date <- season_dates_df %>% filter(pcdistrict=="central") %>%
+  slice_min(n=1,order_by=month(port_area_start_date)) %>%
+  pull(port_area_start_date)
+```
+
+
+## Earth Mover's Distance per vessel
+
+The Earth Mover's Distance calculation takes a utilization distribution as: A Raster, RasterStack, RasterBrick, SpatialPoints, SpatialPointsDataFrame. This code first constructs the utilization distribution, and then saves it uses a Spatial Points DataFrame. That object can be called back in to calculate EMD.
+
+### create utilization distribution
+
+First, filter VMS to only include spring / summer records after the 2016 start date
+
+```{r}
+sub.vms <- vms %>% mutate(late_start_month=paste0(month(start_date),"-",day(start_date))) %>%
+  mutate(late_start=mdy(paste0(late_start_month,"-",crab_year))) %>%
+  filter(date > late_start)
+```
+
+Make sure that worked
+```{r}
+hist(month(sub.vms$date), main="Tickets per month", xlab="Month")
+```
+
+
+```{r}
+for(d in unique(sub.vms$drvid)){
+  # filter VMS data
+  tmpvms <- filter(sub.vms, crab_year %in% crab_years & drvid == d) %>%
+    dplyr::select(drvid,crab_year,X_COORD, Y_COORD)
+  # create the Spatial Points Data frame
+  tmpvms.sp <- SpatialPointsDataFrame(coords=tmpvms %>% dplyr::select(X_COORD,Y_COORD), data=tmpvms %>% dplyr::select(crab_year), proj4string = CRS("+init=epsg:32610"))
+  
+  # save the list(by year) of spatial points dataframes as an RDS
+  if(save_SPDF){
+  write_rds(tmpvms.sp, here::here(outdir,paste0(d,"_SPDF_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs_AFTER-",paste0(month(start_date),"-",day(start_date)),".rds")))
+  }
+  
+  tmpyrs <- unique(tmpvms.sp$crab_year)
+  tmpout <- list()
+  # create a list of raster layers
+  for(j in seq(1,length(tmpyrs))){
+    y <- tmpyrs[j]
+    # create utilization distribution, with grid size of 'kernel_g'
+    tmpud <- kernelUD(tmpvms.sp[tmpvms.sp$crab_year==y,], grid=kernel_g)
+    # convert estUD object to a raster
+    tmpras <- raster(as(tmpud[[1]],"SpatialPixelsDataFrame"))
+    # set any points outside the 90% line to NA, then recalculate the probability surface
+    tmpras[tmpras > udsize] <- NA; newras <- tmpras/cellStats(tmpras,sum)
+    tmpout[[j]] <- newras
+  }
+  names(tmpout) <- tmpyrs
+  
+  # save the list(by year) of 90% UD rasters as an RDS
+  if(write_data){
+  write_rds(tmpout, here::here(outdir,paste0(d,"_",udsize*100,"ud_RasterLayer_",kernel_g,"grid_", crab_years[1],"-",substr(tail(crab_years,1),3,4), "crabYrs_AFTER-",
+                                             paste0(month(start_date),"-",day(start_date)),".rds")))
+  }
+  
+}
+rm(tmpout, tmpvms,tmpvms.sp)
+```
+<br>
+
+### calculate EMD 
+
+Get filenames from above.
+```{r}
+file_vec <- list.files(path=here(outdir),pattern="RasterLayer")
+```
+
+Read back in the 90% UD lists, and find the year-over-year EMD for each vessel.
+```{r eval=FALSE}
+# for(i in seq(1,length(file_vec))){
+for(i in seq(202,length(file_vec))){
+  # get drvid & rds name
+  f <- file_vec[[i]]
+  d <- strsplit(f,split="_")[[1]][1]
+  message(d)
+  # read in rds
+  ras_list <- read_rds(here::here(outdir,f))
+  tmpyrs <- names(ras_list)
+  if(length(tmpyrs) > 1){
+    # empty data frame for EMD
+    tmpdat <- matrix(nrow=length(tmpyrs),ncol=length(tmpyrs),dimnames=list(tmpyrs,tmpyrs),data=0)
+    
+    # get emd for consecutive years
+    sstart <- Sys.time()
+    message("calculating emd...")
+    for(j in seq(1,length(ras_list)-1)){
+      k=j+1
+      message("working on ",names(ras_list)[j],"...")
+        tmpdat[j,k] <- emd(ras_list[[j]],ras_list[[k]])
+    }
+    
+    # get unique values from EMD matrix. coerce to dataframe.
+    ind <- which(upper.tri(tmpdat, diag = FALSE), arr.ind = TRUE)
+    tmpdat.df <- data.frame(drvid=d,
+                            crab_year_1 = tmpyrs[ind[,1]],
+                            crab_year_2 = tmpyrs[ind[,2]],
+                            emd=tmpdat[ind]) %>%
+      mutate(tmpdiff=as.numeric(crab_year_2)-as.numeric(crab_year_1)) %>%
+      filter(tmpdiff == 1) %>% dplyr::select(-tmpdiff)
+    message(d, " done.\n")
+    print(Sys.time()-sstart)
+    # 
+    
+    if(!(exists("emd_dat"))){
+      emd_dat <- tmpdat.df
+    } else{
+      emd_dat %<>% rbind(tmpdat.df)
+    }
+    rm(ras_list,tmpdat,ind)
+    
+  }
+}
+
+if(write_data){
+write.csv(emd_dat,here::here('project-dat','statistics',paste0('EMD_annual_per_vessel_',udsize*100,'ud_',kernel_g,'grid_', crab_years[1],'-',substr(tail(crab_years,1),3,4), 'crabYrs_AFTER-',
+                                                               paste0(month(start_date),'-',day(start_date)),'.csv')))
+}
+```
+<br>
+
+######################################################
+## EMD Group Means
+
+### add vessel group info
+
+add the vessel groups dataframe
+```{r}
+emd.dat.groups <- emd.dat %>% 
+  left_join(vgroups %>% 
+              dplyr::select(drvid,group,subgroup,vessel_size,group_area) %>% 
+              distinct(),by=c("drvid"),multiple="all") %>%
+  filter(!is.na(group))
+```
+
+combine crab years
+```{r}
+emd.dat.groups %<>% unite(col="crab_years",crab_year_1, crab_year_2, sep="_",remove=FALSE)
+```
+
+sample sizes for year=over=year comparisons 
+```{r}
+emd_groups_sample_sizes <-  emd.dat.groups %>%
+  group_by(subgroup) %>% summarise(n.vessels=length(unique(drvid)))
+filter(emd_groups_sample_sizes,n.vessels < 3) # should probably be 0
+
+emd_groups_yearly_sample_sizes <-  emd.dat.groups %>%
+  group_by(crab_years,subgroup) %>% summarise(n.vessels=length(unique(drvid)))
+filter(emd_groups_yearly_sample_sizes,n.vessels < 3)
+```
+
+
+grab only the EMD values with non-confidential years for each vessel subgroup and year=over=year comparison (may not have been filtered out with non-confidential vessel key)
+```{r}
+emd.dat.groups.noncon <- emd.dat.groups %>% 
+  left_join(emd_groups_yearly_sample_sizes,by=c("crab_years","subgroup")) %>%
+  filter(n.vessels > 2)
+```
+
+
+
+### group means
+```{r}
+## vessel clusters
+emd_group_means_overall <- emd.dat.groups %>%
+  filter(crab_year_1 %in% keep_years & crab_year_2 %in% keep_years) %>%
+  group_by(vessel_size,group,subgroup,group_area) %>%
+  summarize(mean.emd=mean(emd),sd.emd=std.error(emd),n.vessels=length(unique(drvid)),.groups='drop') %>%
+  ungroup() %>%
+  mutate(`Vessel Group`=ifelse(group_area=="central","Central",
+                         ifelse(group_area=="northern","Northern",
+                                ifelse(group_area=="central/northern" & group==3 ,"Central/Northern",
+                                       ifelse(group_area=="central/northern" & group==4, "Diversified Northern",
+                                              ifelse(group_area=="central/northern" & group==5,"cross-district",NA))))),
+         crab_years="Overall") %>%
+  rename(`Vessel Size`=vessel_size)
+
+emd_group_means <- emd.dat.groups.noncon %>%
+  filter(crab_year_1 %in% keep_years & crab_year_2 %in% keep_years) %>%
+  group_by(vessel_size,group,subgroup,group_area,crab_years) %>%
+  summarize(mean.emd=mean(emd),sd.emd=std.error(emd),n.vessels=length(unique(drvid)),.groups='drop') %>%
+  ungroup() %>%
+  mutate(`Vessel Group`=ifelse(group_area=="central","Central",
+                         ifelse(group_area=="northern","Northern",
+                                ifelse(group_area=="central/northern" & group==3 ,"Central/Northern",
+                                       ifelse(group_area=="central/northern" & group==4, "Diversified Northern",
+                                              ifelse(group_area=="central/northern" & group==5,"cross-district",NA)))))) %>%
+  rename(`Vessel Size`=vessel_size)
+emd_group_means %<>%
+  rbind(dplyr::select(emd_group_means_overall, colnames(emd_group_means)))
+emd_group_means$`Vessel Group` <- factor(emd_group_means$`Vessel Group`,levels=c("Central","Northern","Central/Northern","Diversified Northern","cross-district"))
+emd_group_means$crab_years <- factor(emd_group_means$crab_years, levels=c("Overall","2013_2014","2014_2015","2015_2016","2016_2017","2017_2018"))
+```
+
+
+```{r}
+write_csv(emd_group_means, here('project-dat','statistics','meanEMD_annual_bygroup_90ud_75grid_k4_2014clusterYR_noncon.csv'))
+```
+
+
+### t test
+
+Is there a significant difference in Earth Mover's Distance between large / small vessels in a given year?
+
+#### local vessels
+
+Compare EMD of large v. small Local Northern; and large v. small Local Central
+
+```{r}
+wilcox.local.lengths.out <- list()
+sig.local.lengths.out <- data.frame(crab_years=as.character(),
+                              pval=as.numeric())
+emd.dat.local.groups <- filter(emd.dat.groups.noncon, group %in% c(1,2))
+i=1
+for(a in unique(emd.dat.local.groups$group_area)){
+for(y in unique(emd.dat.local.groups$crab_years)){
+  testdat <- emd.dat.groups %>% filter(crab_years==y & group_area==a)
+  wilcox.local.lengths.out[[i]] <- wilcox.test(emd~vessel_size,testdat)
+  sig.local.lengths.out %<>% bind_rows(data.frame(area=a,
+                                                  crab_years=y,
+                                                  pval=round(wilcox.local.lengths.out[[i]]$p.value,5)))
+  names(wilcox.local.lengths.out)[[i]] <- paste0(a,"-",y)
+  i = i +1
+}
+}
+wilcox.local.lengths.out
+```
+```{r}
+wilcox.local.lengths <- wilcox.local.lengths.out[c(seq(1,5),seq(8,12))]
+sig.local.lengths.out %<>% mutate(correct.pval=pval*(length(wilcox.local.lengths)/2)) %>%
+  mutate(significance=ifelse(correct.pval<0.05,"*","")) %>%
+  mutate(y=(max(emd_group_means$mean.emd)+max(emd_group_means$sd.emd))/1000) %>% filter(crab_years %in% emd_group_means$crab_years)
+```
+
+again, on the overall data
+```{r}
+i=length(wilcox.local.lengths) + 1
+for(a in unique(emd.dat.local.groups$group_area)){
+  testdat <- emd.dat.groups %>% filter(crab_years %in% emd_group_means$crab_years & group_area==a)
+  wilcox.local.lengths[[i]] <- wilcox.test(emd~vessel_size,testdat)
+  names(wilcox.local.lengths)[[i]] <- paste0(a,"- Overall")
+  
+  sig.local.lengths.out %<>% bind_rows(data.frame(area=a,
+                                                  crab_years="Overall",
+                                                  pval=round(wilcox.local.lengths[[i]] $p.value,5)))
+  i = i +1
+}
+```
+
+
+Save output from all t-tests
+```{r}
+wilcox_tests_bylength <- list(wilcox.local.lengths.out,wilcox.local.lengths,sig.local.lengths.out)
+save(wilcox_tests_bylength, file=here('project-dat','statistics','wilcox_tests_groups_localBYlength_noncon.rds'))
+```
+
+
+
+#### coastwide vessels
+
+Compare EMD of groups 3-large versus 4-large.
+```{r}
+wilcox.coast.lengths.out <- list()
+sig.coast.lengths.out <- data.frame(crab_years=as.character(),
+                              pval=as.numeric())
+emd.dat.coast.groups <- filter(emd.dat.groups.noncon, group %in% c(3,4))
+i=1
+for(y in unique(emd.dat.coast.groups$crab_years)){
+  testdat <- emd.dat.coast.groups %>% filter(crab_years==y)
+  if(length(unique(testdat$subgroup)) > 1){
+  wilcox.coast.lengths.out[[i]] <- wilcox.test(emd~subgroup,testdat)
+  sig.coast.lengths.out %<>% bind_rows(data.frame(crab_years=y,
+                                                  pval=round(wilcox.coast.lengths.out[[i]]$p.value,5)))
+  names(wilcox.coast.lengths.out)[[i]] <- paste0(y)
+  i = i +1
+  }
+}
+wilcox.coast.lengths.out
+```
+$`2011_2012`
+
+	Wilcoxon rank sum exact test
+
+data:  emd by subgroup
+W = 1, p-value = 0.1143
+alternative hypothesis: true location shift is not equal to 0
+
+
+$`2014_2015`
+
+	Wilcoxon rank sum exact test
+
+data:  emd by subgroup
+W = 10, p-value = 0.5714
+alternative hypothesis: true location shift is not equal to 0
+
+
+$`2017_2018`
+
+	Wilcoxon rank sum exact test
+
+data:  emd by subgroup
+W = 2, p-value = 0.4
+alternative hypothesis: true location shift is not equal to 0
+
+
+Compare overall:
+```{r}
+testdat <- emd.dat.coast.groups %>% filter(crab_years %in% emd_group_means$crab_years)
+wilcox.test(emd~subgroup,testdat)
+```
+
+
+
+
+
+### anova
+
+Is there significant variability between years, within a single subgroup?
+
+#### between years
+```{r}
+emd.dat.groups.keepYRS <- filter(emd.dat.groups.noncon, (crab_year_1 %in% keep_years & crab_year_2 %in% keep_years))
+aov.years.out <- list()
+tukey.years.out <- list()
+i=1
+
+for(s in unique(emd.dat.groups$subgroup)){
+  testdat <- filter(emd.dat.groups.keepYRS, subgroup==s)
+  aov.years.out[[i]] <- aov(emd~crab_years,data=testdat)
+  tukey.years.out[[i]] <- TukeyHSD(aov.years.out[[i]],conf.level=0.90)
+  names(aov.years.out)[[i]] <- paste0(s)
+  names(tukey.years.out)[[i]] <- paste0(s)
+  i=i+1
+}
+```
+
+
+```{r}
+anovas_list <- list(aov.years.out,tukey.years.out)
+save(anovas_list, file=here('project-dat','statistics','anova_tukey_tests_crossYrs_byGroup.rds'))
+```
+
+
+#### between groups: original subgroups
+are there significant differences between vessel groups, for EMD mean over all years?
+```{r}
+emd.dat.groups.keepYRS.og <- filter(emd.dat.groups.keepYRS, subgroup != "5-large")
+aov.groups.out <- aov(emd~subgroup,data=emd.dat.groups.keepYRS.og)
+summary(aov.groups.out)
+tukey.groups.out <- TukeyHSD(aov.groups.out)
+tukey.groups.out
+```
+
+```{r}
+anovas_list <- list(aov.groups.out,tukey.groups.out)
+save(anovas_list, file=here('project-dat','statistics','anova_tukey_tests_groups_byYR.rds'))
+```
+
+#### between groups: cross-district pool
+
+are there significant differences between vessel groups, for EMD mean over all years?
+
+```{r}
+emd.dat.groups.keepYRS.pool <- filter(emd.dat.groups.keepYRS, !(subgroup %in% c("3-large","4-large")))
+aov.groups.out <- aov(emd~subgroup,data=emd.dat.groups.keepYRS.pool)
+summary(aov.groups.out)
+tukey.groups.out <- TukeyHSD(aov.groups.out)
+tukey.groups.out
+```
+
+
+
+
+
+
+

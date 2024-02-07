@@ -5,7 +5,7 @@ output: html_document
 
 ## Purpose
 
-In this step, we produce a version of the VMS data that is interpolated such that records are evenly distributed every hour.
+In this step, we produce a version of the VMS data that is interpolated such that records are evenly distributed every **30 minutes**.
 
 First, the script filters for time gaps over which it is unlikely that linear interpolation will be representative. According to the following rules:
 
@@ -26,7 +26,7 @@ library(lubridate)
 library(sf)
 library(move)
 library(rgdal)
-library(rnaturalearth)
+library(beepr)
 
 # ggplot theme
 plot_theme <-   theme_minimal()+
@@ -37,6 +37,19 @@ plot_theme <-   theme_minimal()+
         panel.grid.major = element_blank(),
         panel.grid.minor = element_blank())
 theme_set(plot_theme)
+
+# alerts
+options(error = function(){    # Beep on error
+  beepr::beep()
+  Sys.sleep(1)
+  }
+ )
+
+.Last <- function() {          # Beep on exiting session
+  beepr::beep()
+  Sys.sleep(1)
+}
+
 
 rm(list=setdiff(ls(),c('process_year','alltime')))
 
@@ -58,7 +71,7 @@ vms_filtered <- read_rds(here::here('data','processed','matched','filtering',pas
 Find trips whose maximum time gap is greater than 4 hours or encompasses more than 25 percent of the trip
 NOTE:: Was this 40% before??
 
-```{r echo=FALSE}
+```{r}
 # random_trip <- vms_filtered %>% filter(TARGET_rev=='DCRB') %>% distinct(Rec_ID) %>% sample_n(3) %>% pull(Rec_ID)
 
 vms_gapfiltered <- vms_filtered %>%
@@ -68,11 +81,11 @@ vms_gapfiltered <- vms_filtered %>%
   mutate(trip_dur=sum(segment_dur)) %>% 
   # add a sequential record number
   arrange(westcoastdate) %>% 
-  mutate(recnum=row_number()) %>%
+  mutate(recnum=row_number()) %>% 
   #indicate whether to keep or remove trip based on segment durations
-  mutate(keep_remove_timelag=ifelse(max(segment_dur,na.rm=TRUE) > (4*3600) | (segment_dur/trip_dur) > max_gap_ptrip, "remove", "keep")) %>%
+  mutate(keep_remove_timelag=ifelse(max(segment_dur,na.rm=T) > (4*3600) | (segment_dur/trip_dur) > max_gap_ptrip, "remove", "keep")) %>% 
   #indicate whether the reason for removal was because of the last segment
-  mutate(longest_seg=first(recnum,order_by=desc(segment_dur))) %>%
+  mutate(longest_seg=first(recnum,order_by=desc(segment_dur))) %>% 
   mutate(last_seg_longest=longest_seg==max(recnum)) %>% 
   mutate(is_last_seg=ifelse(last_seg_longest&keep_remove_timelag=='remove',TRUE,FALSE)) %>% 
   ungroup()
@@ -87,7 +100,7 @@ nremovedtrips <- length(unique(trips_removed_table$Rec_ID))
 nremovedlastseg <- trips_removed_table %>% filter(is_last_seg) %>% nrow()
 ```
 
-With these criteria, out of `r ntottrips` unique trips in the filtered dataset, we flagged `r nremovedtrips` for removal, with `r nremovedlastseg` of these because of the last segment in the trip. For now, we instead retain these `r nremovedlastseg` trips for investigation later.
+With these criteria, out of `r ntottrips` unique trips in the filtered dataset, we flagged `r nremovedtrips` for removal (`r (nremovedtrips/ntottrips)*100`%), with `r nremovedlastseg` of these because of the last segment in the trip. For now, we instead retain these `r nremovedlastseg` trips for investigation later.
 
 Now we can filter the dataset.
 
@@ -99,8 +112,11 @@ vms_gapfiltered %<>%
 ```
 
 
+
 **** 
 Aside: how does the # of trips retained drop when we increase / decrease the % of trip missing? *For 2010, the % trips removed drops to ~20% at 0.25 and plateaus from there*
+
+
 ```{r echo=FALSE, fig.height=4,fig.width=5, warning=FALSE, message=FALSE}
 step_gaps <- seq(0,1,by=0.05)
 for(i in step_gaps){
@@ -144,6 +160,8 @@ ggplot(track_removals, aes(x=max_pdur,y=premovedtrips)) + geom_col() + labs(y="%
 ```
 
 Aside: how does the # of trips retained drop when we increase / decrease the hours missing? *For 2010, there is a big drop in % removed from 1 to 1.5; from 4.0 to 4.5 it drops from 16% to 12.5%*
+
+
 ```{r echo=FALSE,fig.height=4,fig.width=5, warning=FALSE, message=FALSE}
 step_gaps <- seq(0,6,by=0.5)
 for(i in step_gaps){
@@ -186,7 +204,6 @@ for(i in step_gaps){
 ggplot(track_removals2, aes(x=max_gap,y=premovedtrips)) + geom_col() + labs(y="% trips removed",x="max gap (hrs)")
 ```
 ****
-
 
 
 ## Interpolate
@@ -238,11 +255,8 @@ Sys.time() - start.time
 movedatProj <- spTransform(movedat, CRSobj="+proj=utm +zone=10 +datum=WGS84 +units=m +no_defs +type=crs")
 
 ```
-Time difference of 2.59252 mins
 
-
-
-### Run Interpolation
+### Run Interpolation (30min)
 
 Starting from a MoveStack object
 
@@ -255,7 +269,7 @@ interpolated_data <- purrr::map_df(1:ntrips,function(i){
   #tmp_movedat <- movedat[[i]] #change this due to edits made in above section
   tmp_movedat <- movedatProj[[i]]
 
-  inter_movedat <- interpolateTime(x=tmp_movedat, time=as.difftime(60, units="mins"), spaceMethod='euclidean')
+  inter_movedat <- interpolateTime(x=tmp_movedat, time=as.difftime(30, units="mins"), spaceMethod='euclidean')
   inter_df <- as.data.frame(inter_movedat)
   #clean up the data frame
   inter_df <- inter_df %>%
@@ -269,7 +283,7 @@ interpolated_data <- purrr::map_df(1:ntrips,function(i){
 tm <- proc.time()-ptm
 ```
 
-Interpolation took taken `r round(tm[3]/60,2)` minutes to run. (2010: 22min)
+Interpolation took taken `r round(tm[3]/60,2)` minutes to run.
 
 ### Integrate Interpolated Data
 
@@ -402,62 +416,6 @@ Add a final indicator for whether a point was interpolated or not, then save
 ```{r}
 vms_regular %<>% mutate(is_interpolated=ifelse(sensor=="interpolateTime",1,0)) %>% dplyr::select(-sensor)
 
-write_rds(vms_regular,here::here('data','processed','matched','interpolation_60min',paste0(process_year,'interpolated.rds')))
+write_rds(vms_regular,here::here('data','processed','matched','interpolation_30min',paste0(process_year,'interpolated.rds')))
 ```
 
-
-## Check interpolation
-
-Map a few random trips
-
-```{r}
-vms_regular <- read_rds(here::here('data','processed','matched','interpolation_60min',paste0(process_year,'interpolated.rds')))
-```
-```{r message=FALSE, fig.height=4, fig.width=7}
-vms_regular %>%
-  dplyr::select(Rec_ID, date, agency_code) %>%
-  distinct() %>%
-  group_by(date,agency_code) %>% summarise(ntrips=length(unique(Rec_ID))) %>%
-  ggplot(aes(x=date,y=ntrips,fill=agency_code)) +
-  geom_col() + ggtitle(paste0("Year: ", process_year))
-```
-
-```{r}
-vms_sf <- as.data.frame(vms_regular) %>% 
-  dplyr::select(Rec_ID,VMS_RECNO,X_COORD,Y_COORD,in_port,date) %>%
-  st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
-
-# import a background/land layer from rnaturalearth package
-library(rnaturalearth)
-coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
-  filter(name %in% c('California','Oregon','Washington')) %>%
-  # make sure CRS is the same as the port layer
-  st_transform(st_crs(vms_sf))
-
-test_port<-vms_sf %>% 
-  filter(in_port=='BDG') %>% 
-  #subsample for quicker plotting
-  sample_n(.,min(nrow(.),1000))
-testbbox <- st_bbox(test_port)
-ggplot()+
-  geom_sf(data=coaststates,fill='gray50')+
-  # geom_sf(data=ports_buffer,fill='seagreen',alpha=0.5)+
-  geom_sf(data=test_port,size=1,aes(color=date))+
-  xlim(testbbox[1]-5000,testbbox[3]+5000)+ylim(testbbox[2]-5000,testbbox[4]+5000)+
-  labs(x='',y='',title="Points for Bodega Trips")+
-  theme(axis.text.x = element_text(angle=90))
-```
-```{r}
-test_port<-vms_sf %>% 
-  filter(in_port=='CRS') %>% 
-  #subsample for quicker plotting
-  sample_n(.,min(nrow(.),1000))
-testbbox <- st_bbox(test_port)
-ggplot()+
-  geom_sf(data=coaststates,fill='gray50')+
-  # geom_sf(data=ports_buffer,fill='seagreen',alpha=0.5)+
-  geom_sf(data=test_port,size=1,aes(color=date))+
-  xlim(testbbox[1]-5000,testbbox[3]+5000)+ylim(testbbox[2]-5000,testbbox[4]+5000)+
-  labs(x='',y='',title="Points for Crescent City Trips")+
-  theme(axis.text.x = element_text(angle=90))
-```

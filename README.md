@@ -1,10 +1,22 @@
-# VMS-NWFSC-2
-Update to the NOAA/NWFSC VMS and fish ticket data processing pipeline
+# Fork of VMS-NWFSC-2
+Apply update to the NOAA/NWFSC VMS and fish ticket data processing pipeline
 
 # Purpose
-This repository collates the code used to process VMS data and link it to PacFIN fish ticket data for the west coast. These outputs are useful for a wide array of applications in west coast fishery management. For example, fish-ticket-linked VMS data are useful for describing fishing behavior and dynamics, risk to protected resources, and drivers of change in west coast fisheries.
+Process VMS data from crab fishing seasons 2009-10 (2010 crab year) through 2017-18 (2018 crab year) to evaluate changing fishing grounds. 
 
-This is a direct update to work done primarily by M. Fisher and J. Samhouri on a previous version of this workflow.
+*Original by Owen Liu*
+This repository collates the code used to process VMS data and link it to PacFIN fish ticket data for the west coast. These outputs are useful for a wide array of applications in west coast fishery management. For example, fish-ticket-linked VMS data are useful for describing fishing behavior and dynamics, risk to protected resources, and drivers of change in west coast fisheries. This is a direct update to work done primarily by M. Fisher and J. Samhouri on a previous version of this workflow.
+
+# Data
+
+The following data inputs were used: 
+
+- landings: raw fish ticket data, in two parts: (1) fish tickets from 2008-2015, dated 20XX-MM-DD. file name: .csv (processed by Owen Liu & read in as rds objects). (2) fish tickets from 2016-2018, dated 2023-xx-xx. file name:
+
+- vessel registrations: vessel length keys (processed by script 02) as .rds objects, uploaded to Kiteworks by Owen Liu on Feb 20, 2020 
+
+- vms data: 
+
 
 # Structure
 The repository is structured into multiple required steps in the processing of VMS data from raw inputs into useful outputs. This process has a number of steps, including multiple QA/QC steps. These steps are described in detail in the associated `.Rmd` files. The scripts are organized hierarchically. Individual data processing steps have their own associated scripts, which are then knit into the overall process file. This is to facilitate editing of individual steps, while maintaining the overall framework in one document.

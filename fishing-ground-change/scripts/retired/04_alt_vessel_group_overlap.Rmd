@@ -1,0 +1,275 @@
+---
+title: "BA Overlap using Individual Vessels"
+author: "M. Fisher"
+date: "3/15/2023"
+output: html_document
+---
+
+
+The analysis to look at fishing ground overlap between groups was completed by first generating a 90% utilization distribution using fishing location data for *all vessels in the group*, and then calculating BA overlap. With this method, I would then have to bootstrap the confidence intervals.
+
+I'm unsure why I didn't just calculate pairwise BA overlap between all vessels in group A against all vessels in group B, and then look at the median. This script will trial that method using the vessel-year 90% utilization distributions generated for script 02 (EMD). 
+
+
+
+```{r setup, include=FALSE}
+rm(list=ls())
+
+library(raster)
+library(adehabitatHR)
+library(tidyverse)
+library(gridExtra)
+library(readr)
+library(here)
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+<br>
+
+Input
+```{r}
+yrs <- c(2013,2014,2015,2016,2017,2018)
+k=5
+p=90
+gsize=75
+cluster_year=2014
+ud_years <- "2011-18"
+tfs <- c("annual","Central","North")
+overlap_method <- "BA"
+href=0.08
+
+indir     <- 'project-dat/vms/interpolation_60min/NaN_speed_filter/vessel90ud'
+clustfile <- 'project-dat/vessel_groups/k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'
+outdir    <- 'project-dat/vessel_groups'
+qcdir     <- 'project-dat/vessel_groups/kernel-overlap-QC'
+
+```
+<br>
+
+
+# Set up 
+
+
+Read in the cluster key
+```{r}
+cluster_key <- read.csv(here::here(clustfile))
+if("X" %in% colnames(cluster_key)){cluster_key <- dplyr::select(cluster_key,-X)}
+head(cluster_key)
+
+ngroups <- length(unique(cluster_key$subgroup))
+```
+
+Function for calculating an *h* value for `kernelUD`
+```{r}
+source(here('r','pairwise_href.r'))
+```
+
+
+
+# Calculate overlap
+
+### testing 123...
+
+```{r}
+i = 1; j = 2
+groupA <- unique(cluster_key$subgroup)[i]
+groupAvessels <- filter(cluster_key,subgroup %in% groupA)
+groupB <- unique(cluster_key$subgroup)[j]
+groupBvessels <- filter(cluster_key,subgroup %in% groupB)
+
+d=groupAvessels$drvid[1]
+
+e=groupBvessels$drvid[1]
+
+
+fa <- paste0(d,"_SPDF_",ud_years,"crabYrs.rds")
+tmpSPDFa <- read_rds(here::here(indir,fa))
+tmpSPDFa@data$drvid <- d
+
+
+fb <- paste0(e,"_SPDF_",ud_years,"crabYrs.rds")
+tmpSPDFb <- read_rds(here::here(indir,fb))
+tmpSPDFb@data$drvid <- e
+
+y=intersect(unique(tmpSPDFa@data$crab_year),unique(tmpSPDFb@data$crab_year))[1]
+
+
+tmpA <- (subset(tmpSPDFa, crab_year==y)); tmpA@data$crab_year <- NULL
+tmpB <- (subset(tmpSPDFb, crab_year==y)); tmpB@data$crab_year <- NULL
+tmpAB <- rbind(tmpA,tmpB)
+### make sure coordinate system carries over!
+if(is.null(crs(tmpAB))){
+  error("coordinate systems are not the same between vessels!!")
+}
+```
+
+
+with the default value of href, calculated based on the variation in coordinates. First, have the function calculate it for me
+```{r}
+tmpBAi <- kerneloverlap(tmpAB, method=overlap_method, percent=p, grid=75, h="href", conditional=F)
+
+tmpud <- kernelUD(tmpAB, h="href",grid=75)
+img <- image(tmpud)
+ggplot(as.data.frame(tmpAB@coords) %>% mutate(drvid=tmpAB@data$drvid)) +
+  geom_point(aes(x=X_COORD,y=Y_COORD,color=drvid)) +
+  ggtitle(paste0(d,"-",e,"- Overlap:",tmpBAi[1,2]))
+
+tmpud[[1]]@h
+tmpud[[2]]@h
+```
+
+Now, do this calculation separately and then take the mean
+```{r}
+href_calc <- pairwise_href(tmpA,tmpB); href_calc 
+tmpBAi <- kerneloverlap(tmpAB, method=overlap_method, percent=p, grid=75, h=href_calc, conditional=F)
+
+tmpud <- kernelUD(tmpAB, h=href_calc,grid=75)
+image(tmpud)
+ggplot(as.data.frame(tmpAB@coords) %>% mutate(drvid=tmpAB@data$drvid)) +
+  geom_point(aes(x=X_COORD,y=Y_COORD,color=drvid)) +
+  ggtitle(paste0(d,"-",e,"- Overlap:",tmpBAi[1,2]))
+  
+```
+
+
+### run as a loop
+
+I'm going to keep the grid size set to 75 for all comparisons, and use the default href calculation. Because I'm using the default *h* value with a set grid size, all vessel comparisons will output QC plots for the first year of comparison. 
+```{r}
+ba.df <- data.frame(group1=as.character(),
+                    group2=as.character(),
+                    drvid1=as.character(),
+                    drvid2=as.character(),
+                    crab_year=as.character(),
+                    BAindex=as.numeric(),
+                    h=as.character(),
+                    grid=as.numeric(),
+                    percentUD=as.character())
+```
+
+#### 1 - large
+```{r eval=FALSE}
+# group #1 for comparison
+groupA <- "1-large"
+groupAvessels <- filter(cluster_key,subgroup %in% groupA)
+# plot_vessels <- unique(groupAvessels$drvid)[sample(seq(1,length(unique(groupAvessels$drvid))),size=5)]
+plot_vessels <- unique(groupAvessels$drvid)
+
+for(j in seq(5,ngroups)){
+  if(i != j){
+    # group #2 for comparison
+    groupB <- unique(cluster_key$subgroup)[j]
+    groupBvessels <- filter(cluster_key,subgroup %in% groupB)
+    
+    # for each vessel in group A...
+    for(d in unique(groupAvessels$drvid)){
+      ## read in the UD list
+      fa <- paste0(d,"_SPDF_",ud_years,"crabYrs.rds")
+      tmpSPDFa <- read_rds(here::here(indir,fa))
+      tmpSPDFa@data$drvid <- d
+      # if(d %in% plot_vessels){dir.create(here(qcdir,d))}
+      
+      for(e in unique(groupBvessels$drvid)){
+        if(d != e){
+        ## read in the UD list
+        fb <- paste0(e,"_SPDF_",ud_years,"crabYrs.rds")
+        tmpSPDFb <- read_rds(here::here(indir,fb))
+        tmpSPDFb@data$drvid <- e
+        
+        ## for each year in vessel 'd' also present in vessel 'e'
+        for(y in intersect(unique(tmpSPDFa@data$crab_year),unique(tmpSPDFb@data$crab_year))){
+          if(y %in% yrs){
+            tmpA <- (subset(tmpSPDFa, crab_year==y)); tmpA@data$crab_year <- NULL
+            tmpB <- (subset(tmpSPDFb, crab_year==y)); tmpB@data$crab_year <- NULL
+            tmpAB <- rbind(tmpA,tmpB)
+            ### make sure coordinate system carries over!
+            if(is.null(crs(tmpAB))){
+              error("coordinate systems are not the same between vessels!!")
+            }
+            
+            href_calc <- href_label <- "href"
+            kud_extent <- 1  # default
+            kud_grid <- gsize
+            #### some vessels need custom href; see below code chunk
+            if(d=="266985" & e!="607016")
+              {href_calc=pairwise_href(tmpA,tmpB,method="min"); kud_extent=2} else if(d=="266985" & e=="607016")
+              {kud_grid=60; kud_extent=2} else if(d=="944210" | e=="944210"){kud_extent=2}
+            
+            ### calculate BA index
+            tmpBAi <- kerneloverlap(tmpAB, method=overlap_method, percent=p, grid=kud_grid, h=href_calc,extent=kud_extent, conditional=F)
+            ### save BA index to dataframe
+            ba.df <- bind_rows(ba.df, data.frame(group1=groupA,
+                                                 group2=groupB,
+                                                 drvid1=d,
+                                                 drvid2=e,
+                                                 crab_year=as.character(y),
+                                                 BAindex=tmpBAi[1,2],
+                                                 h=as.character(href_calc),
+                                                 grid=kud_grid,
+                                                 percentUD=as.character(p)))
+            
+            ### save plots for QC, for subset of vessels
+            if(d %in% plot_vessels & y==yrs[1] & e != "278493"){
+              #### kernelUD for plotting
+              tmpud <- kernelUD(tmpAB, h=href_calc,extent=kud_extent,grid=kud_grid)
+              tmpud <- kernelUD(tmpB, h=href_calc,extent=kud_extent,grid=kud_grid)
+              # tmpud <- kernelUD(tmpAB,extent=2)
+              kd_names <- names(tmpud)
+              p.ud <- lapply(tmpud, function(x){try(getverticeshr(x, p))})
+              sapply(1:length(p.ud), function(i) {
+                row.names(p.ud[[i]]) <<- kd_names[i]
+              })
+              sdf_poly <- Reduce(rbind, p.ud)
+              #### plot 1
+              tmp.plot <- ggplot() +
+                geom_point(data=as.data.frame(tmpAB@coords) %>% mutate(drvid=tmpAB@data$drvid), aes(x=X_COORD,y=Y_COORD,color=drvid)) +
+                geom_polygon(data=fortify(sdf_poly),aes(x = long, y = lat, fill = id),alpha=0.4) +
+                ggtitle(paste0("Overlap:",round(tmpBAi[1,2],2))) + theme_bw()
+              png(here(qcdir,d,paste0(d,"_",e,"_",y,"_",p,"ud_",href_label,"href_points.png")))
+              print(tmp.plot)
+              dev.off()
+              #### plot 2
+              png(here(qcdir,d,paste0(d,"_",e,"_",y,"_",p,"ud_",href_label,"href_image.png")))
+              image(tmpud)
+              dev.off()
+              
+            }
+          }
+          }
+          
+        } else{message("WARNING: fishing vessel ",d," is in two groups: ",groupA," and ",groupB )}
+      }
+    }
+  }
+}
+```
+
+Error in getverticeshr.estUD(x, p) : 
+  The grid is too small to allow the estimation of home-range.
+You should rerun kernelUD with a larger extent parameter
+
+- when d = "266985" and e = "1203760" : using pairwise_href(method="mean") works
+- when d = "266985" and e = "607016" : reset everything to defaults and adjust extent to 2.
+- when d = "205318" and e = "944210"
+
+Also noted: 
+
+For animal  1203760 , the most of the UD is distributed  in less than 5 pixels.
+ The results will probably be inconsistent.
+ Try to increase the parameter grid.
+
+For animal  240412 , the most of the UD is distributed  in less than 5 pixels.
+ The results will probably be inconsistent.
+ 
+ For animal  205318 , the most of the UD is distributed  in less than 5 pixels.
+ The results will probably be inconsistent.
+ Try to increase the parameter grid.
+For animal  233048 , the most of the UD is distributed  in less than 5 pixels.
+ The results will probably be inconsistent.
+ 
+ 
+ drvid 278493 only had 11 re-locations in 2013; might want to remove this vessel. 
+
+```{r}
+write_csv(ba.df, here(outdir,paste0('BAoverlap_',groupA,"_",groupB,".csv")))
+```

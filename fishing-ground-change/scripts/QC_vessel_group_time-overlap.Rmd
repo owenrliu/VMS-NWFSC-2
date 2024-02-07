@@ -1,0 +1,1572 @@
+---
+title: "Time-restricted BA Overlap of Vessel Groups, with Bootstrapping"
+date: "3/20/2023"
+output: 
+  html_document:
+    toc: yes
+    toc_float: yes
+---
+
+**Author: M.Fisher**
+
+Calculate the overlap in Dungeness crab fishing grounds between vessel groups, **using only VMS data from shared dates between seasons** (difference from script 04b). This means that for each "primary" season time frames, 
+
+(1) get the dates that the time frame encompasses for the 2013 crab year,
+(2) pull VMS data from only those dates in the remaining crab years,
+(3) calculate overlap,
+(4) repeat 1-3 for each crab year.
+
+For the full season, I ran the code just once, using the latest central CA start date across years (so, for the 2016 crab season which started on Mar 26). 
+
+Unlike the EMD script 02, this analysis **is** restricted to vessels assigned to a group from the 2013-14 crab season.
+
+This script includes options to remove Dungeness crab vessels based on (1) the number of fishing trips they took in a given year, and/or (2) an exvessel revenue cut-off. This is in addition to the filters that were already imposed in creating the fishing ground data: 
+
+- landings in a given state (e.g., California)
+- trips targeting Dungeness crab
+- vessels that have five or more relocations per crab season
+
+
+However, for the analysis as it stands, I am not going to apply any additional filters beyond those already used in script 01.
+
+
+
+```{r setup, include=FALSE}
+library(here)
+library(tidyverse)
+library(magrittr)
+library(rsample)
+library(adehabitatHR)
+library(sp)   
+packageVersion("sp")   # should be 2.1 + 
+packageVersion("adehabitatHR") # should be 0.4.21 + 
+
+library(cowplot)
+
+
+## if having trouble with the bootstrapping section, re-start the R session, clear the environment, and hash these out before re-loading packages
+# library(raster)
+# library(maps)
+
+
+source(here('R','subset_vms.R'))
+source(here('R','create_vms_spdf.R'))
+source(here('R','bootstrapped_kerneloverlap.R'))
+source(here('R','kernelUD_to_dataframe.R'))
+std.error=function(x) sd(x)/sqrt(length(x))
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+<br>
+
+Input
+```{r}
+crab_years <- c(2013,2014,2015,2016,2017,2018)
+k=5   # number of clusters
+p=90  # % utilization distribution
+kud_grid <- 75  # grid size
+kud_grid_boot <- 250  # see VMS-repo/HomeRange/scripts/final_scripts/ba_bootstrapping_check_maps.html#conclusions
+overlap.method <- "BA"
+cluster_year=2014
+nboot <- 1000
+
+save_SPDF <- TRUE # save an SPDF for each group, in addition to the 90% UD? 
+
+
+indir   <- 'project-dat/vms/interpolation_60min/NaN_speed_filter'
+outdir  <- 'project-dat/vms/interpolation_60min/NaN_speed_filter/group90ud'
+outdir_boot <- 'project-dat/vms/interpolation_60min/NaN_speed_filter/group90ud/bootstrapping'
+statdir <- 'project-dat/statistics'
+
+```
+<br>
+
+## Data
+
+VMS
+```{r read_vms}
+for(y in crab_years){
+  tmpvms <-  read_rds(here::here(indir,paste0(y,'season_crabfishing.rds')))
+  if(y==crab_years[1]){
+    vms <- tmpvms
+  } else{
+    vms %<>% bind_rows(tmpvms)
+  }
+}
+
+str(vms)
+```
+
+
+Group key
+```{r}
+vgroups <- read_csv(here('project-dat','vessel_groups','k4_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv')) %>%
+  filter(crab_year %in% crab_years)
+str(vgroups)
+```
+<br>
+
+Season dates
+```{r}
+season_dates_df <- read_csv(here::here('project-dat','dcrb_season_starts.csv'))
+```
+```{r}
+season_dates_df %<>%
+  mutate(port_area_start_date = mdy(season_start_date)) %>%
+  dplyr::select(-season_start_date)
+str(season_dates_df)
+```
+<br>
+
+For now, just grab the first (central) start date from the season with the longest delay
+```{r}
+start_date <- season_dates_df %>% filter(pcdistrict=="central") %>%
+  slice_min(n=1,order_by=month(port_area_start_date)) %>%
+  pull(port_area_start_date)
+```
+
+Get the start / end date of the first six weeks (central & northern CA) for each crab season
+```{r}
+season_dates_df %<>%
+  mutate(cutoff6w = port_area_start_date + days(42))
+str(season_dates_df)
+```
+
+## First 6 weeks, central CA
+
+Add group data to the vms data
+```{r}
+grouped.vms <- vgroups %>% dplyr::select(crab_year,drvid,subgroup,group,vessel_size,group_area) %>%
+  left_join(vms, by=c("drvid","crab_year"), multiple="all") %>%
+  filter(crab_year %in% crab_years) %>% 
+  dplyr::select(crab_year,drvid,subgroup,group,vessel_size,group_area,Rec_ID,date,removal_type_code,westcoastdate,X_COORD,Y_COORD,LATITUDE,LONGITUDE) %>%
+  filter(!is.na(Rec_ID))
+```
+
+Create a list of vms data frames which only contain the data within the first 6w cutoff for each crab year (the index name)
+```{r}
+vms_dat_list <- list()
+
+for(i in seq(1,length(crab_years))){
+  y <- crab_years[i]
+  yr_start_date <-  season_dates_df %>% filter(pcdistrict=="central" & crab_year==y) %>%
+    pull(port_area_start_date)
+  yr_cutoff_date <- season_dates_df %>% filter(pcdistrict=="central" & crab_year==y) %>%
+    pull(cutoff6w)
+  yr_start_date <- ymd(yr_start_date); yr_cutoff_date <- ymd(yr_cutoff_date)
+  
+  print(yr_start_date); print(yr_cutoff_date)
+  
+  yr.dates.df <- data.frame(crab_year=crab_years)
+  if(month(yr_start_date) > 10){yr.dates.df$cal_yr <- crab_years-1}else{yr.dates.df$cal_yr <- crab_years}
+
+  
+  yr.dates.df %<>% mutate(yr_start=paste0(month(yr_start_date),"-",day(yr_start_date)),
+                          yr_cutoff=paste0(month(yr_cutoff_date),"-",day(yr_cutoff_date))) %>%
+    unite(col="yr_start",yr_start,cal_yr,sep="-", remove=FALSE) %>%
+    unite(col="yr_cutoff",yr_cutoff,cal_yr,sep="-",remove=TRUE)
+  
+  yr.vms <- grouped.vms %>% 
+    left_join(yr.dates.df, by="crab_year") %>%
+    mutate(yr_start=mdy(yr_start),
+           yr_cutoff=mdy(yr_cutoff)) %>%
+    filter(date >= yr_start & date <= yr_cutoff)
+
+  hist(month(yr.vms$date), main=y, xlab="month", ylab="n vms")
+  hist(yr.vms$crab_year, main=y, xlab="tix crab season", ylab="n vms")
+  
+  vms_dat_list[[i]] <- yr.vms
+  names(vms_dat_list)[i] <- y
+  
+}
+```
+
+[1] "2012-11-15" to "2012-12-27"
+[1] "2013-11-15" to "2013-12-27"
+[1] "2014-11-15" to "2014-12-27"
+[1] "2016-03-26" to "2016-05-07"
+[1] "2016-11-15" to "2016-12-27"
+[1] "2017-11-15" to "2017-12-27"
+
+
+### Changes to PROJ 6 and GDAL 3
+
+```{r}
+i = 1
+ycut <- crab_years[i]
+sub.vms <- vms_dat_list[[which(names(vms_dat_list)==ycut)]]
+
+ycut_boot_list <- list()
+
+j = 1
+
+y <- crab_years[j]
+yvms <- filter(sub.vms, crab_year==y)
+## check for confidential VMS
+sample_size <- yvms %>%
+  group_by(subgroup) %>%
+  summarise(n.vessels = length(unique(drvid)), n.trips = length(unique(Rec_ID))) %>%
+  arrange(n.vessels,n.trips)
+confidential <- filter(sample_size,n.vessels < 3)
+
+yvms.noncon <- yvms %>%
+  filter(!(subgroup %in% confidential$subgroup)) %>%
+  dplyr::select(crab_year,drvid,subgroup,Rec_ID,LATITUDE,LONGITUDE,X_COORD,Y_COORD)
+```
+
+Calculate overlap for actual data set. code below is the `TESTbootstrapped_kerneloverlap` function
+```{r}
+s=yvms.noncon
+
+# matrix with coordinates
+vms_coords <- dplyr::select(s, LONGITUDE, LATITUDE)
+
+# data frame with IDs
+vms_ids <- s %>%
+  dplyr::select(subgroup) %>%
+  mutate(subgroup=as.character(subgroup))
+# create the Spatial Points Data frame
+vms_sp <- SpatialPointsDataFrame(coords=vms_coords, data=vms_ids)
+
+crs_wgs84 <- CRS(SRS_string = "EPSG:4326") # for VMS
+
+p.spdf <- SpatialPointsDataFrame(coords=dplyr::select(puechabon.df,X,Y),
+                                 data=dplyr::select(puechabon.df,Name))
+slot(vms_sp,'proj4string') <- crs_wgs84
+
+TESTbootstrapped_kerneloverlap_proj6(yvms.noncon)
+
+# calculate overlap **THIS THROWS THE ERROR**
+yr.overlap <- kerneloverlap(vms_sp[,1], method=overlap.method, percent=0.9, grid=250, h=0.06, conditional=F) 
+```
+
+
+Re-install adehabitatHR, spatialpointsdataframe from github. The new versions (Oct 2023) of these packages should not require rgdal and rgeos, so hopefully that deals with some of the errors being thrown from the gdal /  proj updates.
+
+```{r}
+vms_sp <- SpatialPointsDataFrame(coords=vms_coords, data=vms_ids)
+
+sp::CRS(SRS_string='EPSG:4326')
+
+sp::CRS("+init=epsg:4326")
+rgdal::rgdal_extSoftVersion()
+
+CRS("+proj=utm +zone=47 +a=6377304.063 +b=6356103.038993155 +towgs84=-11,851,5,0,0,0,0 +units=m +no_defs")
+
+crs_rdh <- CRS(SRS_string = "EPSG:4326")
+
+slot(vms_sp, "proj4string") <- CRS(SRS_string="EPSG:4326")
+
+x = CRS("+init=epsg:4326")
+proj4string(vms_sp) = CRS("+init=epsg:4326 +proj=longlat
++ellps=WGS84 +datum=WGS84 +no_defs +towgs84=0,0,0")
+                                 
+yr.overlap <- kerneloverlap(vms_sp[,1], method=overlap.method, percent=0.9, grid=250, h=0.06, conditional=F) 
+```
+
+
+### Bootstrapping
+
+
+To bootstrap confidence intervals around the group overlaps, (1) use the `rsample` package to generate a bootstrapped (with replacement) "analysis" dataset, (2) create a new SPDF for each resampling, and (3) re-calculate overlaps for each resampling. 
+
+
+#### re-sampling
+
+using the **rsample** package and `purrr::map` function. 
+
+From the **Tidymodels** documentation: 
+
+> We can use the bootstraps() function in the rsample package to sample bootstrap replications. First, we construct 2000 bootstrap replicates of the data, each of which has been randomly sampled with replacement. The resulting object is an rset, which is a data frame with a column of rsplit objects. An rsplit object has two main components: an analysis data set and an assessment data set, accessible via analysis(rsplit) and assessment(rsplit) respectively. For bootstrap samples, the analysis data set is the bootstrap sample itself, and the assessment data set consists of all the out-of-bag samples.
+
+
+```{r}
+all.start <- Sys.time()
+
+for(i in seq(1,length(crab_years))){
+  sstart <- Sys.time()
+  ## filter for year
+  ycut <- crab_years[i]
+  sub.vms <- vms_dat_list[[which(names(vms_dat_list)==ycut)]]
+  
+  ycut_boot_list <- list()
+  
+  for(j in seq(1,length(crab_years))){
+    y <- crab_years[j]
+    yvms <- filter(sub.vms, crab_year==y)
+    ## check for confidential VMS
+    sample_size <- yvms %>%
+      group_by(subgroup) %>%
+      summarise(n.vessels = length(unique(drvid)), n.trips = length(unique(Rec_ID))) %>%
+      arrange(n.vessels,n.trips)
+    confidential <- filter(sample_size,n.vessels < 3)
+    
+    yvms.noncon <- yvms %>%
+      filter(!(subgroup %in% confidential$subgroup)) %>%
+      dplyr::select(crab_year,drvid,subgroup,Rec_ID,LATITUDE,LONGITUDE,X_COORD,Y_COORD)
+    
+    if(nrow(yvms.noncon) > 1){
+      message("starting bootstrapping...\n")
+      ## run bootstrapping
+      # yboots <- bootstraps(as.data.frame(yvms.noncon), times=nboot,apparent=TRUE) %>%
+      #   mutate(booted = purrr::map(splits,bootstrapped_kerneloverlap))
+      yboots <- bootstraps(as.data.frame(yvms.noncon), times=nboot, strata=subgroup, apparent=TRUE) %>%
+        mutate(booted = purrr::map(splits,bootstrapped_kerneloverlap_proj6))
+      
+      ycut_boot_list[[j]] <- yboots[[3]]
+      
+      print(Sys.time()-sstart)
+      message("done with crab year ",y," bootstrapping.\n\n")
+      
+    } else{
+      ycut_boot_list[[j]] <- NULL
+      message("not enough data for bootstrapping in crab year ",y,".\n\n")
+    }
+  }
+  
+  names(ycut_boot_list) <- as.character(crab_years)
+  saveRDS(ycut_boot_list,here(outdir_boot,paste0(overlap.method,"overlap_SHARED6wCentral_",ycut,"cutyr_",crab_years[1],"-",last(crab_years),"crabyr_",k,"clusters_",nboot,"bootstrapped_PROJ6.rds")))
+  
+}
+
+message("final benchmark: ")
+Sys.time()-all.start
+```
+
+
+final benchmark: 
+Time difference of 6.151395 hours
+
+
+```
+starting bootstrapping...
+
+Time difference of 7.56364 mins
+done with crab year 2013 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 27.20628 mins
+done with crab year 2014 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 44.53171 mins
+done with crab year 2015 bootstrapping.
+
+
+not enough data for bootstrapping in crab year 2016.
+
+
+starting bootstrapping...
+
+Time difference of 59.87853 mins
+done with crab year 2017 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 1.145268 hours
+done with crab year 2018 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 6.615121 mins
+done with crab year 2013 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 24.05639 mins
+done with crab year 2014 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 40.58256 mins
+done with crab year 2015 bootstrapping.
+
+
+not enough data for bootstrapping in crab year 2016.
+
+
+starting bootstrapping...
+
+Time difference of 55.83243 mins
+done with crab year 2017 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 1.077064 hours
+done with crab year 2018 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 6.610944 mins
+done with crab year 2013 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 24.06054 mins
+done with crab year 2014 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 40.62979 mins
+done with crab year 2015 bootstrapping.
+
+
+not enough data for bootstrapping in crab year 2016.
+
+
+starting bootstrapping...
+
+Time difference of 55.92009 mins
+done with crab year 2017 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 1.078435 hours
+done with crab year 2018 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 6.768595 mins
+done with crab year 2013 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 13.6991 mins
+done with crab year 2014 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 18.93499 mins
+done with crab year 2015 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 28.87072 mins
+done with crab year 2016 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 35.90099 mins
+done with crab year 2017 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 41.52742 mins
+done with crab year 2018 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 6.609918 mins
+done with crab year 2013 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 24.04894 mins
+done with crab year 2014 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 40.62744 mins
+done with crab year 2015 bootstrapping.
+
+
+not enough data for bootstrapping in crab year 2016.
+
+
+starting bootstrapping...
+
+Time difference of 55.90878 mins
+done with crab year 2017 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 1.078038 hours
+done with crab year 2018 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 6.671493 mins
+done with crab year 2013 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 24.09839 mins
+done with crab year 2014 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 40.72233 mins
+done with crab year 2015 bootstrapping.
+
+
+not enough data for bootstrapping in crab year 2016.
+
+
+starting bootstrapping...
+
+Time difference of 56.00296 mins
+done with crab year 2017 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 1.080079 hours
+done with crab year 2018 bootstrapping.
+
+```
+
+Turn list of lists into dataframe, using the custom function `kernelUD_to_dataframe` (this just extracts the nested BA index matrices in the "ba.boot.tmp" object). This code takes about 5 minutes to run.
+
+```{r}
+
+for(i in seq(1,length(crab_years))){
+  ## filter for year
+  ycut <- crab_years[i]
+  
+  ba.boot <- readRDS(here(outdir_boot,paste0(overlap.method,"overlap_SHARED6wCentral_",ycut,"cutyr_",crab_years[1],"-",last(crab_years),"crabyr_",k,"clusters_",nboot,"bootstrapped_PROJ6.rds")))
+  
+  # which crab years had data?
+  ycut.keep.yrs <- crab_years[as.numeric(which(unlist(lapply(ba.boot,is.null)) == FALSE))]
+  for(j in seq(1,length(crab_years))){
+    y <- crab_years[j]
+    if(y %in% ycut.keep.yrs){
+      ba.boot.tmp <- ba.boot[[j]]
+      ba.boot.tmp <- ba.boot.tmp[2:(nboot+1)]
+      ba.boot.tmp2 <- purrr::map(ba.boot.tmp, .f=kernelUD_to_dataframe)
+      
+      names(ba.boot.tmp2) <- rep(y,nboot) 
+      ba.boot.df.tmp <- data.table::rbindlist(ba.boot.tmp2, fill = TRUE, idcol = T)
+      ba.boot.df.tmp %<>% mutate(cut_yr=ycut)
+      
+      if(i==1 & j==1){
+        ba.boot.df <- ba.boot.df.tmp
+      } else{
+        ba.boot.df %<>% bind_rows(ba.boot.df.tmp)
+      }
+      rm(ba.boot.tmp2,ba.boot.tmp)
+    }
+  }
+  
+  rm(ba.boot)
+}
+ 
+
+## save
+write_csv(ba.boot.df, here(statdir,paste0('BAoverlap_SHARED6wCentral_bootstrappedPROJ6_',crab_years[1],"-",substr(last(crab_years),3,4),'.csv')))
+```
+
+
+### Figures 4-5. BA index
+
+Add the vessel group information, and calculate mean / errors. 
+```{r}
+ba.boot.means <- ba.boot.df %>% filter(group1 != group2) %>% 
+  rename("crab_year"=.id) %>% 
+  group_by(cut_yr,crab_year,group1,group2) %>%
+  summarise(BAmean=mean(BAindex),
+            BAsdev=sd(BAindex),
+            BAsderr=std.error(BAindex))
+ba.boot.means %<>% left_join(vgroups %>% dplyr::select(subgroup,group_area,vessel_size) %>% distinct(),by=c("group1"="subgroup")) %>%
+  rename(group1_area=group_area,group1_size=vessel_size) %>%
+  left_join(vgroups %>% dplyr::select(subgroup,group_area,vessel_size) %>% distinct(),by=c("group2"="subgroup")) %>%
+  rename(group2_area=group_area,group2_size=vessel_size) %>%
+  mutate(group1_area=ifelse(group1=="5-large","cross-district",group1_area),
+         group2_area=ifelse(group2=="5-large","cross-district",group2_area))
+```
+
+```{r echo=FALSE, eval=writing}
+write_csv(ba.boot.means,file=here(statdir,paste0('meanBAoverlap_SHARED6wCentral_bootstrappedPROJ6_',crab_years[1],"-",substr(last(crab_years),3,4),'.csv')))
+```
+
+
+#### Fig 4: Locals
+```{r}
+ba.boot.locals1 <- ba.boot.means %>% 
+  filter((group1 %in% c("1-large","2-large")) & (group2 %in% c("1-small","2-small"))) %>%
+  mutate(timeframe="Central Primary Season")
+
+ba.boot.locals1b <- ba.boot.means %>% filter(!is.na(crab_year)) %>%
+  filter((group2 %in% c("1-large","2-large")) & (group1 %in% c("1-small","2-small")))  %>%
+  mutate(timeframe="Central Primary Season") %>%
+  rename(group1=group2,group1_area=group2_area,group1_size=group2_size,
+         group2=group1,group2_area=group1_area,group2_size=group1_size)
+
+ba.boot.locals1 %<>% bind_rows(ba.boot.locals1b) %>%
+  mutate(group1_area=ifelse(group1_area=="northern","Northern",
+                            ifelse(group1_area=="central","Central",NA)),
+         group2_area=ifelse(group2_area=="northern","Northern",
+                            ifelse(group2_area=="central","Central",NA)))
+```
+
+```{r echo=FALSE}
+plot.local1boot <- ba.boot.locals1 %>% 
+  ggplot(aes(x=as.factor(crab_year),y=BAmean,col=as.factor(cut_yr))) +
+  geom_point() + 
+  geom_path(aes(group=cut_yr)) +
+  geom_errorbar(aes(ymin=BAmean-(2*BAsderr),ymax=BAmean-(2*BAsderr)),width=0.5) +
+  facet_grid(cols=vars(group1_size,group1_area),rows=vars(group2_size,group2_area)) +
+  ylim(c(0,1)) +
+  labs(x="Crab Season", y= "Overlap (Bhattacharyya's affinity)", subtitle="Central Primary Season") +
+  scale_color_brewer(palette="OrRd",name="First \nSix Weeks\n of...") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+
+plot.local1boot
+```
+
+```{r}
+ba.boot.locals2 <- ba.boot.means %>% filter(!is.na(crab_year)) %>%
+  filter((group1 %in% c("1-large","1-small")) & (group2 %in% c("2-large","2-small"))) %>%
+  filter(group1_size ==group2_size) %>%
+  mutate(timeframe="Central Primary Season")
+
+ba.boot.locals2b <- ba.boot.means %>% filter(!is.na(crab_year)) %>%
+  filter((group2 %in% c("1-large","1-small")) & (group1 %in% c("2-large","2-small"))) %>%
+  mutate(timeframe="Central Primary Season")
+
+ba.boot.locals2 %<>% bind_rows(ba.boot.locals2b) %>%
+  mutate(group1_area=ifelse(group1_area=="northern","Northern",
+                            ifelse(group1_area=="central","Central",NA)),
+         group2_area=ifelse(group2_area=="northern","Northern",
+                            ifelse(group2_area=="central","Central",NA)))
+
+```
+
+```{r echo=FALSE}
+plot.local2boot <- ba.boot.locals2 %>% 
+  ggplot(aes(x=as.factor(crab_year),y=BAmean,col=as.factor(cut_yr))) +
+  geom_point() +
+  geom_path(aes(group=cut_yr)) +
+  geom_errorbar(aes(ymin=BAmean-(2*BAsderr),ymax=BAmean-(2*BAsderr)),width=0.5) +
+  facet_grid(cols=vars(group1_area,group1_size),rows=vars(group2_area,group2_size), scales="free") +
+  ylim(c(0,1)) +
+  labs(x="Crab Season", y= "Overlap (Bhattacharyya's affinity)", subtitle="Central Primary Season") +
+  scale_color_brewer(palette="OrRd",name="First \nSix Weeks\n of...") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+
+plot.local2boot
+```
+
+```{r echo=FALSE, eval=writing}
+p.out <- plot_grid(plot.local1boot+theme(legend.position="none",axis.title.x=element_blank(),
+                                         plot.margin=margin(c(5,5,20,5))), 
+          plot.local2boot+theme(axis.title=element_blank(),
+                                plot.margin=margin(c(5,5,20,5))), 
+          rel_widths=c(0.75,1),
+          labels=c("(a)","(b)"))
+png(here::here('project-dat','figures','QC',"BAoverlap-bootstrappedPROJ6-Shared-Central-6weeks_Locals_2013-18.png"),res=300,width=2800,height=1400)
+ggdraw(add_sub(p.out, "Crab Season", vpadding=grid::unit(0,"lines"),y=6, x=0.45, vjust=4.5))
+dev.off()
+```
+
+Now, print out a chart for each season to verify that there are only two lines above because similar start dates = overlapping values. 
+```{r}
+plot.local1boot.yr <- list(); i=1
+for(y in crab_years){
+  plot.local1boot.yr[[i]] <- ba.boot.locals1 %>% filter(cut_yr==y) %>%
+  ggplot(aes(x=as.factor(crab_year),y=BAmean)) +
+  geom_point(col="#018571") +
+  geom_path(group=1,col="#018571") +
+  geom_errorbar(aes(ymin=BAmean-(2*BAsderr),ymax=BAmean-(2*BAsderr)),width=0.5,col="#018571") +
+  facet_grid(cols=vars(group1_area,group1_size),rows=vars(group2_area,group2_size), scales="free") +
+  ylim(c(0,1)) +
+  labs(x="Crab Season", y= "Overlap (Bhattacharyya's affinity)", subtitle=paste0(y, " Central Primary Season Dates")) +
+  scale_color_brewer(palette="OrRd",name="Overlap in...") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+  i <- i + 1
+}
+
+png(here::here('project-dat','figures','QC',"BAoverlap-bootstrappedPROJ6-Shared-Central-6weeks_Locals_2013-18_byYR.png"),res=300,width=3800,height=2400)
+plot_grid(plotlist = plot.local1boot.yr)
+dev.off()
+```
+
+```{r}
+plot.local2boot.yr <- list(); i=1
+for(y in crab_years){
+  plot.local2boot.yr[[i]] <- ba.boot.locals2 %>% filter(cut_yr==y) %>%
+  ggplot(aes(x=as.factor(crab_year),y=BAmean)) +
+  geom_point(col="#018571") +
+  geom_path(group=1,col="#018571") +
+  geom_errorbar(aes(ymin=BAmean-(2*BAsderr),ymax=BAmean-(2*BAsderr)),width=0.5,col="#018571") +
+  facet_grid(cols=vars(group1_area,group1_size),rows=vars(group2_area,group2_size), scales="free") +
+  ylim(c(0,1)) +
+  labs(x="Crab Season", y= "Overlap (Bhattacharyya's affinity)", subtitle=paste0(y, " Central Primary Season Dates")) +
+  scale_color_brewer(palette="OrRd",name="Overlap in...") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+  i <- i + 1
+}
+
+png(here::here('project-dat','figures','QC',"BAoverlap-bootstrappedPROJ6-Shared-Central-6weeks_Locals_2013-18_byYR2.png"),res=300,width=3800,height=2400)
+plot_grid(plotlist = plot.local2boot.yr)
+dev.off()
+```
+
+
+
+
+
+
+
+## First 6 weeks, northern CA
+
+Add group data to the vms data
+```{r}
+grouped.vms <- vgroups %>% dplyr::select(crab_year,drvid,subgroup,group,vessel_size,group_area) %>%
+  left_join(vms, by=c("drvid","crab_year"), multiple="all") %>%
+  filter(crab_year %in% crab_years) %>% 
+  dplyr::select(crab_year,drvid,subgroup,group,vessel_size,group_area,Rec_ID,date,removal_type_code,westcoastdate,X_COORD,Y_COORD,LATITUDE,LONGITUDE) %>%
+  filter(!is.na(Rec_ID))
+```
+
+Create a list of vms data frames which only contain the data within the first 6w cutoff for each crab year (the index name)
+```{r}
+vms_dat_list <- list()
+
+for(i in seq(1,length(crab_years))){
+  y <- crab_years[i]
+  yr_start_date <-  season_dates_df %>% filter(pcdistrict=="northern" & crab_year==y) %>%
+    pull(port_area_start_date)
+  yr_cutoff_date <- season_dates_df %>% filter(pcdistrict=="northern" & crab_year==y) %>%
+    pull(cutoff6w)
+  yr_start_date <- ymd(yr_start_date); yr_cutoff_date <- ymd(yr_cutoff_date)
+  
+  print(yr_start_date); print(yr_cutoff_date)
+  
+  yr.dates.df <- data.frame(crab_year=crab_years)
+  if(month(yr_start_date) > 10){yr.dates.df$cal_yr_start <- crab_years-1}else{yr.dates.df$cal_yr_start <- crab_years}
+if(month(yr_cutoff_date) > 10){yr.dates.df$cal_yr_cutoff <- crab_years-1}else{yr.dates.df$cal_yr_cutoff <- crab_years}
+  
+  yr.dates.df %<>% mutate(yr_start=paste0(month(yr_start_date),"-",day(yr_start_date)),
+                          yr_cutoff=paste0(month(yr_cutoff_date),"-",day(yr_cutoff_date))) %>%
+    unite(col="yr_start",yr_start,cal_yr_start,sep="-", remove=FALSE) %>%
+    unite(col="yr_cutoff",yr_cutoff,cal_yr_cutoff,sep="-",remove=TRUE)
+  
+  yr.vms <- grouped.vms %>% 
+    left_join(yr.dates.df, by="crab_year") %>%
+    mutate(yr_start=mdy(yr_start),
+           yr_cutoff=mdy(yr_cutoff)) %>%
+    filter(date >= yr_start & date <= yr_cutoff)
+
+  hist(month(yr.vms$date), main=y, xlab="month", ylab="n vms")
+  hist(yr.vms$crab_year, main=y, xlab="tix crab season", ylab="n vms")
+  
+  vms_dat_list[[i]] <- yr.vms
+  names(vms_dat_list)[i] <- y
+  
+}
+```
+
+[1] "2013-01-15" to "2013-02-26"
+[1] "2013-12-01" to "2014-01-12"
+[1] "2014-12-01" to "2015-01-12"
+[1] "2016-05-12" to "2016-06-23"
+[1] "2016-12-01" to "2017-01-12"
+[1] "2017-12-21" to "2018-02-01"
+
+
+
+
+### Bootstrapping
+
+
+To bootstrap confidence intervals around the group overlaps, (1) use the `rsample` package to generate a bootstrapped (with replacement) "analysis" dataset, (2) create a new SPDF for each resampling, and (3) re-calculate overlaps for each resampling. 
+
+
+#### re-sampling
+
+using the **rsample** package and `purrr::map` function. 
+
+From the **Tidymodels** documentation: 
+
+> We can use the bootstraps() function in the rsample package to sample bootstrap replications. First, we construct 2000 bootstrap replicates of the data, each of which has been randomly sampled with replacement. The resulting object is an rset, which is a data frame with a column of rsplit objects. An rsplit object has two main components: an analysis data set and an assessment data set, accessible via analysis(rsplit) and assessment(rsplit) respectively. For bootstrap samples, the analysis data set is the bootstrap sample itself, and the assessment data set consists of all the out-of-bag samples.
+
+
+```{r}
+all.start <- Sys.time()
+
+for(i in seq(1,length(crab_years))){
+  sstart <- Sys.time()
+  ## filter for year
+  ycut <- crab_years[i]
+  sub.vms <- vms_dat_list[[which(names(vms_dat_list)==ycut)]]
+  
+  ycut_boot_list <- list()
+  
+  for(j in seq(1,length(crab_years))){
+    y <- crab_years[j]
+    yvms <- filter(sub.vms, crab_year==y)
+    ## check for confidential VMS
+    sample_size <- yvms %>%
+      group_by(subgroup) %>%
+      summarise(n.vessels = length(unique(drvid)), n.trips = length(unique(Rec_ID))) %>%
+      arrange(n.vessels,n.trips)
+    confidential <- filter(sample_size,n.vessels < 3)
+    
+    yvms.noncon <- yvms %>%
+      filter(!(subgroup %in% confidential$subgroup)) %>%
+      dplyr::select(crab_year,drvid,subgroup,Rec_ID,LATITUDE,LONGITUDE,X_COORD,Y_COORD)
+    
+    if(nrow(yvms.noncon) > 1){
+      message("starting bootstrapping...\n")
+      ## run bootstrapping
+      # yboots <- bootstraps(as.data.frame(yvms.noncon), times=nboot,apparent=TRUE) %>%
+      #   mutate(booted = purrr::map(splits,bootstrapped_kerneloverlap))
+      yboots <- bootstraps(as.data.frame(yvms.noncon), times=nboot, strata=subgroup, apparent=TRUE) %>%
+        mutate(booted = purrr::map(splits,bootstrapped_kerneloverlap_proj6))
+      
+      ycut_boot_list[[j]] <- yboots[[3]]
+      
+      print(Sys.time()-sstart)
+      message("done with crab year ",y," bootstrapping.\n\n")
+      
+    } else{
+      ycut_boot_list[[j]] <- NULL
+      message("not enough data for bootstrapping in crab year ",y,".\n\n")
+    }
+  }
+  
+  names(ycut_boot_list) <- as.character(crab_years)
+  saveRDS(ycut_boot_list,here(outdir_boot,paste0(overlap.method,"overlap_SHARED6wNorthern_",ycut,"cutyr_",crab_years[1],"-",last(crab_years),"crabyr_",k,"clusters_",nboot,"bootstrappedPROJ6.rds")))
+  
+}
+
+message("final benchmark: ")
+Sys.time()-all.start
+```
+
+```
+starting bootstrapping...
+
+Time difference of 14.35698 mins
+done with crab year 2013 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 26.129 mins
+done with crab year 2014 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 36.8556 mins
+done with crab year 2015 bootstrapping.
+
+
+not enough data for bootstrapping in crab year 2016.
+
+
+starting bootstrapping...
+
+Time difference of 48.59348 mins
+done with crab year 2017 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 59.95741 mins
+done with crab year 2018 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 5.457853 mins
+done with crab year 2013 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 20.54061 mins
+done with crab year 2014 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 35.11379 mins
+done with crab year 2015 bootstrapping.
+
+
+not enough data for bootstrapping in crab year 2016.
+
+
+starting bootstrapping...
+
+Time difference of 48.46921 mins
+done with crab year 2017 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 56.89664 mins
+done with crab year 2018 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 5.233185 mins
+done with crab year 2013 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 20.23647 mins
+done with crab year 2014 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 34.72368 mins
+done with crab year 2015 bootstrapping.
+
+
+not enough data for bootstrapping in crab year 2016.
+
+
+starting bootstrapping...
+
+Time difference of 48.048 mins
+done with crab year 2017 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 56.50405 mins
+done with crab year 2018 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 7.43555 mins
+done with crab year 2013 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 12.29957 mins
+done with crab year 2014 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 17.60489 mins
+done with crab year 2015 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 29.24902 mins
+done with crab year 2016 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 36.99684 mins
+done with crab year 2017 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 41.71761 mins
+done with crab year 2018 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 5.221663 mins
+done with crab year 2013 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 20.33691 mins
+done with crab year 2014 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 34.88644 mins
+done with crab year 2015 bootstrapping.
+
+
+not enough data for bootstrapping in crab year 2016.
+
+
+starting bootstrapping...
+
+Time difference of 48.19623 mins
+done with crab year 2017 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 56.64579 mins
+done with crab year 2018 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 11.03022 mins
+done with crab year 2013 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 26.97667 mins
+done with crab year 2014 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 39.16282 mins
+done with crab year 2015 bootstrapping.
+
+
+not enough data for bootstrapping in crab year 2016.
+
+
+starting bootstrapping...
+
+Time difference of 50.69708 mins
+done with crab year 2017 bootstrapping.
+
+
+starting bootstrapping...
+
+Time difference of 57.4204 mins
+done with crab year 2018 bootstrapping.
+
+
+> 
+> message("final benchmark: ")
+final benchmark: 
+> Sys.time()-all.start
+Time difference of 5.486092 hours
+```
+
+
+Turn list of lists into dataframe, using the custom function `kernelUD_to_dataframe` (this just extracts the nested BA index matrices in the "ba.boot.tmp" object)
+
+```{r}
+
+for(i in seq(1,length(crab_years))){
+  ## filter for year
+  ycut <- crab_years[i]
+  
+  ba.boot <- readRDS(here(outdir_boot,paste0(overlap.method,"overlap_SHARED6wNorthern_",ycut,"cutyr_",crab_years[1],"-",last(crab_years),"crabyr_",k,"clusters_",nboot,"bootstrappedPROJ6.rds")))
+  
+  # which crab years had data?
+  ycut.keep.yrs <- crab_years[as.numeric(which(unlist(lapply(ba.boot,is.null)) == FALSE))]
+  for(j in seq(1,length(crab_years))){
+    y <- crab_years[j]
+    if(y %in% ycut.keep.yrs){
+      ba.boot.tmp <- ba.boot[[j]]
+      ba.boot.tmp <- ba.boot.tmp[2:(nboot+1)]
+      ba.boot.tmp2 <- purrr::map(ba.boot.tmp, .f=kernelUD_to_dataframe)
+      
+      names(ba.boot.tmp2) <- rep(y,nboot) 
+      ba.boot.df.tmp <- data.table::rbindlist(ba.boot.tmp2, fill = TRUE, idcol = T)
+      ba.boot.df.tmp %<>% mutate(cut_yr=ycut)
+      
+      if(i==1 & j==1){
+        ba.boot.df <- ba.boot.df.tmp
+      } else{
+        ba.boot.df %<>% bind_rows(ba.boot.df.tmp)
+      }
+      rm(ba.boot.tmp2,ba.boot.tmp)
+    }
+  }
+  
+  rm(ba.boot)
+}
+ 
+
+## save
+write_csv(ba.boot.df, here(statdir,paste0('BAoverlap_SHARED6wNorthern_bootstrappedPROJ6_',crab_years[1],"-",substr(last(crab_years),3,4),'.csv')))
+```
+
+
+### Figures 4-5. BA index
+
+Add the vessel group information, and calculate mean / errors. 
+```{r}
+ba.boot.means <- ba.boot.df %>% filter(group1 != group2) %>% 
+  rename("crab_year"=.id) %>% 
+  group_by(cut_yr,crab_year,group1,group2) %>%
+  summarise(BAmean=mean(BAindex),
+            BAsdev=sd(BAindex),
+            BAsderr=std.error(BAindex))
+ba.boot.means %<>% left_join(vgroups %>% dplyr::select(subgroup,group_area,vessel_size) %>% distinct(),by=c("group1"="subgroup")) %>%
+  rename(group1_area=group_area,group1_size=vessel_size) %>%
+  left_join(vgroups %>% dplyr::select(subgroup,group_area,vessel_size) %>% distinct(),by=c("group2"="subgroup")) %>%
+  rename(group2_area=group_area,group2_size=vessel_size) %>%
+  mutate(group1_area=ifelse(group1=="5-large","cross-district",group1_area),
+         group2_area=ifelse(group2=="5-large","cross-district",group2_area))
+```
+
+```{r echo=FALSE, eval=writing}
+write_csv(ba.boot.means,file=here(statdir,paste0('meanBAoverlap_SHARED6wNorthern_bootstrappedPROJ6_',crab_years[1],"-",substr(last(crab_years),3,4),'.csv')))
+```
+
+
+#### Fig 4: Locals
+```{r}
+ba.boot.locals1 <- ba.boot.means %>% 
+  filter((group1 %in% c("1-large","2-large")) & (group2 %in% c("1-small","2-small"))) %>%
+  mutate(timeframe="Northern Primary Season")
+
+ba.boot.locals1b <- ba.boot.means %>% filter(!is.na(crab_year)) %>%
+  filter((group2 %in% c("1-large","2-large")) & (group1 %in% c("1-small","2-small")))  %>%
+  mutate(timeframe="Northern Primary Season") %>%
+  rename(group1=group2,group1_area=group2_area,group1_size=group2_size,
+         group2=group1,group2_area=group1_area,group2_size=group1_size)
+
+ba.boot.locals1 %<>% bind_rows(ba.boot.locals1b) %>%
+  mutate(group1_area=ifelse(group1_area=="northern","Northern",
+                            ifelse(group1_area=="central","Central",NA)),
+         group2_area=ifelse(group2_area=="northern","Northern",
+                            ifelse(group2_area=="central","Central",NA)))
+```
+
+```{r echo=FALSE}
+plot.local1boot <- ba.boot.locals1 %>% 
+  ggplot(aes(x=as.factor(crab_year),y=BAmean,col=as.factor(cut_yr))) +
+  geom_point() + 
+  geom_path(aes(group=cut_yr)) +
+  geom_errorbar(aes(ymin=BAmean-(2*BAsderr),ymax=BAmean-(2*BAsderr)),width=0.5) +
+  facet_grid(cols=vars(group1_size,group1_area),rows=vars(group2_size,group2_area)) +
+  ylim(c(0,1)) +
+  labs(x="Crab Season", y= "Overlap (Bhattacharyya's affinity)", subtitle="Northern Primary Season") +
+  scale_color_brewer(palette="Dark2",name="First \nSix Weeks\n of...") +
+  # scale_color_manual(values = colorRampPalette(brewer.pal(9, "Blues"))(12)[6:12]) +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+
+plot.local1boot
+```
+
+```{r}
+ba.boot.locals2 <- ba.boot.means %>% filter(!is.na(crab_year)) %>%
+  filter((group1 %in% c("1-large","1-small")) & (group2 %in% c("2-large","2-small"))) %>%
+  filter(group1_size ==group2_size) %>%
+  mutate(timeframe="Northern Primary Season")
+
+ba.boot.locals2b <- ba.boot.means %>% filter(!is.na(crab_year)) %>%
+  filter((group2 %in% c("1-large","1-small")) & (group1 %in% c("2-large","2-small"))) %>%
+  mutate(timeframe="Northern Primary Season")
+
+ba.boot.locals2 %<>% bind_rows(ba.boot.locals2b) %>%
+  mutate(group1_area=ifelse(group1_area=="northern","Northern",
+                            ifelse(group1_area=="central","Central",NA)),
+         group2_area=ifelse(group2_area=="northern","Northern",
+                            ifelse(group2_area=="central","Central",NA)))
+
+```
+
+```{r echo=FALSE}
+plot.local2boot <- ba.boot.locals2 %>% 
+  ggplot(aes(x=as.factor(crab_year),y=BAmean,col=as.factor(cut_yr))) +
+  geom_point() +
+  geom_path(aes(group=cut_yr)) +
+  geom_errorbar(aes(ymin=BAmean-(2*BAsderr),ymax=BAmean-(2*BAsderr)),width=0.5) +
+  facet_grid(cols=vars(group1_area,group1_size),rows=vars(group2_area,group2_size), scales="free") +
+  ylim(c(0,1)) +
+  labs(x="Crab Season", y= "Overlap (Bhattacharyya's affinity)", subtitle="Northern Primary Season") +
+  scale_color_brewer(palette="Dark2",name="First \nSix Weeks\n of...") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+
+plot.local2boot
+```
+
+```{r echo=FALSE, eval=writing}
+p.out <- plot_grid(plot.local1boot+theme(legend.position="none",axis.title.x=element_blank(),
+                                         plot.margin=margin(c(5,5,20,5))), 
+          plot.local2boot+theme(axis.title=element_blank(),
+                                plot.margin=margin(c(5,5,20,5))), 
+          rel_widths=c(0.75,1),
+          labels=c("(a)","(b)"))
+png(here::here('project-dat','figures','QC',"BAoverlap-bootstrappedPROJ6-Shared-Northern-6weeks_Locals_2013-18.png"),res=300,width=2800,height=1400)
+ggdraw(add_sub(p.out, "Crab Season", vpadding=grid::unit(0,"lines"),y=6, x=0.45, vjust=4.5))
+dev.off()
+```
+
+
+
+
+
+
+## Full Season
+
+### Filter VMS data
+
+Remove all records that occur prior to the *latest overall* central district start month/day
+```{r}
+sub.vms <- vms %>% mutate(late_start_month=paste0(month(start_date),"-",day(start_date))) %>%
+  mutate(late_start=mdy(paste0(late_start_month,"-",crab_year))) %>%
+  filter(date > late_start)
+```
+
+Make sure that worked
+```{r}
+hist(month(sub.vms$date), main="Tickets per month", xlab="Month")
+```
+
+
+Add group data to the vms data
+```{r}
+grouped.vms <- vgroups %>% dplyr::select(crab_year,drvid,subgroup,group,vessel_size,group_area) %>%
+  left_join(sub.vms, by=c("drvid","crab_year"), multiple="all") %>%
+  filter(crab_year %in% crab_years) %>% 
+  dplyr::select(crab_year,drvid,subgroup,group,vessel_size,group_area,Rec_ID,date,removal_type_code,westcoastdate,X_COORD,Y_COORD,LATITUDE,LONGITUDE,season_start_date) %>%
+  filter(!is.na(Rec_ID))
+```
+
+
+### Bootstrapping
+
+
+To bootstrap confidence intervals around the group overlaps, (1) use the `rsample` package to generate a bootstrapped (with replacement) "analysis" dataset, (2) create a new SPDF for each resampling, and (3) re-calculate overlaps for each resampling. 
+
+
+#### re-sampling
+
+using the **rsample** package and `purrr::map` function. 
+
+From the **Tidymodels** documentation: 
+
+> We can use the bootstraps() function in the rsample package to sample bootstrap replications. First, we construct 2000 bootstrap replicates of the data, each of which has been randomly sampled with replacement. The resulting object is an rset, which is a data frame with a column of rsplit objects. An rsplit object has two main components: an analysis data set and an assessment data set, accessible via analysis(rsplit) and assessment(rsplit) respectively. For bootstrap samples, the analysis data set is the bootstrap sample itself, and the assessment data set consists of all the out-of-bag samples.
+
+
+```{r}
+all.start <- Sys.time()
+
+for(y in c(2013,2014,2015,2016,2017,2018)){
+  sstart <- Sys.time()
+  ## filter for year
+  yvms <- filter(grouped.vms, crab_year==y)
+  
+  ## check for confidential VMS
+  sample_size <- yvms %>%
+    group_by(subgroup) %>%
+    summarise(n.vessels = length(unique(drvid)), n.trips = length(unique(Rec_ID))) %>%
+    arrange(n.vessels,n.trips)
+  confidential <- filter(sample_size,n.vessels < 3)
+  
+  yvms.noncon <- yvms %>%
+    filter(!(subgroup %in% confidential$subgroup)) %>%
+    dplyr::select(crab_year,drvid,subgroup,Rec_ID,LATITUDE,LONGITUDE,X_COORD,Y_COORD)
+  
+  message("starting bootstrapping...\n")
+  ## run bootstrapping
+  # yboots <- bootstraps(as.data.frame(yvms.noncon), times=nboot,apparent=TRUE) %>%
+  #   mutate(booted = purrr::map(splits,bootstrapped_kerneloverlap))
+  yboots <- bootstraps(as.data.frame(yvms.noncon), times=nboot, strata=subgroup, apparent=TRUE) %>%
+    mutate(booted = purrr::map(splits,bootstrapped_kerneloverlap))
+  
+  out <- yboots[[3]]
+  
+  saveRDS(out,here(outdir_boot,paste0(overlap.method,"overlap_SHAREDdates_",y,"crabyr_",k,"clusters_",nboot,"bootstrapped.rds")))
+  
+  print(Sys.time()-sstart)
+  message("done with crab year ",y," bootstrapping.\n\n")
+  
+}
+  
+message("final benchmark: ")
+Sys.time()-all.start
+```
+Time difference of 13.47775 minutes per crab year
+Time difference of 1.137262 hours total
+ 
+
+
+Turn list of lists into dataframe, using the custom function `kernelUD_to_dataframe`
+
+```{r}
+ba.boot <- list()
+for(y in crab_years){
+  ba.boot <- append(ba.boot, readRDS(here(outdir_boot,paste0(overlap.method,"overlap_SHAREDdates_",y,"crabyr_",k,"clusters_",nboot,"bootstrapped.rds")))[2:(nboot+1)]) #only grab the bootstrapped data, not the starting data set
+}
+length(ba.boot)
+
+ba.boot2 <- purrr::map(ba.boot, .f=kernelUD_to_dataframe)
+names(ba.boot2) <- rep(crab_years,each=nboot) 
+ba.boot.df <- data.table::rbindlist(ba.boot2, fill = TRUE, idcol = T)
+rm(ba.boot2,ba.boot)
+
+## save
+write_csv(ba.boot.df, here(statdir,paste0('BAoverlap_SHAREDdates_bootstrapped_',crab_years[1],"-",substr(last(crab_years),3,4),'.csv')))
+```
+
+
+### Figures 4-5. BA index
+
+Add the vessel group information, and calculate mean / errors. 
+```{r}
+ba.boot.means <- ba.boot.df %>% filter(group1 != group2) %>% 
+  rename("crab_year"=.id) %>% 
+  group_by(crab_year,group1,group2) %>%
+  summarise(BAmean=mean(BAindex),
+            BAsdev=sd(BAindex),
+            BAsderr=std.error(BAindex))
+ba.boot.means %<>% left_join(vgroups %>% dplyr::select(subgroup,group_area,vessel_size) %>% distinct(),by=c("group1"="subgroup")) %>%
+  rename(group1_area=group_area,group1_size=vessel_size) %>%
+  left_join(vgroups %>% dplyr::select(subgroup,group_area,vessel_size) %>% distinct(),by=c("group2"="subgroup")) %>%
+  rename(group2_area=group_area,group2_size=vessel_size) %>%
+  mutate(group1_area=ifelse(group1=="5-large","cross-district",group1_area),
+         group2_area=ifelse(group2=="5-large","cross-district",group2_area))
+```
+
+```{r echo=FALSE, eval=writing}
+write_csv(ba.boot.means,file=here(statdir,paste0('meanBAoverlap_SHAREDdates_bootstrapped_',crab_years[1],"-",substr(last(crab_years),3,4),'.csv')))
+```
+
+
+#### Fig 4: Locals
+```{r}
+ba.boot.locals1 <- ba.boot.means %>% filter(!is.na(crab_year)) %>%
+  filter((group1 %in% c("1-large","2-large")) & (group2 %in% c("1-small","2-small"))) %>%
+  mutate(timeframe="Full Season, Spr/Sum")
+
+ba.boot.locals1b <- ba.boot.means %>% filter(!is.na(crab_year)) %>%
+  filter((group2 %in% c("1-large","2-large")) & (group1 %in% c("1-small","2-small")))  %>%
+  mutate(timeframe="Full Season, Spr/Sum") %>%
+  rename(group1=group2,group1_area=group2_area,group1_size=group2_size,
+         group2=group1,group2_area=group1_area,group2_size=group1_size)
+
+ba.boot.locals1 %<>% bind_rows(ba.boot.locals1b) %>%
+  mutate(group1_area=ifelse(group1_area=="northern","Northern",
+                            ifelse(group1_area=="central","Central",NA)),
+         group2_area=ifelse(group2_area=="northern","Northern",
+                            ifelse(group2_area=="central","Central",NA)))
+```
+
+```{r echo=FALSE}
+plot.local1boot <- ggplot(ba.boot.locals1,aes(x=as.factor(crab_year),y=BAmean,col=timeframe,pch=timeframe)) +
+  geom_point() +
+  geom_path(aes(group=timeframe)) +
+  geom_errorbar(aes(ymin=BAmean-(2*BAsderr),ymax=BAmean-(2*BAsderr)),width=0.5) +
+  facet_grid(cols=vars(group1_size,group1_area),rows=vars(group2_size,group2_area)) +
+  ylim(c(0,1)) +
+  xlab("Crab Season") +
+  ylab("Overlap (Bhattacharyya's affinity)") +
+  scale_color_manual(values=c("grey60"),name="Portion of Season") +
+  scale_shape_manual(values=c(4),name="Portion of Season") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+
+plot.local1boot
+```
+
+```{r}
+ba.boot.locals2 <- ba.boot.means %>% filter(!is.na(crab_year)) %>%
+  filter((group1 %in% c("1-large","1-small")) & (group2 %in% c("2-large","2-small"))) %>%
+  filter(group1_size ==group2_size) %>%
+  mutate(timeframe="Full Season, Spr/Sum")
+
+ba.boot.locals2b <- ba.boot.means %>% filter(!is.na(crab_year)) %>%
+  filter((group2 %in% c("1-large","1-small")) & (group1 %in% c("2-large","2-small"))) %>%
+  mutate(timeframe="Full Season, Spr/Sum")
+
+```
+
+```{r echo=FALSE}
+plot.local2boot <- ba.boot.locals2 %>% 
+  ggplot(aes(x=as.factor(crab_year),y=BAmean,col=timeframe,pch=timeframe)) +
+  geom_point() +
+  geom_path(aes(group=timeframe)) +
+  geom_errorbar(aes(ymin=BAmean-(2*BAsderr),ymax=BAmean-(2*BAsderr)),width=0.5) +
+  facet_grid(cols=vars(group1_area,group1_size),rows=vars(group2_area,group2_size), scales="free") +
+  ylim(c(0,1)) +
+  xlab("Crab Season") +
+  ylab("Overlap (Bhattacharyya's affinity)") +
+  scale_color_manual(values=c("grey60"),name="Portion of Season") +
+  scale_shape_manual(values=c(4),name="Portion of Season") +
+  theme_bw() + theme(panel.grid.major.y=element_blank(),panel.grid.minor.y=element_blank(),
+                     strip.text=element_text(size=13),
+                     axis.title=element_text(size=13),
+                     axis.text.x=element_text(angle=90,hjust=1,vjust=0.6),
+                     legend.title=element_text(size=13),
+                     legend.text=element_text(size=12))
+
+plot.local2boot
+```
+
+```{r echo=FALSE, eval=writing}
+p.out <- plot_grid(plot.local1boot+theme(legend.position="none",axis.title.x=element_blank(),
+                                         plot.margin=margin(c(5,5,20,5))), 
+          plot.local2boot+theme(axis.title=element_blank(),
+                                plot.margin=margin(c(5,5,20,5))), 
+          rel_widths=c(0.75,1),
+          labels=c("(a)","(b)"))
+png(here::here('project-dat','figures','QC',"BAoverlap-bootstrapped-AFTER-03-26_Locals_2013-18.png"),res=300,width=2800,height=1400)
+ggdraw(add_sub(p.out, "Crab Season", vpadding=grid::unit(0,"lines"),y=6, x=0.45, vjust=4.5))
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Generate graphs for each vessel cluster, for each time frame (faceted by year)
+
+Basemap
+```{r}
+data(stateMapEnv)
+states_df <- map_data("state") %>%
+  filter(region %in% c("california"))
+```
+<br>
+
+Port Coordinates
+```{r warning=FALSE}
+group_mean_coords <- read.csv(here::here('project-dat','pcgroup_mean_coordinates.csv'))
+group_mean_coords[7,5:6] <- c(-121.6042,37.79039)
+
+pcgroup_df <- group_mean_coords
+
+pcgroup_df <- pcgroup_df %>%
+  recode(`San Francisco`="S.F.") %>%
+  filter(pcgroup_df,port_group %in% c("Crescent City","Eureka","Fort Bragg","Bodega Bay","S.F."))
+```
+<br>
+
+
+```{r eval=FALSE}
+mymap <- ggplot() +
+  geom_polygon(data=states_df, aes(x=long, y=lat, group=group, fill=region),color="grey67", fill="grey67",linetype=1) +
+  geom_point(data=pcgroup_geo_df, aes(x=Lon,y=Lat), col="black") +
+  geom_text(data=pcgroup_geo_df,aes(x=Lon_label,y=Lat_label,label=port_group))
+  
+for(t in tfs){
+  if(t=="annual"){
+  base_ud <- readRDS(here::here(outdir,paste0("2013_crab_ud",p,"_espg4326.rds")))
+  nat_ud <- readRDS(here::here(outdir,paste0("2014_crab_ud",p,"_espg4326.rds")))
+  hab_ud <- readRDS(here::here(outdir,paste0("2015_crab_ud",p,"_espg4326.rds")))
+  } else{
+  base_ud <- readRDS(here::here(outdir,paste0("2013_crab_ud",p,"_",t,"_espg4326.rds")))
+  nat_ud <- readRDS(here::here(outdir,paste0("2014_crab_ud",p,"_",t,"_espg4326.rds")))
+  hab_ud <- readRDS(here::here(outdir,paste0("2015_crab_ud",p,"_",t,"_espg4326.rds")))    
+  }
+  for(g in unique(cluster_key$group_recode)){
+    tmp_base <- base_ud[base_ud$id == g,]
+    tmp_nat <- nat_ud[nat_ud$id == g,]
+    tmp_hab <- nat_ud[hab_ud$id == g,]
+    ss <- ss_df_wide %>% filter(group_recode==g & timeframe==t)
+    basemap <- mymap +
+      geom_polygon(data=fortify(tmp_base), aes(x=long,y=lat, group=group), color="darkblue",fill="darkblue",alpha=0.3, size=1) +
+      ggtitle(paste0(g," - ",t)) +
+      theme_void() +
+      labs(caption=paste0("n=",ss$`2013`)) +
+      theme(legend.position="none",plot.caption=element_text(size=11),panel.border=element_rect(color="black", fill="transparent"),
+            plot.margin=margin(l=0,r=0,unit="cm")) +
+      coord_fixed(xlim=c(-124.5,-117.5), ylim=c(34,42))
+    if(g %in% hab_ud$id){
+    natmap <- mymap +
+      geom_polygon(data=fortify(tmp_nat), aes(x=long,y=lat, group=group), color="darkgreen",fill="darkgreen",alpha=0.3, size=1) +
+      ggtitle("") +
+      labs(caption=paste0("n=",ss$`2013`)) +
+      theme_void() +
+      theme(legend.position="none",plot.caption=element_text(size=11),panel.border=element_rect(color="black", fill="transparent"),
+            plot.margin=margin(l=0,r=0,unit="cm")) +
+      coord_fixed(xlim=c(-124.5,-117.5), ylim=c(34,42))
+    } else{natmap=NULL}
+    if(g %in% hab_ud$id){
+      habmap <- mymap +
+        geom_polygon(data=fortify(tmp_hab), aes(x=long,y=lat, group=group), color="darkred",fill="darkred",alpha=0.3, size=1) +
+        ggtitle("") +
+      labs(caption=paste0("n=",ss$`2013`)) +
+        theme_void() +
+        theme(legend.position="none",plot.caption=element_text(size=11),panel.border=element_rect(color="black", fill="transparent"),
+              plot.margin=margin(l=0,r=0,unit="cm")) +
+        coord_fixed(xlim=c(-124.5,-117.5), ylim=c(34,42))
+    } else{habmap=NULL}
+    
+    if(is.null(natmap)){
+      png(here::here("HomeRange/R_Output/plots/home_range/base13",paste0(g,"_",t,"_hr_espg4326.png")))
+      print(basemap)
+      dev.off()
+    } else if(is.null(habmap)){
+      png(here::here("HomeRange/R_Output/plots/home_range/base13",paste0(g,"_",t,"_hr_espg4326.png")))
+      grid.arrange(grobs=list(basemap,natmap),ncol=2)
+    } else{
+      png(here::here("HomeRange/R_Output/plots/home_range/base13",paste0(g,"_",t,"_hr_espg4326.png")))
+      grid.arrange(grobs=list(basemap,natmap,habmap),ncol=3)
+      dev.off()
+    }
+  }
+}
+```
+<br>
+
+

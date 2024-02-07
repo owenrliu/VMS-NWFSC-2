@@ -54,6 +54,7 @@ Choose directories and set objects
 ```{r objects}
 ## which years of fish tickets are you interested in?
 # process_year = 2017
+process_year   = seq(2016,2022)
 
 ## which species-specific revenue and lbs columns would you like? (static)
 species_cols <- c("DCRB", "SABL", "LOBS", "SPRW") 
@@ -116,8 +117,8 @@ This should be a .csv file containing raw PacFIN data. We only read in columns t
 # })
 
 #If you do not have individual Fish Ticket files for each year separately, you can also use a collated file
-rawdat <- read_rds(here::here('data','raw','fish tickets','pacfin_compiled_2004thru2021.rds'))
-
+# rawdat <- read_rds(here::here('data','raw','fish tickets','pacfin_compiled_2004thru2021.rds'))
+rawdat   <- read_csv(here::here('data','raw','fish tickets 2016-2022 010323.csv'))
 
 rawdat <- rawdat %>%
   filter(LANDING_YEAR %in%  process_year)
@@ -125,10 +126,13 @@ rawdat <- rawdat %>%
 
 Check to make sure columns were in the correct format for reading. This will return the names of columns with parsing errors.
 ```{r}
-problems(rawdat) %>% select(col) %>% distinct()
+colnames(rawdat)[(problems(rawdat) %>% select(col) %>% distinct())$col]
 # The columns with parsing errors are usually from columns that we do not need anyway
 ```
+<br>
 
+In the 2016-2022 data, it looks like read_csv is trying to read in TRIP_ID as a factor instead of numeric.
+<br>
 
 ## Edit existing columns
 
@@ -136,11 +140,12 @@ First, subset the raw data to include only the columns that are needed. Rename t
 
 ```{r}
 #an error here might be due to a missing FTID field, which should be included if possible
-## add into to column selection AFI_EXVESSEL_REVENUE - already adjusted for inflation
-rawdat.sub <- rawdat %>% select(FISH_TICKET_ID, FTID, PACFIN_PORT_CODE, PACFIN_GROUP_PORT_CODE, VESSEL_NUM, AGENCY_CODE, GEAR_CODE, GEAR_NAME, PACFIN_GROUP_GEAR_CODE, REMOVAL_TYPE_CODE, REMOVAL_TYPE_NAME, LANDING_DATE, LANDING_MONTH, LANDING_YEAR, PACFIN_SPECIES_CODE, LANDED_WEIGHT_LBS, EXVESSEL_REVENUE, AFI_EXVESSEL_REVENUE) %>% 
+## add into to column selection AFI_EXVESSEL_REVENUE - already adjusted for inflation **REMOVED FOR pre-2016 data for CHANGING FISHING GROUNDS PROJECT 2023-01-21**
+## add into column selection FTID: Source agency fish ticket identifier. This number is unique within a year and agency, but not necessarily across years or agencies.
+rawdat.sub <- rawdat %>% select(FISH_TICKET_ID, FTID, PACFIN_PORT_CODE, PACFIN_GROUP_PORT_CODE, VESSEL_NUM, AGENCY_CODE, GEAR_CODE, GEAR_NAME, PACFIN_GROUP_GEAR_CODE, REMOVAL_TYPE_CODE, REMOVAL_TYPE_NAME, LANDING_DATE, LANDING_MONTH, LANDING_YEAR, PACFIN_SPECIES_CODE, LANDED_WEIGHT_LBS, EXVESSEL_REVENUE,AFI_EXVESSEL_REVENUE) %>% 
 # change some column names
   set_colnames(c("Rec_ID","FTID", "pacfin_port_code", "port_group_code","drvid", "agency_code","gear_code", "gear_name", "gear_group", "removal_type_code", "removal_type_name", "date", "month", "year", 
-                          "PACFIN_SPECIES_CODE", "LANDED_WEIGHT_LBS", "EXVESSEL_REVENUE", "AFI_EXVESSEL_REVENUE"))
+                          "PACFIN_SPECIES_CODE", "LANDED_WEIGHT_LBS", "EXVESSEL_REVENUE","AFI_EXVESSEL_REVENUE"))
 ```
 
 Remove the rows where the vessel identifier (drvid) is either "UNKNOWN" or blank ("")
@@ -312,7 +317,10 @@ Change existing date columns to date objects and format.
 
 ```{r dates}
 dat_targets_other %<>%
-  mutate(date=as.Date(date,"%d-%b-%y")) %>% 
+  ## edited for 2016-2022 tickets
+  mutate(date=lubridate::parse_date_time(date,c("mdy_HMS","dmy_HMS")))
+  ##
+dat_targets_other %<>%
   mutate(month=lubridate::month(date),
          month=month.name[month],
          year_mo=paste(year,lubridate::month(date),sep="_"),
@@ -321,6 +329,13 @@ dat_targets_other %<>%
          Week=week(date),
          year_Wk=ifelse(Week < 10, paste0(year,"_0",Week), paste0(year,"_",Week)))
 ```
+```{r}
+## edited for 2016-2022 tickets
+if(any(is.na(dat_targets_other$date))){
+  message("WARNING: ",sum(is.na(dat_targets_other$date))," dates processed incorrectly. check format for parse_date_time function.")
+}
+```
+<br>
 
 ## Duplicated Dates
 
@@ -344,7 +359,7 @@ dat_out <- dat_targets_other %>%
 
 ## Reorder Output
 
-Clean up the output by reording the columns of interest
+Clean up the output by re-ording the columns of interest
 
 ```{r reorder_dataframe}
 dat_out %<>%

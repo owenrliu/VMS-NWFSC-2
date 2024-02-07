@@ -1,0 +1,336 @@
+---
+title: "EMD by group"
+author: "M. Fisher"
+date: "2/20/2023"
+output: html_document
+---
+
+Calculate the year-over-year Earth Mover's Distance for Dungeness crab fishing grounds.
+
+This script includes options to remove Dungeness crab vessels based on (1) the number of fishing trips they took in a given year, and/or (2) an exvessel revenue cut-off. This is in addition to the filters that were already imposed in creating the fishing ground data: 
+
+- landings in a given state (e.g., California)
+- trips targeting Dungeness crab
+- vessels that have five or more relocations per crab season
+
+
+However, for the analysis as it stands, I am not going to apply any additional filters beyond those already used in script 01.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library(tidyverse)
+library(magrittr)
+library(here)
+library(pryr)
+library(plotrix)
+```
+
+
+User inputs
+```{r}
+crab_years <- seq(2011,2018)
+keep_years <- seq(2013,2018)
+kernel_g <- 75
+udsize       <- 0.90
+cut_length <- 40  # all vessels below this length are "small"
+
+save_SPDF <- TRUE # save an SPDF for each vessel, in addition to the 90% UD? Want this if calculating BA overlap later.
+
+indir   <- 'project-dat/vms/interpolation_60min/NaN_speed_filter'
+outdir  <- 'project-dat/vms/interpolation_60min/NaN_speed_filter/vessel90ud'
+statdir <- 'project-dat/statistics'
+
+filter=FALSE
+filter_trips=5
+filter_revenue=5000
+
+write=TRUE
+```
+
+
+
+## Data
+
+Earth Mover's distance
+```{r}
+emd.dat <- read_csv(here::here(statdir,paste0('EMD_annual_per_vessel_',udsize*100,'ud_',kernel_g,'grid_', crab_years[1],'-',substr(tail(crab_years,1),3,4), 'crabYrs_ALL.csv')))
+# head(emd.dat)
+```
+
+
+Clustering groups
+```{r}
+vgroups <- read_csv(here('project-dat','vessel_groups','k5b_NaNspeedfilter_2014clusterYR_byArea_noncon-group-key.csv'))
+vgroups_summary <- vgroups %>% 
+              dplyr::select(group,subgroup,vessel_size,group_area,crab_year) %>% 
+              distinct()
+unique(vgroups$subgroup)
+```
+
+
+## EMD Group Means
+
+### add vessel group info
+
+add the vessel groups dataframe
+```{r}
+emd.dat.groups <- emd.dat %>% 
+  left_join(vgroups %>% 
+              dplyr::select(drvid,group,subgroup,vessel_size,group_area) %>% 
+              distinct(),by=c("drvid"),multiple="all") %>%
+  filter(!is.na(group))
+```
+
+combine crab years
+```{r}
+emd.dat.groups %<>% unite(col="crab_years",crab_year_1, crab_year_2, sep="_",remove=FALSE)
+```
+
+sample sizes for year=over=year comparisons 
+```{r}
+emd_groups_sample_sizes <-  emd.dat.groups %>%
+  group_by(subgroup) %>% summarise(n.vessels=length(unique(drvid)))
+filter(emd_groups_sample_sizes,n.vessels < 3) # should probably be 0
+
+emd_groups_yearly_sample_sizes <-  emd.dat.groups %>%
+  group_by(crab_years,subgroup) %>% summarise(n.vessels=length(unique(drvid)))
+filter(emd_groups_yearly_sample_sizes,n.vessels < 3)
+```
+
+
+grab only the EMD values with non-confidential years for each vessel subgroup and year=over=year comparison (may not have been filtered out with non-confidential vessel key)
+```{r}
+emd.dat.groups.noncon <- emd.dat.groups %>% 
+  left_join(emd_groups_yearly_sample_sizes,by=c("crab_years","subgroup")) %>%
+  filter(n.vessels > 2)
+```
+
+
+
+### group means
+```{r}
+## vessel clusters
+emd_group_means_overall <- emd.dat.groups %>%
+  filter(crab_year_1 %in% keep_years & crab_year_2 %in% keep_years) %>%
+  group_by(vessel_size,group,subgroup,group_area) %>%
+  summarize(mean.emd=mean(emd),sd.emd=std.error(emd),n.vessels=length(unique(drvid)),.groups='drop') %>%
+  ungroup() %>%
+  mutate(`Vessel Group`=ifelse(group_area=="central","Central",
+                         ifelse(group_area=="northern","Northern",
+                                ifelse(group_area=="central/northern" & group==3 ,"Central/Northern",
+                                       ifelse(group_area=="central/northern" & group==4, "Diversified Northern",
+                                              ifelse(group_area=="central/northern" & group==5,"cross-district",NA))))),
+         crab_years="Overall") %>%
+  rename(`Vessel Size`=vessel_size)
+
+emd_group_means <- emd.dat.groups.noncon %>%
+  filter(crab_year_1 %in% keep_years & crab_year_2 %in% keep_years) %>%
+  group_by(vessel_size,group,subgroup,group_area,crab_years) %>%
+  summarize(mean.emd=mean(emd),sd.emd=std.error(emd),n.vessels=length(unique(drvid)),.groups='drop') %>%
+  ungroup() %>%
+  mutate(`Vessel Group`=ifelse(group_area=="central","Central",
+                         ifelse(group_area=="northern","Northern",
+                                ifelse(group_area=="central/northern" & group==3 ,"Central/Northern",
+                                       ifelse(group_area=="central/northern" & group==4, "Diversified Northern",
+                                              ifelse(group_area=="central/northern" & group==5,"cross-district",NA)))))) %>%
+  rename(`Vessel Size`=vessel_size)
+emd_group_means %<>%
+  rbind(dplyr::select(emd_group_means_overall, colnames(emd_group_means)))
+emd_group_means$`Vessel Group` <- factor(emd_group_means$`Vessel Group`,levels=c("Central","Northern","Central/Northern","Diversified Northern","cross-district"))
+emd_group_means$crab_years <- factor(emd_group_means$crab_years, levels=c("Overall","2013_2014","2014_2015","2015_2016","2016_2017","2017_2018"))
+```
+
+
+```{r eval=write}
+write_csv(emd_group_means, here('project-dat','statistics','meanEMD_annual_bygroup_90ud_75grid_k5b_2014clusterYR_noncon.csv'))
+```
+
+
+### t test
+
+Is there a significant difference in Earth Mover's Distance between large / small vessels in a given year?
+
+#### local vessels
+
+Compare EMD of large v. small Local Northern; and large v. small Local Central
+
+```{r}
+wilcox.local.lengths.out <- list()
+sig.local.lengths.out <- data.frame(crab_years=as.character(),
+                              pval=as.numeric())
+emd.dat.local.groups <- filter(emd.dat.groups.noncon, group %in% c(1,2))
+i=1
+for(a in unique(emd.dat.local.groups$group_area)){
+for(y in unique(emd.dat.local.groups$crab_years)){
+  testdat <- emd.dat.groups %>% filter(crab_years==y & group_area==a)
+  wilcox.local.lengths.out[[i]] <- wilcox.test(emd~vessel_size,testdat)
+  sig.local.lengths.out %<>% bind_rows(data.frame(area=a,
+                                                  crab_years=y,
+                                                  pval=round(wilcox.local.lengths.out[[i]]$p.value,5)))
+  names(wilcox.local.lengths.out)[[i]] <- paste0(a,"-",y)
+  i = i +1
+}
+}
+wilcox.local.lengths.out
+```
+```{r}
+wilcox.local.lengths <- wilcox.local.lengths.out[c(seq(1,5),seq(8,12))]
+sig.local.lengths.out %<>% mutate(correct.pval=pval*(length(wilcox.local.lengths)/2)) %>%
+  mutate(significance=ifelse(correct.pval<0.05,"*","")) %>%
+  mutate(y=(max(emd_group_means$mean.emd)+max(emd_group_means$sd.emd))/1000) %>% filter(crab_years %in% emd_group_means$crab_years)
+```
+
+again, on the overall data
+```{r}
+i=length(wilcox.local.lengths) + 1
+for(a in unique(emd.dat.local.groups$group_area)){
+  testdat <- emd.dat.groups %>% filter(crab_years %in% emd_group_means$crab_years & group_area==a)
+  wilcox.local.lengths[[i]] <- wilcox.test(emd~vessel_size,testdat)
+  names(wilcox.local.lengths)[[i]] <- paste0(a,"- Overall")
+  
+  sig.local.lengths.out %<>% bind_rows(data.frame(area=a,
+                                                  crab_years="Overall",
+                                                  pval=round(wilcox.local.lengths[[i]] $p.value,5)))
+  i = i +1
+}
+```
+```{r}
+wilcox.local.lengths[[12]]
+```
+
+Save output from all t-tests
+```{r eval=write}
+wilcox_tests_bylength <- list(wilcox.local.lengths.out,wilcox.local.lengths,sig.local.lengths.out)
+saveRDS(wilcox_tests_bylength, file=here('project-dat','statistics','wilcox_tests_2014groupsk5b_LocalBYlength_noncon.rds'))
+```
+
+
+
+#### coastwide vessels
+
+Compare EMD of groups 3-large versus 4-large.
+
+If using original group 3-large (n=4), then only the 2011-2012 and 2014-2015 comparisons line up. overall emd *is* significantly different with alpha of 0.05.
+
+If using adjusted group 3-large (n=5), then the 2011-2012, 2014-2015, and 2017-2018 comparisons line up. overall emd *is not* significantly different with alpha of 0.05
+
+```{r}
+wilcox.coast.lengths.out <- list()
+sig.coast.lengths.out <- data.frame(crab_years=as.character(),
+                              pval=as.numeric())
+emd.dat.coast.groups <- filter(emd.dat.groups.noncon, group %in% c(3,4))
+i=1
+for(y in unique(emd.dat.coast.groups$crab_years)){
+  testdat <- emd.dat.coast.groups %>% filter(crab_years==y)
+  if(length(unique(testdat$subgroup)) > 1){
+  wilcox.coast.lengths.out[[i]] <- wilcox.test(emd~subgroup,testdat)
+  sig.coast.lengths.out %<>% bind_rows(data.frame(crab_years=y,
+                                                  pval=round(wilcox.coast.lengths.out[[i]]$p.value,5)))
+  names(wilcox.coast.lengths.out)[[i]] <- paste0(y)
+  i = i +1
+  }
+}
+wilcox.coast.lengths.out
+```
+
+
+$`2011_2012`
+
+	Wilcoxon rank sum exact test
+
+data:  emd by subgroup
+W = 1, p-value = 0.2
+alternative hypothesis: true location shift is not equal to 0
+
+
+$`2014_2015`
+
+	Wilcoxon rank sum exact test
+
+data:  emd by subgroup
+W = 9, p-value = 0.4
+alternative hypothesis: true location shift is not equal to 0
+
+
+
+
+Compare overall:
+```{r}
+testdat <- emd.dat.coast.groups %>% filter(crab_years %in% emd_group_means$crab_years)
+wilcox.test(emd~subgroup,testdat)
+```
+
+
+
+
+
+### anova
+
+Is there significant variability between years, within a single subgroup?
+
+#### between years
+```{r}
+emd.dat.groups.keepYRS <- filter(emd.dat.groups.noncon, (crab_year_1 %in% keep_years & crab_year_2 %in% keep_years))
+aov.years.out <- list()
+tukey.years.out <- list()
+i=1
+
+for(s in unique(emd.dat.groups$subgroup)){
+  testdat <- filter(emd.dat.groups.keepYRS, subgroup==s)
+  aov.years.out[[i]] <- aov(emd~crab_years,data=testdat)
+  tukey.years.out[[i]] <- TukeyHSD(aov.years.out[[i]],conf.level=0.90)
+  names(aov.years.out)[[i]] <- paste0(s)
+  names(tukey.years.out)[[i]] <- paste0(s)
+  i=i+1
+}
+```
+
+```{r}
+sapply(aov.years.out,summary)
+```
+```{r}
+tukey.years.out
+```
+
+```{r eval=write}
+anovas_list <- list(aov.years.out,tukey.years.out)
+save(anovas_list, file=here('project-dat','statistics','anova_tukey_tests_2014groupsk5b_crossYrs_byGroup.rds'))
+```
+
+
+#### between groups: original subgroups
+are there significant differences between vessel groups, for EMD mean over all years?
+```{r}
+emd.dat.groups.keepYRS.og <- filter(emd.dat.groups.keepYRS, subgroup != "5-large")
+aov.groups.out <- aov(emd~subgroup,data=emd.dat.groups.keepYRS.og)
+summary(aov.groups.out)
+tukey.groups.out <- TukeyHSD(aov.groups.out)
+tukey.groups.out
+```
+
+```{r}
+anovas_list <- list(aov.groups.out,tukey.groups.out)
+save(anovas_list, file=here('project-dat','statistics','anova_tukey_tests_2014groupk5b_groups_byYR.rds'))
+```
+
+#### between groups: cross-district pool
+
+are there significant differences between vessel groups, for EMD mean over all years?
+
+```{r}
+emd.dat.groups.keepYRS.pool <- filter(emd.dat.groups.keepYRS, !(subgroup %in% c("3-large","4-large")))
+aov.groups.out <- aov(emd~subgroup,data=emd.dat.groups.keepYRS.pool)
+summary(aov.groups.out)
+tukey.groups.out <- TukeyHSD(aov.groups.out)
+tukey.groups.out
+```
+
+
+
+
+
+
+

@@ -1,0 +1,452 @@
+---
+title: "Prep Fishing Ground Data"
+output: html_document
+---
+
+Produce a .csv file with filtered VMS data that (to the best of our ability) represents Dungeness crab fishing grounds.
+
+
+```{r setup, include=FALSE}
+rm(list=ls())
+knitr::opts_chunk$set(echo = TRUE,
+                      fig.width=12, fig.height=8)
+
+# r packages
+library(tidyverse)
+library(magrittr)
+library(sf)
+library(lubridate)
+library(ggplot2)
+library(rgdal)
+library(rgeos)
+library(here)
+library(rnaturalearth)
+library(cowplot)
+# ggplot theme
+
+plot_theme <- theme_classic() +
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=8,color="black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+theme_set(plot_theme)
+
+```
+<br>
+
+User Inputs:
+```{r}
+crab_years <- c(2015)
+states <- c("C")
+outdir <- "fishing-ground-change/project-dat/vms/interpolation_60min/NaN_speed_filter"
+```
+<br>
+
+## Data
+
+```{r read_vms}
+for(y in crab_years){
+  tmpvms <-  read_rds(here::here('data','processed','matched','interpolation_60min',paste0(y,'interpolated.rds')))
+  if(y==crab_years[1]){
+    vms <- read_rds(here::here("data","processed","matched","interpolation_60min",paste0(y-1,"interpolated.rds"))) %>%
+      bind_rows(tmpvms)
+  } else{
+    vms %<>% bind_rows(tmpvms)
+  }
+}
+```
+
+
+filter for California Dungeness crab trips, and grab columns of interest. add in some date columns specific to crab fishing, and the management area (northern / central). filter for the specified crab year.
+```{r thin}
+vms.thin <- vms %>%
+  # according to user inputs
+  filter(agency_code == states) %>%
+  filter(TARGET_lbs == "DCRB") %>%
+  filter(removal_type_code=="C" | removal_type_code=="D" | removal_type_code=="U") %>%
+  # grab subset of columns
+  dplyr::select(Rec_ID,date, pacfin_port_code, port_group_code, agency_code, 
+                removal_type_code, removal_type_name, TARGET_lbs,
+                VMS_RECNO,VESSEL_NAM,drvid,UTCDATETIM,westcoastdate,westcoastdate_notime,
+                X_COORD,Y_COORD, LATITUDE,LONGITUDE,NGDC_M,
+                AVG_SPEED,avg_speed_recalc,AVG_COURSE,DECLARATIO, in_port, is_interpolated,
+                DCRB_lbs,DCRB_revenue) %>%
+  # add on crab season based on month of year, and filter
+  # mutate(date=as_date(date, c("ymd","mdy")),
+  #        year=year(date)) %>%
+  mutate(year=year(date)) %>%
+  mutate(crab_season=case_when(
+    month(date)>10 ~ paste0(year,"-",year+1),
+    month(date)<=10 ~ paste0(year-1,"-",year)),
+    crab_year=case_when(
+      month(date)>10 ~ year+1,
+      month(date)<=10 ~ year)) %>%
+  filter(crab_year %in% crab_years) %>%
+  # add on management district based on port group
+  mutate(port_area=ifelse(port_group_code %in% c("CCA","ERA","BGA"),"northern","central"))
+```
+<br>
+
+season start dates, by management district (these are the earliest *codified* season start dates for any port in that management district, validated with CDFW)
+```{r}
+startdat <- read_csv(here('fishing-ground-change','project-dat','dcrb_season_starts.csv')) %>%
+  mutate(season_start_date=mdy(season_start_date))
+```
+
+
+## Filter for Fishing Activity
+
+Apply filters for best guess at VMS points that represent fishing activity. filter out data points 
+
+(1) with average speed is > 4.2 m/s (in transit), 
+
+(2) with depths greater than 150m, (depth) and 
+
+(3) with low speeds inside the buffer zones **OR** if speed is `NA` (point has an NGDC_M > 100000, the ArcGIS indication of an in-port point.) (in port)
+
+Mark "remove" if the record is in port *and* the avg speed is < 0.75 m/s.
+```{r flag}
+vms.thin %<>%  mutate(to_remove = ifelse(
+  (!is.na(in_port) & avg_speed_recalc < 0.75) | is.na(avg_speed_recalc), "in_port",ifelse(
+    avg_speed_recalc > 4.2, "transit",ifelse(
+      NGDC_M > 150, "depth","retain"))))
+```
+<br>
+
+Filter records
+```{r filter}
+vms.filter <- vms.thin %>%
+  filter(to_remove =="retain" | is.na(to_remove)) %>% dplyr::select(-to_remove)
+```
+<br>
+
+Summarize filtering from this section
+```{r track_filter1}
+track_filtering <- vms.thin %>%
+  group_by(crab_season) %>%
+  mutate(seasonVMS=length(unique(VMS_RECNO))) %>%
+  ungroup() %>%
+  group_by(crab_season,seasonVMS,to_remove) %>%
+  summarise(nVMS=length(unique(VMS_RECNO))) %>%
+  mutate(pVMS=nVMS/seasonVMS)
+```
+<br>
+
+
+## Filter low activity
+
+Remove vessel with fewer than 5 relocations per season.
+```{r plot_relocations, echo=FALSE}
+vms.filter %>%
+  group_by(crab_season,drvid) %>%
+  summarise(nlocs=length(unique(LATITUDE)),
+            ntrips=length(unique(Rec_ID))) %>%
+  pivot_longer(c(nlocs,ntrips),names_to="activity") %>%
+  ggplot(aes(x=value, fill=crab_season)) + geom_histogram() +
+  facet_grid(cols=vars(activity), scales="free") + xlab("") + theme(legend.title=element_blank())
+```
+```{r relocations}
+low.activity.vessels <- vms.filter %>%
+  group_by(crab_season,drvid) %>%
+  summarise(nlocs=length(unique(LATITUDE)),
+            ntrips=length(unique(Rec_ID))) %>%
+  filter(nlocs < 5) %>%
+  dplyr::select(crab_season,drvid) %>% distinct()
+```
+```{r echo=FALSE}
+message("\n\nwill remove ", length(unique(low.activity.vessels$drvid)), " low activity vessels (",round(length(unique(low.activity.vessels$drvid))/length(unique(vms.filter$drvid))*100,3),"% all vessels) from data set.")
+```
+```{r filter2}
+vms.filter %<>% anti_join(low.activity.vessels,by=c("drvid","crab_season"))
+```
+<br>
+
+## Track lost data
+
+```{r echo=FALSE, track_filter2}
+if(dim(low.activity.vessels)[1] > 0){
+track_filtering %<>% bind_rows(low.activity.vessels %>%
+                                 left_join(vms.thin %>% dplyr::select(crab_season,drvid,VMS_RECNO) %>% distinct()) %>%
+                                 group_by(crab_season) %>%
+                                 summarize(nVMS=length(unique(VMS_RECNO))) %>%
+                                 left_join(track_filtering %>% 
+                                             dplyr::select(crab_season,seasonVMS) %>%
+                                             distinct(),by="crab_season") %>%
+                                 mutate(to_remove="low_activity",
+                                        pVMS=nVMS/seasonVMS) %>%
+                                 dplyr::select(all_of(colnames(track_filtering))))
+}
+track_filtering %>%
+  rename("percent VMS records"=pVMS,"number of VMS records"=nVMS) %>%
+  pivot_longer(cols=c(`percent VMS records`,`number of VMS records`), names_to="name") %>%
+  ggplot(aes(x=crab_season,y=value, fill=to_remove)) +
+  geom_col() +
+  facet_wrap(~name,scales="free_y") + labs(x="crab season",y="") + theme(legend.title=element_blank())
+```
+<br>
+
+Let's also plot a few random trips, pre- and post-filtering.
+
+```{r map, echo=FALSE}
+# subset trips
+vms.filter.sub <- vms.filter %>% filter(port_group_code=="CCA") %>% 
+  group_by(Rec_ID) %>% summarise(nrec=length(unique(VMS_RECNO))) %>% filter(nrec > 10) %>% sample_n(5) %>%
+  left_join(vms.filter,by="Rec_ID")
+  
+vms.thin.sub <- vms.thin %>% filter(Rec_ID %in% vms.filter.sub$Rec_ID)
+
+# convert to spatial obj
+test_filter_sf <- as.data.frame(vms.filter.sub) %>% 
+  dplyr::select(Rec_ID,VMS_RECNO,X_COORD,Y_COORD,date) %>%
+  st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+test_thin_sf <- as.data.frame(vms.thin.sub) %>% 
+  dplyr::select(Rec_ID,VMS_RECNO,X_COORD,Y_COORD,date) %>%
+  st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+
+
+# import a background/land layer from rnaturalearth package
+coaststates <- ne_states(country='United States of America',returnclass = 'sf') %>% 
+  filter(name %in% c('California','Oregon','Washington')) %>%
+  # make sure CRS is the same as the port layer
+  st_transform(st_crs(test_thin_sf))
+
+testbbox <- st_bbox(test_thin_sf)
+ggplot()+
+  geom_sf(data=coaststates,fill='gray50')+
+  # geom_sf(data=ports_buffer,fill='seagreen',alpha=0.5)+
+  geom_sf(data=test_thin_sf,size=1,color="red")+
+  geom_sf(data=test_filter_sf,size=1,color="black")+
+  facet_wrap(~Rec_ID) +
+  xlim(testbbox[1]-5000,testbbox[3]+5000)+ylim(testbbox[2]-5000,testbbox[4]+5000)+
+  labs(x='',y='',title="Points for Sample CCA Trips")+
+  theme(axis.text.x = element_text(angle=90))
+
+```
+```{r map2, echo=FALSE}
+# subset trips
+vms.filter.sub <- vms.filter %>% filter(port_group_code=="CCA") %>% 
+  group_by(Rec_ID) %>% summarise(nrec=length(unique(VMS_RECNO))) %>% filter(nrec > 10) %>% sample_n(5) %>%
+  left_join(vms.filter,by="Rec_ID")
+  
+vms.thin.sub <- vms.thin %>% filter(Rec_ID %in% vms.filter.sub$Rec_ID)
+
+# convert to spatial obj
+test_filter_sf <- as.data.frame(vms.filter.sub) %>% 
+  dplyr::select(Rec_ID,VMS_RECNO,X_COORD,Y_COORD,date) %>%
+  st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+test_thin_sf <- as.data.frame(vms.thin.sub) %>% 
+  dplyr::select(Rec_ID,VMS_RECNO,X_COORD,Y_COORD,date) %>%
+  st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+
+testbbox <- st_bbox(test_thin_sf)
+ggplot()+
+  geom_sf(data=coaststates,fill='gray50')+
+  # geom_sf(data=ports_buffer,fill='seagreen',alpha=0.5)+
+  geom_sf(data=test_thin_sf,size=1,color="red")+
+  geom_sf(data=test_filter_sf,size=1,color="black")+
+  facet_wrap(~Rec_ID) +
+  xlim(testbbox[1]-5000,testbbox[3]+5000)+ylim(testbbox[2]-5000,testbbox[4]+5000)+
+  labs(x='',y='',title="Points for Sample CCA Trips")+
+  theme(axis.text.x = element_text(angle=90))
+
+```
+
+
+```{r map3, echo=FALSE}
+# subset trips
+vms.filter.sub <- vms.filter %>% filter(port_group_code=="BDA") %>% 
+  group_by(Rec_ID) %>% summarise(nrec=length(unique(VMS_RECNO))) %>% filter(nrec > 10) %>% sample_n(5) %>%
+  left_join(vms.filter,by="Rec_ID")
+  
+vms.thin.sub <- vms.thin %>% filter(Rec_ID %in% vms.filter.sub$Rec_ID)
+
+# convert to spatial obj
+test_filter_sf <- as.data.frame(vms.filter.sub) %>% 
+  dplyr::select(Rec_ID,VMS_RECNO,X_COORD,Y_COORD,date) %>%
+  st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+test_thin_sf <- as.data.frame(vms.thin.sub) %>% 
+  dplyr::select(Rec_ID,VMS_RECNO,X_COORD,Y_COORD,date) %>%
+  st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+
+testbbox <- st_bbox(test_thin_sf)
+ggplot()+
+  geom_sf(data=coaststates,fill='gray50')+
+  # geom_sf(data=ports_buffer,fill='seagreen',alpha=0.5)+
+  geom_sf(data=test_thin_sf,size=1,color="red")+
+  geom_sf(data=test_filter_sf,size=1,color="black")+
+  facet_wrap(~Rec_ID) +
+  xlim(testbbox[1]-5000,testbbox[3]+5000)+ylim(testbbox[2]-5000,testbbox[4]+5000)+
+  labs(x='',y='',title="Points for Sample BDA Trips")+
+  theme(axis.text.x = element_text(angle=90))
+```
+
+```{r map4, echo=FALSE}
+# subset trips
+vms.filter.sub <- vms.filter %>% filter(port_group_code=="BDA") %>% 
+  group_by(Rec_ID) %>% summarise(nrec=length(unique(VMS_RECNO))) %>% filter(nrec > 10) %>% sample_n(5) %>%
+  left_join(vms.filter,by="Rec_ID")
+  
+vms.thin.sub <- vms.thin %>% filter(Rec_ID %in% vms.filter.sub$Rec_ID)
+
+# convert to spatial obj
+test_filter_sf <- as.data.frame(vms.filter.sub) %>% 
+  dplyr::select(Rec_ID,VMS_RECNO,X_COORD,Y_COORD,date) %>%
+  st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+test_thin_sf <- as.data.frame(vms.thin.sub) %>% 
+  dplyr::select(Rec_ID,VMS_RECNO,X_COORD,Y_COORD,date) %>%
+  st_as_sf(coords=c("X_COORD","Y_COORD"),crs = "+proj=utm +north +zone=10 +ellps=WGS84")
+
+testbbox <- st_bbox(test_thin_sf)
+ggplot()+
+  geom_sf(data=coaststates,fill='gray50')+
+  # geom_sf(data=ports_buffer,fill='seagreen',alpha=0.5)+
+  geom_sf(data=test_thin_sf,size=1,color="red")+
+  geom_sf(data=test_filter_sf,size=1,color="black")+
+  facet_wrap(~Rec_ID) +
+  xlim(testbbox[1]-5000,testbbox[3]+5000)+ylim(testbbox[2]-5000,testbbox[4]+5000)+
+  labs(x='',y='',title="Points for Sample BDA Trips")+
+  theme(axis.text.x = element_text(angle=90))
+```
+<br>
+
+## Add day of season
+```{r dos}
+vms.filter %<>% 
+  left_join(startdat,by=c("crab_year","port_area"="pcdistrict")) %>%
+  mutate(ticket_day_of_season=difftime(date,season_start_date,units='days')) %>% 
+  mutate(ticket_day_of_season=as.numeric(ticket_day_of_season))
+```
+
+```{r echo=FALSE, plot_dos}
+vms.filter %>% dplyr::select(Rec_ID, date, ticket_day_of_season, crab_year, port_area) %>%
+  group_by(port_area,crab_year,date,ticket_day_of_season) %>%
+  summarise(ntrips=length(unique(Rec_ID))) %>%
+  ggplot(aes(x=date,y=ticket_day_of_season, col=as.factor(crab_year))) +
+  geom_point() + facet_grid(cols=vars(port_area), rows=vars(as.factor(crab_year))) + theme(legend.title=element_blank())
+```
+
+<br>
+
+## Save fishing activity records
+```{r write}
+for(y in crab_years){
+  vms.out <- vms.filter %>% filter(crab_year==y)
+  write_rds(vms.out,here::here(outdir,paste0(y,'season_crabfishing.rds')))
+}
+```
+<br>
+
+
+
+## QC
+
+**Are we removing too many trips / records by filtering for only those which TARGET Dungeness crab?**
+
+How many VMS records with DCRB landed lbs > 0 do / do not have the TARGET as DCRB?
+```{r echo=FALSE, warning=FALSE}
+total_vms <- vms %>%
+  filter(agency_code %in% states) %>%
+  filter(DCRB_lbs > 0) %>%
+  mutate(year=year(ymd(date))) %>%
+  group_by(year) %>%
+  summarise(totalvms = length(unique(VMS_RECNO)))
+plotn <- vms %>%
+  filter(agency_code %in% states) %>%
+  filter(DCRB_lbs > 0) %>%
+  mutate(year=year(ymd(date))) %>%
+  dplyr::select(Rec_ID,year,drvid,VMS_RECNO, TARGET_lbs,DCRB_lbs,UTCDATETIM,LATITUDE,LONGITUDE) %>%
+    mutate(dcrb_targeted = ifelse(TARGET_lbs == "DCRB","dcrb target","other target")) %>%
+  group_by(year, dcrb_targeted) %>%
+  summarise(nvms = length(unique(VMS_RECNO))) %>%
+  ggplot(aes(x=as.factor(year),y=nvms)) + 
+  geom_col() + facet_wrap(~dcrb_targeted,scales="free_y") + labs(x="year",y="N VMS records")
+plotp <- vms %>%
+  filter(agency_code %in% states) %>%
+  filter(DCRB_lbs > 0) %>%
+  mutate(year=year(ymd(date))) %>%
+  dplyr::select(Rec_ID,year,drvid,VMS_RECNO, TARGET_lbs,DCRB_lbs,UTCDATETIM,LATITUDE,LONGITUDE) %>%
+    mutate(dcrb_targeted = ifelse(TARGET_lbs == "DCRB","dcrb target","other target")) %>%
+  group_by(year, dcrb_targeted) %>%
+  summarise(nvms = length(unique(VMS_RECNO))) %>%
+  left_join(total_vms, by="year") %>% mutate(pvms=(nvms/totalvms)*100) %>%
+  filter(dcrb_targeted=="other target") %>%
+  ggplot(aes(x=as.factor(year),y=pvms)) + 
+  geom_col() + labs(x="year",y="% VMS records", title="other target")
+plot_grid(plotn,plotp, ncol=2)
+```
+
+
+Fishing Trips?
+```{r echo=FALSE, warning=FALSE}
+total_trips <- vms %>%
+  filter(agency_code %in% states) %>%
+  filter(DCRB_lbs > 0) %>%
+  mutate(year=year(ymd(date))) %>%
+  group_by(year) %>%
+  summarise(totaltrips = length(unique(Rec_ID)))
+plotn <- vms %>%
+  filter(agency_code %in% states) %>%
+  filter(DCRB_lbs > 0) %>%
+  mutate(year=year(ymd(date))) %>%
+  dplyr::select(Rec_ID,year,drvid,TARGET_lbs,DCRB_lbs) %>%
+    mutate(dcrb_targeted = ifelse(TARGET_lbs == "DCRB","dcrb target","other target")) %>%
+  group_by(year, dcrb_targeted) %>%
+  summarise(ntrips = length(unique(Rec_ID))) %>%
+  ggplot(aes(x=as.factor(year),y=ntrips)) + 
+  geom_col() + facet_wrap(~dcrb_targeted,scales="free_y") + labs(x="year",y="N Trips")
+plotp <- vms %>%
+  filter(agency_code %in% states) %>%
+  filter(DCRB_lbs > 0) %>%
+  mutate(year=year(ymd(date))) %>%
+  dplyr::select(Rec_ID,year,drvid,TARGET_lbs,DCRB_lbs) %>%
+    mutate(dcrb_targeted = ifelse(TARGET_lbs == "DCRB","dcrb target","other target")) %>%
+  group_by(year, dcrb_targeted) %>%
+  summarise(ntrips = length(unique(Rec_ID))) %>%
+  left_join(total_trips, by="year") %>% mutate(ptrips=(ntrips/totaltrips)*100) %>%
+  filter(dcrb_targeted=="other target") %>%
+  ggplot(aes(x=as.factor(year),y=ptrips)) + 
+  geom_col() + labs(x="year",y="% Trips", title="other target")
+plot_grid(plotn,plotp, ncol=2)
+```
+
+
+Dungeness crab lbs landed?
+```{r echo=FALSE, warning=FALSE}
+total_lbs <- vms %>%
+  filter(agency_code %in% states) %>%
+  filter(DCRB_lbs > 0) %>%
+  mutate(year=year(ymd(date))) %>%
+  group_by(year) %>%
+  summarise(totallbs = sum(DCRB_lbs))
+plotn <- vms %>%
+  filter(agency_code %in% states) %>%
+  filter(DCRB_lbs > 0) %>%
+  mutate(year=year(ymd(date))) %>%
+  dplyr::select(Rec_ID,year,drvid,TARGET_lbs,DCRB_lbs) %>%
+    mutate(dcrb_targeted = ifelse(TARGET_lbs == "DCRB","dcrb target","other target")) %>%
+  group_by(year, dcrb_targeted) %>%
+  summarise(nlbs = sum(DCRB_lbs)) %>%
+  ggplot(aes(x=as.factor(year),y=nlbs)) + 
+  geom_col() + facet_wrap(~dcrb_targeted,scales="free_y") + labs(x="year",y="DCRB Landed Lbs")
+plotp <- vms %>%
+  filter(agency_code %in% states) %>%
+  filter(DCRB_lbs > 0) %>%
+  mutate(year=year(ymd(date))) %>%
+  dplyr::select(Rec_ID,year,drvid,TARGET_lbs,DCRB_lbs) %>%
+    mutate(dcrb_targeted = ifelse(TARGET_lbs == "DCRB","dcrb target","other target")) %>%
+  group_by(year, dcrb_targeted) %>%
+  summarise(nlbs = sum(DCRB_lbs)) %>%
+  left_join(total_lbs, by="year") %>% mutate(plbs=(nlbs/totallbs)*100) %>%
+  filter(dcrb_targeted=="other target") %>%
+  ggplot(aes(x=as.factor(year),y=plbs)) + 
+  geom_col() + labs(x="year",y="% Landed Lbs", title="other target")
+plot_grid(plotn,plotp, ncol=2)
+```
+
+
+
+
+
+

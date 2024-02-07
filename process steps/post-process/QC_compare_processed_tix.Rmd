@@ -1,0 +1,96 @@
+---
+title: "QC - compare processed fish tix"
+output: html_document
+---
+Date written: 1/21/2023
+
+By: M. Fisher
+
+## Purpose
+
+Compare a prior version of the processed fish tickets (with / without vessel lengths) to a newer version. 
+
+**2023-01-21:** compare process tickets from Owen (Feb 20, 2020) with newly processed tickets (file: 2006_2016_compFT.csv; most updated version of script 01)
+
+
+
+## Set up
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(here)
+library(magrittr)
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+User inputs
+```{r}
+process_year <- seq(2009,2015)
+oldtix_dir   <- 'data/processed/fish tickets compFT'
+newtix_dir   <- 'data/processed/fish tickets'
+```
+<br>
+
+## Data
+
+All processed fish tickets should be (1) .rds format, and (2) named by default by scripts 01 & 02.
+
+```{r read_new}
+for(y in process_year){
+  tmptix   <- read_rds(here(newtix_dir, paste0(y,"fishtix.rds")))
+  tmptix.v <- read_rds(here(newtix_dir, paste0(y, "fishtix_vlengths.rds")))
+  if(y==process_year[1]){
+    newtix <- tmptix
+    newtix.v <- tmptix.v
+  } else{
+    newtix %<>% bind_rows(tmptix)
+    newtix.v %<>% bind_rows(tmptix.v)
+  }
+}
+```
+
+```{r read_old}
+for(y in process_year){
+  tmptix   <- read_rds(here(oldtix_dir, paste0(y,"fishtix.rds")))
+  tmptix.v <- read_rds(here(oldtix_dir, paste0(y, "fishtix_vlengths.rds")))
+  if(y==process_year[1]){
+    oldtix <- tmptix
+    oldtix.v <- tmptix.v
+  } else{
+    oldtix %<>% bind_rows(tmptix)
+    oldtix.v %<>% bind_rows(tmptix.v)
+  }
+}
+```
+<br>
+
+## Compare tickets
+
+What columns in the older version are missing in the newer version?
+```{r}
+old_missing <- colnames(oldtix)[which(!(colnames(oldtix) %in% colnames(newtix)))]; old_missing
+oldv_missing <- colnames(oldtix.v)[which(!(colnames(oldtix.v) %in% colnames(newtix.v)))]; oldv_missing
+```
+
+What columns in the newer version are missing in the older version?
+```{r}
+new_missing <- colnames(newtix)[which(!(colnames(newtix) %in% colnames(oldtix)))]; new_missing
+newv_missing <- colnames(newtix.v)[which(!(colnames(newtix.v) %in% colnames(oldtix.v)))]; newv_missing
+```
+
+
+Which records are different in the older v. newer versions?
+```{r}
+diff.records <- anti_join(oldtix,newtix, by=all_of(colnames(newtix)))
+diff.records.v <- anti_join(oldtix.v,newtix.v, by=all_of(colnames(newtix.v)))
+```
+
+```{r}
+dim(diff.records)
+dim(diff.records.v)
+```
+
+
+
+

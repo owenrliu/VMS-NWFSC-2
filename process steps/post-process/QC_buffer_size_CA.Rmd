@@ -1,0 +1,188 @@
+---
+title: "Check Port Buffer Zones, CA"
+author: "M. Fisher"
+date: "1/21/2023"
+output: html_document
+---
+
+
+## Purpose
+
+Verify that we aren't losing a ton of potential fishing data by using a 3km buffer zone around California ports of landing (instead of 1.5km).
+
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(magrittr)
+library(here)
+library(sf)
+library(geosphere)
+library(lubridate)
+library(rgdal)
+library(rgeos)
+library(rnaturalearth)
+
+# ggplot theme
+plot_theme <-   theme_minimal()+
+  theme(text=element_text(family="sans",size=12,color="black"),
+        legend.text = element_text(size=14),
+        axis.title=element_text(family="sans",size=14,color="black"),
+        axis.text=element_text(family="sans",size=12,color="black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+
+theme_set(plot_theme)
+
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+## Data
+VMS data from 2010
+```{r}
+vms_wfilters <- read_rds(here::here('data','processed','matched','filtering','2010matched_unfiltered.rds'))
+```
+
+port coordinates
+```{r}
+portlist_coords <- read_csv(here::here('data','raw','port_coords_fromBlake_edited.csv'),col_types='cddd') %>% 
+  select(port_code,Lon,Lat) %>% 
+  set_names(c('port_code','portlon','portlat'))
+```
+<br>
+
+Filter for California ports, with > 0 Dungeness crab landings for commercial use.
+```{r}
+vmsdat <- vms_wfilters %>% filter(agency_code=="C") %>% 
+  filter(DCRB_lbs > 0) %>%
+  filter(removal_type_code %in% c("C","D","U"))
+
+vmsdat %<>%
+  dplyr::select(-contains('pretrip')) %>%
+  dplyr::select(-contains('posttrip'))
+  
+portdat <- portlist_coords %>% filter(port_code %in% vmsdat$pacfin_port_code)
+```
+<br>
+
+Get rid of records on land / too fast / too far out to sea
+```{r}
+vmsdat_filtered1 <- vmsdat %>% 
+  filter(keep_remove_bathy=="keep" & keep_remove_portdist == "keep" & keep_remove_speed=="keep") %>%
+    dplyr::select(pacfin_port_code,Rec_ID, drvid,westcoastdate,
+                  LATITUDE,LONGITUDE,AVG_SPEED,avg_speed_recalc,
+                  in_port_3km, in_port_1p5km,keep_remove_not_intrip_3km, keep_remove_not_intrip_1p5km) %>%
+  mutate(in_port_3km=ifelse(is.na(in_port_3km),0,1),
+         in_port_1p5km=ifelse(is.na(in_port_1p5km),0,1))
+```
+
+## Proportion Removed
+
+What proportion of VMS records per port are marked "remove" using the 3km v. 1.5km buffer zones?
+```{r fig.width=12, fig.height=8}
+n_by_port <- vmsdat_filtered1 %>%
+  pivot_longer(cols=c(keep_remove_not_intrip_3km, keep_remove_not_intrip_1p5km), names_to="buffer_size", values_to="to_remove") %>%
+  mutate(buffer_size=ifelse(buffer_size=="keep_remove_not_intrip_3km","3km","1.5km")) %>%
+  group_by(pacfin_port_code,buffer_size) %>%
+           summarise(totalVMS=n())
+plotdat <- vmsdat_filtered1 %>%
+  pivot_longer(cols=c(keep_remove_not_intrip_3km, keep_remove_not_intrip_1p5km), names_to="buffer_size", values_to="to_remove") %>%
+  mutate(buffer_size=ifelse(buffer_size=="keep_remove_not_intrip_3km","3km","1.5km")) %>%
+  group_by(pacfin_port_code,buffer_size,to_remove) %>%
+    summarise(nVMS=n()) %>%
+  left_join(n_by_port) %>%
+  mutate(propVMS=nVMS/totalVMS)
+
+ggplot(plotdat, aes(x=buffer_size,y=propVMS,fill=to_remove)) +
+  geom_col() +
+  facet_grid(cols=vars(pacfin_port_code)) + 
+  scale_fill_manual(values=c("aquamarine3","coral3")) +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+```
+
+The largest discrepancies seem to be: MNT, OSM, kind of BRG
+
+## Map Removals
+
+Map the points marked **keep** for 1.5km buffer, that were **removed** for the 3km buffer. The fill color of the points represents avg speed.
+```{r}
+# keep only records that aren't kept for both buffers
+diff.removals <- vmsdat_filtered1 %>%
+  filter((keep_remove_not_intrip_3km=="keep" & keep_remove_not_intrip_1p5km=="remove") | (keep_remove_not_intrip_3km=="remove" & keep_remove_not_intrip_1p5km=="keep"))
+
+mnt.diff <- diff.removals %>% filter(pacfin_port_code=="MNT") %>%
+  dplyr::select(Rec_ID, drvid, pacfin_port_code) %>% distinct() %>%
+  left_join(vmsdat_filtered1)
+```
+<br>
+
+
+```{r}
+for(r in unique(mnt.diff$Rec_ID)){
+plot3k <-   ggplot() +
+    geom_point(data=filter(portlist_coords, port_code==unique(mnt.diff$pacfin_port_code)), aes(x=portlon, y=portlat), size=3, col="red") +
+    geom_point(data=mnt.diff %>% filter(Rec_ID==r), aes(x=LONGITUDE, y=LATITUDE,col=keep_remove_not_intrip_3km), size = 2, alpha = 0.7) + 
+  ggtitle("3km") +
+    xlim(c(-123,-121))+ ylim(c(36.5,37)) + theme(legend.position="none")
+plot1p5k <-   ggplot() +
+    geom_point(data=filter(portlist_coords, port_code==unique(mnt.diff$pacfin_port_code)), aes(x=portlon, y=portlat), size=3, col="red") +
+    geom_point(data=mnt.diff %>% filter(Rec_ID==r), aes(x=LONGITUDE, y=LATITUDE,col=keep_remove_not_intrip_1p5km), size = 2, alpha = 0.7) + 
+  ggtitle("1.5km") +
+    xlim(c(-123,-121))+ ylim(c(36.5,37)) + theme(legend.title=element_blank())
+plot_grid(list(plot3k, plot1p5k), ncol=2, rel_width=c(0.8,1.0))
+}
+
+
+```
+
+
+
+## Check Speeds
+
+### in buffer zone
+
+These are records within the buffer zones that have average speeds > 0. 
+```{r}
+for(p in portdat$port_code){
+  plotdat <- vmsdat_filtered1 %>% filter(pacfin_port_code==p) %>% 
+    filter(!is.na(avg_speed_recalc) & avg_speed_recalc > 0) %>%
+    dplyr::select(-keep_remove_not_intrip_3km, -keep_remove_not_intrip_1p5km) %>%
+    pivot_longer(cols=c(in_port_3km, in_port_1p5km), names_to="buffer_size",values_to="in_port_boolean") %>%
+    mutate(buffer_size=ifelse(buffer_size=="in_port_3km","3km","1.5km")) %>%
+    filter(in_port_boolean==1) 
+
+  
+  ggplot(plotdat,aes(x=avg_speed_recalc, fill=buffer_size))+
+    geom_histogram() +
+    facet_grid(rows=vars(buffer_size),scales="free_x") +
+    labs(y="VMS records") + theme(legend.position="none")
+}
+```
+<br>
+
+### records marked remove
+
+These are records that have been marked as "in port" *and* have a calculated speed of less than 2 knots (1 m/s)
+```{r}
+for(p in portdat$port_code){
+  p="SF"
+  plotdat <- vmsdat_filtered1 %>% filter(pacfin_port_code==p) %>% filter(!is.na(avg_speed_recalc)) %>%
+    dplyr::select(-c(in_port_3km, in_port_1p5km)) %>%
+    pivot_longer(cols=c(keep_remove_not_intrip_3km,keep_remove_not_intrip_1p5km), names_to="buffer_size", values_to="to_remove") %>%
+    mutate(buffer_size=ifelse(buffer_size=="keep_remove_not_intrip_3km","3km","1.5km")) %>%
+    filter(to_remove=="remove") %>%
+    filter(avg_speed_recalc>0)
+
+  
+  ggplot(plotdat,aes(x=avg_speed_recalc, fill=buffer_size))+
+    geom_histogram() +
+    facet_grid(rows=vars(buffer_size),scales="free_x") +
+    labs(y="VMS records")
+}
+```
+
+
+## Cross-ref ports
+
+Sometimes, the vessel is marked as "in port" for a different port of landing than where the fish ticket is recorded. how frequently does this happen for records marked "remove"?
